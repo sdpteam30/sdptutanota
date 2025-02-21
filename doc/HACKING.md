@@ -157,7 +157,7 @@ You need XCode, xcodegen.
 You might need swiftlint swift-format.
 You can install them through homebrew.
 
-To build iOS app, build the web part (`node make prod`). Then generate iOS projects:
+To build iOS app, build the web part (`**node make prod**`). Then generate iOS projects:
 
 ```bash
 pushd tuta-sdk/ios # go into SDK directory
@@ -174,7 +174,7 @@ xcodegen --spec mail-project.yml
 
 After that you can open `app-ios/tuta.xcworkspace` in XCode and build the mail app.
 
-For building calendar app run `node make prod -a calenar` instead.
+For building calendar app run `node make prod -a calendar` instead.
 
 ### Tests
 
