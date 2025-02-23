@@ -25,7 +25,7 @@ Instructions here will produce a *release* version of the client. For *debug* ve
 8. Build packages: `npm run build-packages`
 9. Build the web part: `node webapp prod`
 10. Switch into the build directory: `cd build`
-11. Run the local server e.g. `npx serve build -s -p 9000` or `python -m SimpleHTTPServer 9000`.
+11. Run the local server e.g. `npx serve build -s -p 9000` or `python -m http.server 9000`.
 12. Open `localhost:9000` with your favorite browser (tested: Firefox, Chrome/Chromium, Safari).
 
 > If you try building without initializing the submodules, you might end up with
