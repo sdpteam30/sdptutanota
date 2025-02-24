@@ -1,0 +1,1 @@
+{"version":3,"file":"KyberEncapsulation.js","sourceRoot":"","sources":["../../../../../../src/common/native/common/generatedipc/KyberEncapsulation.ts"],"names":[],"mappings":"AAAA,iCAAiC","sourcesContent":["/* generated file, don't edit. */\n\nexport interface KyberEncapsulation {\n\treadonly ciphertext: Uint8Array\n\treadonly sharedSecret: Uint8Array\n}\n"]}

@@ -1,0 +1,76 @@
+import m from "mithril";
+import { lang } from "../misc/LanguageViewModel";
+import { Icon } from "./base/Icon";
+import { resolveMaybeLazy } from "@tutao/tutanota-utils";
+export class ScrollSelectList {
+    selectedItem = null;
+    view(vnode) {
+        const a = vnode.attrs;
+        return m(".flex.flex-column.scroll-no-overlay", a.items.length > 0
+            ? a.items.map((item) => this.renderRow(item, vnode))
+            : m(".row-selected.text-center.pt", lang.get(resolveMaybeLazy(a.emptyListMessage))));
+    }
+    onupdate(vnode) {
+        const newSelectedItem = vnode.attrs.selectedItem;
+        if (newSelectedItem !== this.selectedItem) {
+            this._onSelectionChanged(newSelectedItem, vnode.attrs.items, vnode.dom);
+            // Ensures that redraw happens after selected item changed this guarantess that the selected item is focused correctly.
+            // Selecting the correct item in the list requires that the (possible filtered) list needs render first and then we
+            // can scroll to the new selected item. Therefore we call onSelectionChange in onupdate callback.
+            m.redraw();
+        }
+    }
+    renderRow(item, vnode) {
+        const a = vnode.attrs;
+        const isSelected = a.selectedItem === item;
+        return m(".flex.flex-column.click", {
+            style: {
+                maxWidth: a.width,
+            },
+        }, [
+            m(".flex.template-list-row" + (isSelected ? ".row-selected" : ""), {
+                onclick: (e) => {
+                    a.onItemSelected(item);
+                    e.stopPropagation();
+                },
+                ondblclick: (e) => {
+                    a.onItemSelected(item);
+                    a.onItemDoubleClicked(item);
+                    e.stopPropagation();
+                },
+            }, [
+                a.renderItem(item),
+                isSelected
+                    ? m(Icon, {
+                        icon: "ArrowForward" /* Icons.ArrowForward */,
+                        style: {
+                            marginTop: "auto",
+                            marginBottom: "auto",
+                        },
+                    })
+                    : m("", {
+                        style: {
+                            width: "17.1px",
+                            height: "16px",
+                        },
+                    }),
+            ]),
+        ]);
+    }
+    _onSelectionChanged(selectedItem, items, scrollDom) {
+        this.selectedItem = selectedItem;
+        if (selectedItem != null) {
+            const selectedIndex = items.indexOf(selectedItem);
+            if (selectedIndex !== -1) {
+                const selectedDomElement = scrollDom.children.item(selectedIndex);
+                if (selectedDomElement) {
+                    selectedDomElement.scrollIntoView({
+                        block: "nearest",
+                        inline: "nearest",
+                    });
+                }
+            }
+        }
+    }
+}
+//# sourceMappingURL=ScrollSelectList.js.map

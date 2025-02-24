@@ -1,0 +1,1 @@
+{"version":3,"file":"TypeRefs.js","sourceRoot":"","sources":["../../../../../../src/common/api/entities/gossip/TypeRefs.ts"],"names":[],"mappings":"","sourcesContent":["import { create, Stripped, StrippedEntity } from \"../../common/utils/EntityUtils.js\"\nimport { TypeRef } from \"@tutao/tutanota-utils\"\nimport { typeModels } from \"./TypeModels.js\"\n\n\n\n"]}

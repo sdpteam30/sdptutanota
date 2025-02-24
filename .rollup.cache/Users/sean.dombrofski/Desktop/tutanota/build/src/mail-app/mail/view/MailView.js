@@ -1,0 +1,868 @@
+import m from "mithril";
+import { ViewSlider } from "../../../common/gui/nav/ViewSlider.js";
+import { ViewColumn } from "../../../common/gui/base/ViewColumn";
+import { lang } from "../../../common/misc/LanguageViewModel";
+import { Dialog } from "../../../common/gui/base/Dialog";
+import { FeatureType, getMailFolderType, Keys, MailSetKind } from "../../../common/api/common/TutanotaConstants";
+import { Header } from "../../../common/gui/Header.js";
+import { isEmpty, noOp, ofClass } from "@tutao/tutanota-utils";
+import { MailListView } from "./MailListView";
+import { assertMainOrNode, isApp } from "../../../common/api/common/Env";
+import { keyManager } from "../../../common/misc/KeyManager";
+import { getMailSelectionMessage, MultiItemViewer } from "./MultiItemViewer.js";
+import { showProgressDialog } from "../../../common/gui/dialogs/ProgressDialog";
+import { locator } from "../../../common/api/main/CommonLocator";
+import { PermissionError } from "../../../common/api/common/error/PermissionError";
+import { styles } from "../../../common/gui/styles";
+import { px, size } from "../../../common/gui/size";
+import { archiveMails, getConversationTitle, getMoveMailBounds, moveMails, moveToInbox, promptAndDeleteMails, showMoveMailsDropdown } from "./MailGuiUtils";
+import { getElementId, isSameId } from "../../../common/api/common/utils/EntityUtils";
+import { isNewMailActionAvailable } from "../../../common/gui/nav/NavFunctions";
+import { CancelledError } from "../../../common/api/common/error/CancelledError";
+import { readLocalFiles } from "../../../common/file/FileController.js";
+import { MobileMailActionBar } from "./MobileMailActionBar.js";
+import { deviceConfig } from "../../../common/misc/DeviceConfig.js";
+import { BaseTopLevelView } from "../../../common/gui/BaseTopLevelView.js";
+import { showEditFolderDialog } from "./EditFolderDialog.js";
+import { MailFoldersView } from "./MailFoldersView.js";
+import { FolderColumnView } from "../../../common/gui/FolderColumnView.js";
+import { SidebarSection } from "../../../common/gui/SidebarSection.js";
+import { EditFoldersDialog } from "./EditFoldersDialog.js";
+import { conversationCardMargin, ConversationViewer } from "./ConversationViewer.js";
+import { IconButton } from "../../../common/gui/base/IconButton.js";
+import { BackgroundColumnLayout } from "../../../common/gui/BackgroundColumnLayout.js";
+import { MailViewerActions } from "./MailViewerToolbar.js";
+import { theme } from "../../../common/gui/theme.js";
+import { MobileMailMultiselectionActionBar } from "./MobileMailMultiselectionActionBar.js";
+import { SelectAllCheckbox } from "../../../common/gui/SelectAllCheckbox.js";
+import { DesktopListToolbar, DesktopViewerToolbar } from "../../../common/gui/DesktopToolbars.js";
+import { MobileHeader } from "../../../common/gui/MobileHeader.js";
+import { LazySearchBar } from "../../LazySearchBar.js";
+import { MultiselectMobileHeader } from "../../../common/gui/MultiselectMobileHeader.js";
+import { selectionAttrsForList } from "../../../common/misc/ListModel.js";
+import { ListLoadingState } from "../../../common/gui/base/List.js";
+import { EnterMultiselectIconButton } from "../../../common/gui/EnterMultiselectIconButton.js";
+import { MailFilterButton } from "./MailFilterButton.js";
+import { listSelectionKeyboardShortcuts } from "../../../common/gui/base/ListUtils.js";
+import { getMailboxName } from "../../../common/mailFunctionality/SharedMailUtils.js";
+import { BottomNav } from "../../gui/BottomNav.js";
+import { mailLocator } from "../../mailLocator.js";
+import { showSnackBar } from "../../../common/gui/base/SnackBar.js";
+import { getFolderName } from "../model/MailUtils.js";
+import { canDoDragAndDropExport } from "./MailViewerUtils.js";
+import { isSpamOrTrashFolder } from "../model/MailChecks.js";
+import { showEditLabelDialog } from "./EditLabelDialog";
+import { SidebarSectionRow } from "../../../common/gui/base/SidebarSectionRow";
+import { attachDropdown } from "../../../common/gui/base/Dropdown";
+import { RowButton } from "../../../common/gui/base/buttons/RowButton";
+import { getLabelColor } from "../../../common/gui/base/Label.js";
+import { MAIL_PREFIX } from "../../../common/misc/RouteChange";
+import { fileListToArray } from "../../../common/api/common/utils/FileUtils.js";
+import { LabelsPopup } from "./LabelsPopup";
+assertMainOrNode();
+/**
+ * Top-level view for displaying mailboxes.
+ */
+export class MailView extends BaseTopLevelView {
+    listColumn;
+    folderColumn;
+    mailColumn;
+    viewSlider;
+    cache;
+    oncreate;
+    onremove;
+    countersStream = null;
+    expandedState;
+    mailViewModel;
+    get conversationViewModel() {
+        return this.mailViewModel.getConversationViewModel();
+    }
+    constructor(vnode) {
+        super();
+        this.expandedState = new Set(deviceConfig.getExpandedFolders(locator.logins.getUserController().userId));
+        this.cache = vnode.attrs.cache;
+        this.folderColumn = this.createFolderColumn(null, vnode.attrs.drawerAttrs);
+        this.mailViewModel = vnode.attrs.mailViewModel;
+        this.listColumn = new ViewColumn({
+            view: () => {
+                const folder = this.mailViewModel.getFolder();
+                return m(BackgroundColumnLayout, {
+                    backgroundColor: theme.navigation_bg,
+                    desktopToolbar: () => m(DesktopListToolbar, m(SelectAllCheckbox, selectionAttrsForList(this.mailViewModel)), this.renderFilterButton()),
+                    columnLayout: folder
+                        ? m("", {
+                            style: {
+                                marginBottom: px(conversationCardMargin),
+                            },
+                        }, m(MailListView, {
+                            key: getElementId(folder),
+                            mailViewModel: this.mailViewModel,
+                            onSingleSelection: (mail) => {
+                                this.mailViewModel.onSingleSelection(mail);
+                                if (!this.mailViewModel.listModel?.isInMultiselect()) {
+                                    this.viewSlider.focus(this.mailColumn);
+                                    // Make sure that we mark mail as read if you select the mail again, even if it was selected before.
+                                    // Do it in the next even loop to not rely on what is called first, listModel or us. ListModel changes are
+                                    // sync so this should be enough.
+                                    Promise.resolve().then(() => {
+                                        const conversationViewModel = this.mailViewModel.getConversationViewModel();
+                                        if (conversationViewModel && isSameId(mail._id, conversationViewModel.primaryMail._id)) {
+                                            conversationViewModel?.primaryViewModel().setUnread(false);
+                                        }
+                                    });
+                                }
+                            },
+                            onSingleInclusiveSelection: (...args) => {
+                                this.mailViewModel?.onSingleInclusiveSelection(...args);
+                            },
+                            onRangeSelectionTowards: (...args) => {
+                                this.mailViewModel.onRangeSelectionTowards(...args);
+                            },
+                            onSingleExclusiveSelection: (...args) => {
+                                this.mailViewModel.onSingleExclusiveSelection(...args);
+                            },
+                            onClearFolder: async () => {
+                                const folder = this.mailViewModel.getFolder();
+                                if (folder == null) {
+                                    console.warn("Cannot delete folder, no folder is selected");
+                                    return;
+                                }
+                                const confirmed = await Dialog.confirm(lang.getTranslation("confirmDeleteFinallySystemFolder_msg", { "{1}": getFolderName(folder) }));
+                                if (confirmed) {
+                                    showProgressDialog("progressDeleting_msg", this.mailViewModel.finallyDeleteAllMailsInSelectedFolder(folder));
+                                }
+                            },
+                        }))
+                        : null,
+                    mobileHeader: () => this.mailViewModel.listModel?.isInMultiselect()
+                        ? m(MultiselectMobileHeader, {
+                            ...selectionAttrsForList(this.mailViewModel.listModel),
+                            message: getMailSelectionMessage(this.mailViewModel.listModel.getSelectedAsArray()),
+                        })
+                        : m(MobileHeader, {
+                            ...vnode.attrs.header,
+                            title: this.listColumn.getTitle(),
+                            columnType: "first",
+                            actions: [
+                                this.renderFilterButton(),
+                                m(EnterMultiselectIconButton, {
+                                    clickAction: () => {
+                                        this.mailViewModel.listModel?.enterMultiselect();
+                                    },
+                                }),
+                            ],
+                            primaryAction: () => this.renderHeaderRightView(),
+                            backAction: () => this.viewSlider.focusPreviousColumn(),
+                        }),
+                });
+            },
+        }, 1 /* ColumnType.Background */, {
+            minWidth: size.second_col_min_width,
+            maxWidth: size.second_col_max_width,
+            headerCenter: () => {
+                const folder = this.mailViewModel.getFolder();
+                return folder ? lang.makeTranslation("folder_name", getFolderName(folder)) : "emptyString_msg";
+            },
+        });
+        this.mailColumn = new ViewColumn({
+            view: () => {
+                const viewModel = this.conversationViewModel;
+                if (viewModel) {
+                    return this.renderSingleMailViewer(vnode.attrs.header, viewModel);
+                }
+                else {
+                    return this.renderMultiMailViewer(vnode.attrs.header);
+                }
+            },
+        }, 1 /* ColumnType.Background */, {
+            minWidth: size.third_col_min_width,
+            maxWidth: size.third_col_max_width,
+            ariaLabel: () => lang.get("email_label"),
+        });
+        this.viewSlider = new ViewSlider([this.folderColumn, this.listColumn, this.mailColumn]);
+        this.viewSlider.focusedColumn = this.listColumn;
+        const shortcuts = this.getShortcuts();
+        vnode.attrs.mailViewModel.init();
+        this.oncreate = (vnode) => {
+            this.countersStream = mailLocator.mailModel.mailboxCounters.map(m.redraw);
+            keyManager.registerShortcuts(shortcuts);
+            this.cache.conversationViewPreference = deviceConfig.getConversationViewShowOnlySelectedMail();
+        };
+        this.onremove = () => {
+            // cancel the loading if we are destroyed
+            this.mailViewModel.listModel?.cancelLoadAll();
+            this.countersStream?.end(true);
+            this.countersStream = null;
+            keyManager.unregisterShortcuts(shortcuts);
+        };
+    }
+    renderFilterButton() {
+        return m(MailFilterButton, {
+            filter: this.mailViewModel.filterType,
+            setFilter: (filter) => this.mailViewModel.setFilter(filter),
+        });
+    }
+    mailViewerSingleActions(viewModel) {
+        return m(MailViewerActions, {
+            mailboxModel: viewModel.primaryViewModel().mailboxModel,
+            mailModel: viewModel.primaryViewModel().mailModel,
+            mailViewerViewModel: viewModel.primaryViewModel(),
+            mails: [viewModel.primaryMail],
+        });
+    }
+    renderSingleMailViewer(header, viewModel) {
+        return m(BackgroundColumnLayout, {
+            backgroundColor: theme.navigation_bg,
+            desktopToolbar: () => m(DesktopViewerToolbar, this.mailViewerSingleActions(viewModel)),
+            mobileHeader: () => m(MobileHeader, {
+                ...header,
+                backAction: () => {
+                    this.viewSlider.focusPreviousColumn();
+                },
+                columnType: "other",
+                actions: null,
+                multicolumnActions: () => this.mailViewerSingleActions(viewModel),
+                primaryAction: () => this.renderHeaderRightView(),
+                title: getConversationTitle(viewModel),
+            }),
+            columnLayout: m(ConversationViewer, {
+                // Re-create the whole viewer and its vnode tree if email has changed
+                key: getElementId(viewModel.primaryMail),
+                viewModel: viewModel,
+                // this assumes that the viewSlider focus animation is already started
+                delayBodyRendering: this.viewSlider.waitForAnimation(),
+            }),
+        });
+    }
+    mailViewerMultiActions() {
+        return m(MailViewerActions, {
+            mailboxModel: locator.mailboxModel,
+            mailModel: mailLocator.mailModel,
+            mails: this.mailViewModel.listModel?.getSelectedAsArray() ?? [],
+            selectNone: () => this.mailViewModel.listModel?.selectNone(),
+        });
+    }
+    renderMultiMailViewer(header) {
+        return m(BackgroundColumnLayout, {
+            backgroundColor: theme.navigation_bg,
+            desktopToolbar: () => m(DesktopViewerToolbar, this.mailViewerMultiActions()),
+            mobileHeader: () => m(MobileHeader, {
+                actions: this.mailViewerMultiActions(),
+                primaryAction: () => this.renderHeaderRightView(),
+                backAction: () => this.viewSlider.focusPreviousColumn(),
+                ...header,
+                columnType: "other",
+            }),
+            columnLayout: m(MultiItemViewer, {
+                selectedEntities: this.mailViewModel.listModel?.getSelectedAsArray() ?? [],
+                selectNone: () => {
+                    this.mailViewModel.listModel?.selectNone();
+                },
+                loadAll: () => this.mailViewModel.listModel?.loadAll(),
+                stopLoadAll: () => this.mailViewModel.listModel?.cancelLoadAll(),
+                loadingAll: this.mailViewModel.listModel?.isLoadingAll()
+                    ? "loading"
+                    : this.mailViewModel.listModel?.loadingStatus === ListLoadingState.Done
+                        ? "loaded"
+                        : "can_load",
+                getSelectionMessage: (selected) => getMailSelectionMessage(selected),
+            }),
+        });
+    }
+    view({ attrs }) {
+        return m("#mail.main-view", {
+            ondragover: (ev) => {
+                // do not check the data transfer here because it is not always filled, e.g. in Safari
+                ev.stopPropagation();
+                ev.preventDefault();
+            },
+            ondrop: (ev) => {
+                if (isNewMailActionAvailable() && ev.dataTransfer?.files && ev.dataTransfer.files.length > 0) {
+                    this.handleFileDrop({
+                        dropType: "ExternalFile" /* DropType.ExternalFile */,
+                        files: fileListToArray(ev.dataTransfer.files),
+                    });
+                }
+                // prevent in any case because firefox tries to open
+                // dataTransfer as a URL otherwise.
+                ev.stopPropagation();
+                ev.preventDefault();
+            },
+        }, m(this.viewSlider, {
+            header: m(Header, {
+                rightView: this.renderHeaderRightView(),
+                searchBar: () => 
+                // not showing search for external users
+                locator.logins.isInternalUserLoggedIn()
+                    ? m(LazySearchBar, {
+                        placeholder: lang.get("searchEmails_placeholder"),
+                        disabled: !locator.logins.isFullyLoggedIn(),
+                    })
+                    : null,
+                ...attrs.header,
+            }),
+            bottomNav: styles.isSingleColumnLayout() && this.viewSlider.focusedColumn === this.mailColumn && this.conversationViewModel
+                ? m(MobileMailActionBar, { viewModel: this.conversationViewModel.primaryViewModel() })
+                : styles.isSingleColumnLayout() && this.mailViewModel.listModel?.isInMultiselect()
+                    ? m(MobileMailMultiselectionActionBar, {
+                        mails: this.mailViewModel.listModel.getSelectedAsArray(),
+                        selectNone: () => this.mailViewModel.listModel?.selectNone(),
+                        mailModel: mailLocator.mailModel,
+                        mailboxModel: locator.mailboxModel,
+                    })
+                    : m(BottomNav),
+        }));
+    }
+    getViewSlider() {
+        return this.viewSlider;
+    }
+    handleBackButton() {
+        const listModel = this.mailViewModel.listModel;
+        if (listModel && listModel.isInMultiselect()) {
+            listModel.selectNone();
+            return true;
+        }
+        else if (this.viewSlider.isFirstBackgroundColumnFocused()) {
+            const folder = this.mailViewModel.getFolder();
+            if (folder == null || getMailFolderType(folder) !== MailSetKind.INBOX) {
+                this.mailViewModel.switchToFolder(MailSetKind.INBOX);
+                return true;
+            }
+            else {
+                return false;
+            }
+        }
+        else {
+            return false;
+        }
+    }
+    renderHeaderRightView() {
+        return isNewMailActionAvailable()
+            ? [
+                m(IconButton, {
+                    title: "newMail_action",
+                    click: () => this.showNewMailDialog().catch(ofClass(PermissionError, noOp)),
+                    icon: "PencilSquare" /* Icons.PencilSquare */,
+                }),
+            ]
+            : null;
+    }
+    getShortcuts() {
+        return [
+            ...listSelectionKeyboardShortcuts(1 /* MultiselectMode.Enabled */, () => this.mailViewModel),
+            {
+                key: Keys.N,
+                exec: () => {
+                    this.showNewMailDialog().catch(ofClass(PermissionError, noOp));
+                },
+                enabled: () => !!this.mailViewModel.getFolder() && isNewMailActionAvailable(),
+                help: "newMail_action",
+            },
+            {
+                key: Keys.DELETE,
+                exec: () => {
+                    if (this.mailViewModel.listModel)
+                        this.deleteMails(this.mailViewModel.listModel.getSelectedAsArray());
+                },
+                help: "deleteEmails_action",
+            },
+            {
+                key: Keys.BACKSPACE,
+                exec: () => {
+                    if (this.mailViewModel.listModel)
+                        this.deleteMails(this.mailViewModel.listModel.getSelectedAsArray());
+                },
+                help: "deleteEmails_action",
+            },
+            {
+                key: Keys.A,
+                exec: () => {
+                    if (this.mailViewModel.listModel)
+                        archiveMails(this.mailViewModel.listModel.getSelectedAsArray());
+                    return true;
+                },
+                help: "archive_action",
+                enabled: () => locator.logins.isInternalUserLoggedIn(),
+            },
+            {
+                key: Keys.I,
+                exec: () => {
+                    if (this.mailViewModel.listModel)
+                        moveToInbox(this.mailViewModel.listModel.getSelectedAsArray());
+                    return true;
+                },
+                help: "moveToInbox_action",
+            },
+            {
+                key: Keys.V,
+                exec: () => {
+                    this.moveMails();
+                    return true;
+                },
+                help: "move_action",
+            },
+            {
+                key: Keys.L,
+                exec: () => {
+                    this.labels();
+                    return true;
+                },
+                help: "labels_label",
+            },
+            {
+                key: Keys.U,
+                exec: () => {
+                    if (this.mailViewModel.listModel)
+                        this.toggleUnreadMails(this.mailViewModel.listModel.getSelectedAsArray());
+                },
+                help: "toggleUnread_action",
+            },
+            {
+                key: Keys.ONE,
+                exec: () => {
+                    this.mailViewModel.switchToFolder(MailSetKind.INBOX);
+                    return true;
+                },
+                help: "switchInbox_action",
+            },
+            {
+                key: Keys.TWO,
+                exec: () => {
+                    this.mailViewModel.switchToFolder(MailSetKind.DRAFT);
+                    return true;
+                },
+                help: "switchDrafts_action",
+            },
+            {
+                key: Keys.THREE,
+                exec: () => {
+                    this.mailViewModel.switchToFolder(MailSetKind.SENT);
+                    return true;
+                },
+                help: "switchSentFolder_action",
+            },
+            {
+                key: Keys.FOUR,
+                exec: () => {
+                    this.mailViewModel.switchToFolder(MailSetKind.TRASH);
+                    return true;
+                },
+                help: "switchTrash_action",
+            },
+            {
+                key: Keys.FIVE,
+                exec: () => {
+                    this.mailViewModel.switchToFolder(MailSetKind.ARCHIVE);
+                    return true;
+                },
+                enabled: () => locator.logins.isInternalUserLoggedIn(),
+                help: "switchArchive_action",
+            },
+            {
+                key: Keys.SIX,
+                exec: () => {
+                    this.mailViewModel.switchToFolder(MailSetKind.SPAM);
+                    return true;
+                },
+                enabled: () => locator.logins.isInternalUserLoggedIn() && !locator.logins.isEnabled(FeatureType.InternalCommunication),
+                help: "switchSpam_action",
+            },
+            {
+                key: Keys.CTRL,
+                exec: () => false,
+                enabled: canDoDragAndDropExport,
+                help: "dragAndDrop_action",
+            },
+            {
+                key: Keys.P,
+                exec: () => {
+                    this.pressRelease();
+                    return true;
+                },
+                help: "emptyString_msg",
+                enabled: () => locator.logins.isEnabled(FeatureType.Newsletter),
+            },
+        ];
+    }
+    async pressRelease() {
+        const { openPressReleaseEditor } = await import("../press/PressReleaseEditor");
+        const mailboxDetails = await this.mailViewModel.getMailboxDetails();
+        if (mailboxDetails) {
+            openPressReleaseEditor(mailboxDetails);
+        }
+    }
+    moveMails() {
+        const mailList = this.mailViewModel.listModel;
+        if (mailList == null) {
+            return;
+        }
+        const selectedMails = mailList.getSelectedAsArray();
+        showMoveMailsDropdown(locator.mailboxModel, mailLocator.mailModel, getMoveMailBounds(), selectedMails);
+    }
+    /**
+     *Shortcut Method to show Labels dropdown only when atleast one mail is selected.
+     */
+    labels() {
+        const mailList = this.mailViewModel.listModel;
+        if (mailList == null || !mailLocator.mailModel.canAssignLabels()) {
+            return;
+        }
+        const labels = mailLocator.mailModel.getLabelStatesForMails(mailList.getSelectedAsArray());
+        const selectedMails = mailList.getSelectedAsArray();
+        if (isEmpty(labels) || isEmpty(selectedMails)) {
+            return;
+        }
+        const popup = new LabelsPopup(document.activeElement, getMoveMailBounds(), styles.isDesktopLayout() ? 300 : 200, mailLocator.mailModel.getLabelsForMails(selectedMails), mailLocator.mailModel.getLabelStatesForMails(selectedMails), (addedLabels, removedLabels) => mailLocator.mailModel.applyLabels(selectedMails, addedLabels, removedLabels));
+        popup.show();
+    }
+    createFolderColumn(editingFolderForMailGroup = null, drawerAttrs) {
+        return new ViewColumn({
+            view: () => {
+                return m(FolderColumnView, {
+                    drawer: drawerAttrs,
+                    button: editingFolderForMailGroup
+                        ? null
+                        : !styles.isUsingBottomNavigation() && isNewMailActionAvailable()
+                            ? {
+                                label: "newMail_action",
+                                click: () => this.showNewMailDialog().catch(ofClass(PermissionError, noOp)),
+                            }
+                            : null,
+                    content: this.renderFoldersAndLabels(editingFolderForMailGroup),
+                    ariaLabel: "folderTitle_label",
+                });
+            },
+        }, editingFolderForMailGroup ? 1 /* ColumnType.Background */ : 0 /* ColumnType.Foreground */, {
+            minWidth: size.first_col_min_width,
+            maxWidth: size.first_col_max_width,
+            headerCenter: "folderTitle_label",
+        });
+    }
+    renderFoldersAndLabels(editingFolderForMailGroup) {
+        const details = locator.mailboxModel.mailboxDetails() ?? [];
+        return [
+            ...details.map((mailboxDetail) => {
+                return this.renderFoldersAndLabelsForMailbox(mailboxDetail, editingFolderForMailGroup);
+            }),
+        ];
+    }
+    renderFoldersAndLabelsForMailbox(mailboxDetail, editingFolderForMailGroup) {
+        const inEditMode = editingFolderForMailGroup === mailboxDetail.mailGroup._id;
+        // Only show folders for mailbox in which edit was selected
+        if (editingFolderForMailGroup && !inEditMode) {
+            return null;
+        }
+        else {
+            return m(SidebarSection, {
+                name: lang.makeTranslation("mailbox_name", getMailboxName(locator.logins, mailboxDetail)),
+            }, [
+                this.createMailboxFolderItems(mailboxDetail, inEditMode, () => {
+                    EditFoldersDialog.showEdit(() => this.renderFoldersAndLabels(mailboxDetail.mailGroup._id));
+                }),
+                mailLocator.mailModel.canManageLabels()
+                    ? this.renderMailboxLabelItems(mailboxDetail, inEditMode, () => {
+                        EditFoldersDialog.showEdit(() => this.renderFoldersAndLabels(mailboxDetail.mailGroup._id));
+                    })
+                    : null,
+            ]);
+        }
+    }
+    createMailboxFolderItems(mailboxDetail, inEditMode, onEditMailbox) {
+        return m(MailFoldersView, {
+            mailModel: mailLocator.mailModel,
+            mailboxDetail,
+            expandedFolders: this.expandedState,
+            mailFolderElementIdToSelectedMailId: this.mailViewModel.getMailFolderToSelectedMail(),
+            onFolderClick: () => {
+                if (!inEditMode) {
+                    this.viewSlider.focus(this.listColumn);
+                }
+            },
+            onFolderExpanded: (folder, state) => this.setExpandedState(folder, state),
+            onShowFolderAddEditDialog: (...args) => this.showFolderAddEditDialog(...args),
+            onDeleteCustomMailFolder: (folder) => this.deleteCustomMailFolder(mailboxDetail, folder),
+            onFolderDrop: (dropData, folder) => {
+                if (dropData.dropType == "Mail" /* DropType.Mail */) {
+                    this.handleFolderMailDrop(dropData, folder);
+                }
+                else if (dropData.dropType == "ExternalFile" /* DropType.ExternalFile */) {
+                    this.handeFolderFileDrop(dropData, mailboxDetail, folder);
+                }
+            },
+            inEditMode,
+            onEditMailbox,
+        });
+    }
+    setExpandedState(folder, currentExpansionState) {
+        if (currentExpansionState) {
+            this.expandedState.delete(getElementId(folder));
+        }
+        else {
+            this.expandedState.add(getElementId(folder));
+        }
+        deviceConfig.setExpandedFolders(locator.logins.getUserController().userId, [...this.expandedState]);
+    }
+    onNewUrl(args, requestedPath) {
+        if (requestedPath.startsWith("/mailto")) {
+            if (location.hash.length > 5) {
+                let url = location.hash.substring(5);
+                let decodedUrl = decodeURIComponent(url);
+                Promise.all([locator.mailboxModel.getUserMailboxDetails(), import("../editor/MailEditor")]).then(([mailboxDetails, { newMailtoUrlMailEditor }]) => {
+                    newMailtoUrlMailEditor(decodedUrl, false, mailboxDetails)
+                        .then((editor) => editor.show())
+                        .catch(ofClass(CancelledError, noOp));
+                    history.pushState("", document.title, window.location.pathname); // remove # from url
+                });
+            }
+        }
+        if (isApp()) {
+            let userGroupInfo = locator.logins.getUserController().userGroupInfo;
+            locator.pushService.closePushNotification(userGroupInfo.mailAddressAliases.map((alias) => alias.mailAddress).concat(userGroupInfo.mailAddress || []));
+        }
+        if (typeof args.mail === "string") {
+            const [mailListId, mailId] = args.mail.split(",");
+            if (mailListId && mailId) {
+                this.mailViewModel.showStickyMail([mailListId, mailId], () => showSnackBar({
+                    message: "mailMoved_msg",
+                    button: {
+                        label: "ok_action",
+                        click: noOp,
+                    },
+                }));
+                this.viewSlider.focus(this.mailColumn);
+            }
+            else {
+                this.showMail(args);
+            }
+        }
+        else {
+            this.showMail(args);
+        }
+    }
+    showMail(args) {
+        this.mailViewModel.showMailWithMailSetId(args.folderId, args.mailId);
+        if (styles.isSingleColumnLayout() && !args.mailId && this.viewSlider.focusedColumn === this.mailColumn) {
+            this.viewSlider.focus(this.listColumn);
+        }
+    }
+    async handleFileDrop(fileDrop) {
+        try {
+            const [mailbox, dataFiles, { appendEmailSignature }, { newMailEditorFromTemplate }] = await Promise.all([
+                this.mailViewModel.getMailboxDetails(),
+                readLocalFiles(fileDrop.files),
+                import("../signature/Signature"),
+                import("../editor/MailEditor"),
+            ]);
+            if (mailbox != null) {
+                const dialog = await newMailEditorFromTemplate(mailbox, {}, "", appendEmailSignature("", locator.logins.getUserController().props), dataFiles);
+                dialog.show();
+            }
+        }
+        catch (e) {
+            if (!(e instanceof PermissionError))
+                throw e;
+        }
+    }
+    async handleFolderMailDrop(dropData, folder) {
+        const { mailId } = dropData;
+        if (!this.mailViewModel.listModel) {
+            return;
+        }
+        let mailsToMove = [];
+        // the dropped mail is among the selected mails, move all selected mails
+        if (this.mailViewModel.listModel.isItemSelected(mailId)) {
+            mailsToMove = this.mailViewModel.listModel.getSelectedAsArray();
+        }
+        else {
+            const entity = this.mailViewModel.listModel.getMail(mailId);
+            if (entity) {
+                mailsToMove.push(entity);
+            }
+        }
+        moveMails({
+            mailboxModel: locator.mailboxModel,
+            mailModel: mailLocator.mailModel,
+            mails: mailsToMove,
+            targetMailFolder: folder,
+        });
+    }
+    async handeFolderFileDrop(dropData, mailboxDetail, mailFolder) {
+        function droppedOnlyMailFiles(files) {
+            // there's similar logic on the AttachmentBubble, but for natively shared files.
+            return files.every((f) => f.name.endsWith(".eml") || f.name.endsWith(".mbox"));
+        }
+        await this.handleFileDrop(dropData);
+        // DnD mail importing is disabled for now as the MailImporter might not have
+        // been initialized yet.
+        //
+        // // importing mails is currently only allowed on plan LEGEND and UNLIMITED
+        // const currentPlanType = await locator.logins.getUserController().getPlanType()
+        // const isHighestTierPlan = HighestTierPlans.includes(currentPlanType)
+        //
+        // let importAction: { text: TranslationText; value: boolean } = {
+        // 	text: "import_action",
+        // 	value: true,
+        // }
+        // let attachFilesAction: { text: TranslationText; value: boolean } = {
+        // 	text: "attachFiles_action",
+        // 	value: false,
+        // }
+        // const willImport =
+        // 	isHighestTierPlan && droppedOnlyMailFiles(dropData.files) && (await Dialog.choice("emlOrMboxInSharingFiles_msg", [importAction, attachFilesAction]))
+        //
+        // if (!willImport) {
+        // 	await this.handleFileDrop(dropData)
+        // } else if (mailFolder._ownerGroup && this.mailImporter) {
+        // 	await this.mailImporter.onStartBtnClick(
+        // 		mailFolder,
+        // 		dropData.files.map((file) => window.nativeApp.getPathForFile(file)),
+        // 	)
+        // }
+    }
+    async showNewMailDialog() {
+        const mailboxDetails = await this.mailViewModel.getMailboxDetails();
+        if (mailboxDetails == null) {
+            return;
+        }
+        const { newMailEditor } = await import("../editor/MailEditor");
+        const dialog = await newMailEditor(mailboxDetails);
+        dialog.show();
+    }
+    async deleteCustomMailFolder(mailboxDetail, folder) {
+        if (folder.folderType !== MailSetKind.CUSTOM) {
+            throw new Error("Cannot delete non-custom folder: " + String(folder._id));
+        }
+        // remove any selection to avoid that the next mail is loaded and selected for each deleted mail event
+        this.mailViewModel?.listModel?.selectNone();
+        if (mailboxDetail.mailbox.folders == null) {
+            return;
+        }
+        const folders = await mailLocator.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.folders._id);
+        if (isSpamOrTrashFolder(folders, folder)) {
+            const confirmed = await Dialog.confirm(lang.getTranslation("confirmDeleteFinallyCustomFolder_msg", {
+                "{1}": getFolderName(folder),
+            }));
+            if (!confirmed)
+                return;
+            await mailLocator.mailModel.finallyDeleteCustomMailFolder(folder);
+        }
+        else {
+            const confirmed = await Dialog.confirm(lang.getTranslation("confirmDeleteCustomFolder_msg", {
+                "{1}": getFolderName(folder),
+            }));
+            if (!confirmed)
+                return;
+            await mailLocator.mailModel.trashFolderAndSubfolders(folder);
+        }
+    }
+    logout() {
+        m.route.set("/");
+    }
+    async toggleUnreadMails(mails) {
+        if (mails.length == 0) {
+            return;
+        }
+        // set all selected emails to the opposite of the first email's unread state
+        await mailLocator.mailModel.markMails(mails, !mails[0].unread);
+    }
+    deleteMails(mails) {
+        return promptAndDeleteMails(mailLocator.mailModel, mails, noOp);
+    }
+    async showFolderAddEditDialog(mailGroupId, folder, parentFolder) {
+        const mailboxDetail = await locator.mailboxModel.getMailboxDetailsForMailGroup(mailGroupId);
+        await showEditFolderDialog(mailboxDetail, folder, parentFolder);
+    }
+    async showLabelAddDialog(mailbox) {
+        await showEditLabelDialog(mailbox, this.mailViewModel, null);
+    }
+    async showLabelEditDialog(label) {
+        await showEditLabelDialog(null, this.mailViewModel, label);
+    }
+    async showLabelDeleteDialog(label) {
+        const confirmed = await Dialog.confirm(lang.getTranslation("confirmDeleteLabel_msg", {
+            "{1}": label.name,
+        }));
+        if (!confirmed)
+            return;
+        await this.mailViewModel.deleteLabel(label);
+    }
+    renderMailboxLabelItems(mailboxDetail, inEditMode, onEditMailbox) {
+        return [
+            m(SidebarSection, {
+                name: "labels_label",
+                button: inEditMode ? this.renderAddLabelButton(mailboxDetail) : this.renderEditMailboxButton(onEditMailbox),
+            }, [
+                m(".flex.col", [
+                    Array.from(mailLocator.mailModel.getLabelsByGroupId(mailboxDetail.mailGroup._id).values()).map((label) => {
+                        const path = `${MAIL_PREFIX}/${getElementId(label)}`;
+                        return m(SidebarSectionRow, {
+                            icon: "Label" /* Icons.Label */,
+                            iconColor: getLabelColor(label.color),
+                            label: lang.makeTranslation(`folder:${label.name}`, label.name),
+                            path,
+                            isSelectedPrefix: inEditMode ? false : path,
+                            disabled: inEditMode,
+                            onClick: () => {
+                                if (!inEditMode) {
+                                    this.viewSlider.focus(this.listColumn);
+                                }
+                            },
+                            alwaysShowMoreButton: inEditMode,
+                            moreButton: attachDropdown({
+                                mainButtonAttrs: {
+                                    icon: "More" /* Icons.More */,
+                                    title: "more_label",
+                                },
+                                childAttrs: () => [
+                                    {
+                                        label: "edit_action",
+                                        icon: "Edit" /* Icons.Edit */,
+                                        click: () => {
+                                            this.showLabelEditDialog(label);
+                                        },
+                                    },
+                                    {
+                                        label: "delete_action",
+                                        icon: "Trash" /* Icons.Trash */,
+                                        click: () => {
+                                            this.showLabelDeleteDialog(label);
+                                        },
+                                    },
+                                ],
+                            }),
+                        });
+                    }),
+                ]),
+            ]),
+            m(RowButton, {
+                label: "addLabel_action",
+                icon: "Add" /* Icons.Add */,
+                class: "folder-row mlr-button border-radius-small",
+                style: {
+                    width: `calc(100% - ${px(size.hpad_button * 2)})`,
+                },
+                onclick: () => {
+                    this.showLabelAddDialog(mailboxDetail.mailbox);
+                },
+            }),
+        ];
+    }
+    renderEditMailboxButton(onEditMailbox) {
+        return m(IconButton, {
+            icon: "Edit" /* Icons.Edit */,
+            size: 1 /* ButtonSize.Compact */,
+            title: "edit_action",
+            click: onEditMailbox,
+        });
+    }
+    renderAddLabelButton(mailboxDetail) {
+        return m(IconButton, {
+            title: "addLabel_action",
+            icon: "Add" /* Icons.Add */,
+            click: () => {
+                this.showLabelAddDialog(mailboxDetail.mailbox);
+            },
+        });
+    }
+}
+//# sourceMappingURL=MailView.js.map

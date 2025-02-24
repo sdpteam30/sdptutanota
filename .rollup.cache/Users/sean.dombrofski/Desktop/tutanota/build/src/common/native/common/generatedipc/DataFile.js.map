@@ -1,0 +1,1 @@
+{"version":3,"file":"DataFile.js","sourceRoot":"","sources":["../../../../../../src/common/native/common/generatedipc/DataFile.ts"],"names":[],"mappings":"AAAA,iCAAiC","sourcesContent":["/* generated file, don't edit. */\n\nexport { DataFile } from \"../../../api/common/DataFile.js\"\n"]}

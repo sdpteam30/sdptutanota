@@ -1,0 +1,22 @@
+import { pureComponent } from "./base/PureComponent.js";
+import m from "mithril";
+import { lang } from "../misc/LanguageViewModel.js";
+export const SelectAllCheckbox = pureComponent((attrs) => {
+    return m(".flex.items-center.pl-s.mlr.button-height", { style: attrs.style }, m("input.checkbox", {
+        type: "checkbox",
+        "data-testid": "cb:selectAllLoaded_action",
+        title: lang.get("selectAllLoaded_action"),
+        // I'm not sure this is the best condition but it will do for now
+        checked: attrs.selected,
+        onchange: ({ target }) => toggleSelectAll(attrs, target.checked),
+    }));
+});
+function toggleSelectAll(attrs, selectAll) {
+    if (selectAll) {
+        attrs.selectAll();
+    }
+    else {
+        attrs.selectNone();
+    }
+}
+//# sourceMappingURL=SelectAllCheckbox.js.map

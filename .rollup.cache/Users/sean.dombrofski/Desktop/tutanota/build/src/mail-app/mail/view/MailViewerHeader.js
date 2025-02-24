@@ -1,0 +1,684 @@
+import m from "mithril";
+import { lang } from "../../../common/misc/LanguageViewModel.js";
+import { theme } from "../../../common/gui/theme.js";
+import { styles } from "../../../common/gui/styles.js";
+import { ExpanderButton, ExpanderPanel } from "../../../common/gui/base/Expander.js";
+import { InfoBanner } from "../../../common/gui/base/InfoBanner.js";
+import { EventBanner } from "./EventBanner.js";
+import { RecipientButton } from "../../../common/gui/base/RecipientButton.js";
+import { createAsyncDropdown, createDropdown } from "../../../common/gui/base/Dropdown.js";
+import { EncryptionAuthStatus, Keys, MailAuthenticationStatus } from "../../../common/api/common/TutanotaConstants.js";
+import { Icon, progressIcon } from "../../../common/gui/base/Icon.js";
+import { formatDateWithWeekday, formatDateWithWeekdayAndYear, formatStorageSize, formatTime } from "../../../common/misc/Formatter.js";
+import { isAndroidApp, isDesktop, isIOSApp } from "../../../common/api/common/Env.js";
+import { Button } from "../../../common/gui/base/Button.js";
+import Badge from "../../../common/gui/base/Badge.js";
+import { canSeeTutaLinks } from "../../../common/gui/base/GuiUtils.js";
+import { isNotNull, noOp, resolveMaybeLazy } from "@tutao/tutanota-utils";
+import { IconButton } from "../../../common/gui/base/IconButton.js";
+import { getConfidentialIcon, getFolderIconByType, isTutanotaTeamMail, promptAndDeleteMails, showMoveMailsDropdown } from "./MailGuiUtils.js";
+import { editDraft, mailViewerMoreActions } from "./MailViewerUtils.js";
+import { liveDataAttrs } from "../../../common/gui/AriaUtils.js";
+import { isKeyPressed } from "../../../common/misc/KeyManager.js";
+import { AttachmentBubble, getAttachmentType } from "../../../common/gui/AttachmentBubble.js";
+import { responsiveCardHMargin, responsiveCardHPadding } from "../../../common/gui/cards.js";
+import { companyTeamLabel } from "../../../common/misc/ClientConstants.js";
+import { getMailAddressDisplayText } from "../../../common/mailFunctionality/SharedMailUtils.js";
+import { LabelsPopup } from "./LabelsPopup.js";
+import { Label } from "../../../common/gui/base/Label.js";
+import { px, size } from "../../../common/gui/size.js";
+/** The upper part of the mail viewer, everything but the mail body itself. */
+export class MailViewerHeader {
+    detailsExpanded = false;
+    filesExpanded = false;
+    view({ attrs }) {
+        const { viewModel } = attrs;
+        const dateTime = formatDateWithWeekday(viewModel.mail.receivedDate) + " • " + formatTime(viewModel.mail.receivedDate);
+        const dateTimeFull = formatDateWithWeekdayAndYear(viewModel.mail.receivedDate) + " • " + formatTime(viewModel.mail.receivedDate);
+        return m(".header.selectable", [
+            this.renderSubjectActionsLine(attrs),
+            this.renderFolderAndLabels(viewModel),
+            this.renderAddressesAndDate(viewModel, attrs, dateTime, dateTimeFull),
+            m(ExpanderPanel, {
+                expanded: this.detailsExpanded,
+            }, this.renderDetails(attrs, { bubbleMenuWidth: 300 })),
+            this.renderAttachments(viewModel, attrs.importFile),
+            this.renderConnectionLostBanner(viewModel),
+            this.renderEventBanner(viewModel),
+            this.renderBanners(attrs),
+        ]);
+    }
+    renderFolderAndLabels(viewModel) {
+        const folderInfo = viewModel.getFolderInfo();
+        if (!folderInfo)
+            return null;
+        const icon = getFolderIconByType(folderInfo.folderType);
+        const folderText = viewModel.getFolderMailboxText();
+        const labels = viewModel.getLabels();
+        if (folderText == null && labels.length === 0) {
+            return null;
+        }
+        const margin = px(size.vpad_xsm);
+        return m(".flex.mb-xs.flex-wrap", {
+            style: {
+                columnGap: margin,
+                rowGap: margin,
+            },
+            class: responsiveCardHMargin(),
+        }, [
+            folderText
+                ? m(".flex.small", [
+                    m(".b", m("", lang.get("location_label"))),
+                    m(Icon, {
+                        icon,
+                        container: "div",
+                        style: {
+                            fill: theme.content_button,
+                            marginLeft: margin,
+                        },
+                    }),
+                    m(".span", folderInfo.name),
+                ])
+                : null,
+            labels.map((label) => m(Label, {
+                text: label.name,
+                color: label.color ?? theme.content_accent,
+            })),
+        ]);
+    }
+    renderAddressesAndDate(viewModel, attrs, dateTime, dateTimeFull) {
+        const folderInfo = viewModel.getFolderInfo();
+        if (!folderInfo)
+            return null;
+        const displayedSender = viewModel.getDisplayedSender();
+        return m(".flex.mt-xs.click.col", {
+            class: responsiveCardHMargin(),
+            role: "button",
+            "aria-pressed": String(this.detailsExpanded),
+            "aria-expanded": String(this.detailsExpanded),
+            tabindex: "0" /* TabIndex.Default */,
+            onclick: () => {
+                this.detailsExpanded = !this.detailsExpanded;
+            },
+            onkeydown: (e) => {
+                if (isKeyPressed(e.key, Keys.SPACE, Keys.RETURN)) {
+                    this.detailsExpanded = !this.detailsExpanded;
+                    e.preventDefault();
+                }
+            },
+        }, [
+            displayedSender == null
+                ? null
+                : m(".small.flex.flex-wrap.items-start", [
+                    m("span.text-break", getMailAddressDisplayText(displayedSender.name, displayedSender.address, false)),
+                ]),
+            m(".flex", [
+                this.getRecipientEmailAddress(attrs),
+                m(".flex-grow"),
+                m(".flex.items-center.white-space-pre.ml-s.ml-between-s", {
+                    // Orca refuses to read ut unless it's not focusable
+                    tabindex: "0" /* TabIndex.Default */,
+                    "aria-label": lang.get(viewModel.isConfidential() ? "confidential_action" : "nonConfidential_action") + ", " + dateTime,
+                }),
+                m(".flex.ml-between-s.items-center", [
+                    viewModel.isConfidential()
+                        ? m(Icon, {
+                            icon: getConfidentialIcon(viewModel.mail),
+                            container: "div",
+                            style: {
+                                fill: theme.content_button,
+                            },
+                            hoverText: lang.get("confidential_label"),
+                        })
+                        : null,
+                    m(Icon, {
+                        icon: getFolderIconByType(folderInfo.folderType),
+                        container: "div",
+                        style: {
+                            fill: theme.content_button,
+                        },
+                        hoverText: folderInfo.name,
+                    }),
+                    m(".small.font-weight-600.selectable.no-wrap", { style: { color: theme.content_button } }, [
+                        m(".noprint", dateTime), // show the short date when viewing
+                        m(".noscreen", dateTimeFull), // show the date with year when printing
+                    ]),
+                ]),
+            ]),
+        ]);
+    }
+    renderSubjectActionsLine(attrs) {
+        const { viewModel } = attrs;
+        const classes = this.makeSubjectActionsLineClasses();
+        const senderName = viewModel.getDisplayedSender()?.name?.trim() ?? "";
+        const displayAddressForSender = senderName === "";
+        return m(classes, [
+            m(".flex.flex-grow.align-self-start.items-start.overflow-hidden", {
+                class: styles.isSingleColumnLayout() ? "mt-m" : "mt",
+                role: "button",
+                "mail-expander": "true",
+                // "aria-expanded" is always true because this component is only used in expanded view
+                "aria-expanded": "true",
+                tabindex: "0" /* TabIndex.Default */,
+                onclick: (e) => {
+                    viewModel.collapseMail();
+                    e.stopPropagation();
+                },
+                onkeydown: (e) => {
+                    if (isKeyPressed(e.key, Keys.SPACE, Keys.RETURN) && e.target.hasAttribute("mail-expander")) {
+                        viewModel.collapseMail();
+                        e.preventDefault();
+                    }
+                },
+            }, [
+                viewModel.isUnread() ? this.renderUnreadDot() : null,
+                viewModel.isDraftMail()
+                    ? m(".mr-xs.align-self-center", m(Icon, {
+                        icon: "Edit" /* Icons.Edit */,
+                        container: "div",
+                        style: {
+                            fill: theme.content_button,
+                        },
+                        hoverText: lang.get("draft_label"),
+                    }))
+                    : null,
+                this.tutaoBadge(viewModel),
+                m("span" + (displayAddressForSender ? ".invisible.overflow-hidden" : ".text-break") + (viewModel.isUnread() ? ".font-weight-600" : ""), displayAddressForSender ? viewModel.getDisplayedSender()?.address ?? "" : senderName),
+            ]),
+            m(".flex-end.items-start.ml-between-s", {
+                class: styles.isSingleColumnLayout() ? "" : "mt-xs",
+                style: {
+                    // align "more" button with the datetime text
+                    marginRight: styles.isSingleColumnLayout() ? "-3px" : "6px",
+                },
+                onclick: (e) => e.stopPropagation(),
+            }, this.moreButton(attrs)),
+        ]);
+    }
+    renderUnreadDot() {
+        return m(".flex.flex-no-grow.no-shrink.pr-s", {
+            style: {
+                paddingTop: "2px",
+            },
+        }, m(".dot.bg-accent-fg"));
+    }
+    makeSubjectActionsLineClasses() {
+        let classes = ".flex.click";
+        if (styles.isSingleColumnLayout()) {
+            classes += ".ml";
+        }
+        else {
+            classes += ".pl-l";
+        }
+        return classes;
+    }
+    renderBanners(attrs) {
+        const { viewModel } = attrs;
+        if (viewModel.isCollapsed())
+            return null;
+        // we don't wrap it in a single element because our container might depend on us being separate children for margins
+        return [
+            m("." + responsiveCardHMargin(), this.renderPhishingWarning(viewModel) ?? viewModel.isWarningDismissed()
+                ? null
+                : this.renderHardAuthenticationFailWarning(viewModel) ?? this.renderSoftAuthenticationFailWarning(viewModel)),
+            m("." + responsiveCardHMargin(), this.renderExternalContentBanner(attrs)),
+            m("hr.hr.mt-xs." + responsiveCardHMargin()),
+        ].filter(Boolean);
+    }
+    renderConnectionLostBanner(viewModel) {
+        // If the mail body failed to load, then we show a message in the main column
+        // If the mail body did load but not everything else, we show the message here
+        if (viewModel.isConnectionLost()) {
+            return m("." + responsiveCardHMargin(), m(InfoBanner, {
+                message: "mailPartsNotLoaded_msg",
+                icon: "Warning" /* Icons.Warning */,
+                buttons: [
+                    {
+                        label: "retry_action",
+                        click: () => viewModel.loadAll(Promise.resolve()),
+                    },
+                ],
+            }));
+        }
+        else {
+            return null;
+        }
+    }
+    renderEventBanner(viewModel) {
+        const eventAttachment = viewModel.getCalendarEventAttachment();
+        return eventAttachment
+            ? m("." + responsiveCardHMargin(), m(EventBanner, {
+                contents: eventAttachment.contents,
+                recipient: eventAttachment.recipient,
+                mail: viewModel.mail,
+            }))
+            : null;
+    }
+    renderDetails(attrs, { bubbleMenuWidth }) {
+        const { viewModel, createMailAddressContextButtons } = attrs;
+        const envelopeSender = viewModel.getDifferentEnvelopeSender();
+        const displayedSender = viewModel.getDisplayedSender();
+        return m("." + responsiveCardHPadding(), liveDataAttrs(), [
+            m(".mt-s", displayedSender == null
+                ? null
+                : [
+                    m(".small.b", lang.get("from_label")),
+                    m(RecipientButton, {
+                        label: getMailAddressDisplayText(displayedSender.name, displayedSender.address, false),
+                        click: createAsyncDropdown({
+                            lazyButtons: () => createMailAddressContextButtons({
+                                mailAddress: displayedSender,
+                                defaultInboxRuleField: "0" /* InboxRuleType.FROM_EQUALS */,
+                            }),
+                            width: bubbleMenuWidth,
+                        }),
+                    }),
+                ], envelopeSender
+                ? [
+                    m(".small.b", lang.get("sender_label")),
+                    m(RecipientButton, {
+                        label: getMailAddressDisplayText("", envelopeSender, false),
+                        click: createAsyncDropdown({
+                            lazyButtons: async () => {
+                                const childElements = [
+                                    {
+                                        info: lang.get("envelopeSenderInfo_msg"),
+                                        center: false,
+                                        bold: false,
+                                    },
+                                    {
+                                        info: envelopeSender,
+                                        center: true,
+                                        bold: true,
+                                    },
+                                ];
+                                const contextButtons = await createMailAddressContextButtons({
+                                    mailAddress: {
+                                        address: envelopeSender,
+                                        name: "",
+                                    },
+                                    defaultInboxRuleField: "0" /* InboxRuleType.FROM_EQUALS */,
+                                    createContact: false,
+                                });
+                                return [...childElements, ...contextButtons];
+                            },
+                            width: bubbleMenuWidth,
+                        }),
+                    }),
+                ]
+                : null),
+            m(".mt-s", viewModel.getToRecipients().length
+                ? [
+                    m(".small.b", lang.get("to_label")),
+                    m(".flex.col.mt-between-s", viewModel.getToRecipients().map((recipient) => m(".flex", m(RecipientButton, {
+                        label: getMailAddressDisplayText(recipient.name, recipient.address, false),
+                        click: createAsyncDropdown({
+                            lazyButtons: () => createMailAddressContextButtons({
+                                mailAddress: recipient,
+                                defaultInboxRuleField: "1" /* InboxRuleType.RECIPIENT_TO_EQUALS */,
+                            }),
+                            width: bubbleMenuWidth,
+                        }),
+                        // To wrap text inside flex container, we need to allow element to shrink and pick own width
+                        style: {
+                            flex: "0 1 auto",
+                        },
+                    })))),
+                ]
+                : null),
+            m(".mt-s", viewModel.getCcRecipients().length
+                ? [
+                    m(".small.b", lang.get("cc_label")),
+                    m(".flex-start.flex-wrap", viewModel.getCcRecipients().map((recipient) => m(RecipientButton, {
+                        label: getMailAddressDisplayText(recipient.name, recipient.address, false),
+                        click: createAsyncDropdown({
+                            lazyButtons: () => createMailAddressContextButtons({
+                                mailAddress: recipient,
+                                defaultInboxRuleField: "2" /* InboxRuleType.RECIPIENT_CC_EQUALS */,
+                            }),
+                            width: bubbleMenuWidth,
+                        }),
+                        style: {
+                            flex: "0 1 auto",
+                        },
+                    }))),
+                ]
+                : null),
+            m(".mt-s", viewModel.getBccRecipients().length
+                ? [
+                    m(".small.b", lang.get("bcc_label")),
+                    m(".flex-start.flex-wrap", viewModel.getBccRecipients().map((recipient) => m(RecipientButton, {
+                        label: getMailAddressDisplayText(recipient.name, recipient.address, false),
+                        click: createAsyncDropdown({
+                            lazyButtons: () => createMailAddressContextButtons({
+                                mailAddress: recipient,
+                                defaultInboxRuleField: "3" /* InboxRuleType.RECIPIENT_BCC_EQUALS */,
+                            }),
+                            width: bubbleMenuWidth,
+                        }),
+                        style: {
+                            flex: "0 1 auto",
+                        },
+                    }))),
+                ]
+                : null),
+            m(".mt-s", viewModel.getReplyTos().length
+                ? [
+                    m(".small.b", lang.get("replyTo_label")),
+                    m(".flex-start.flex-wrap", viewModel.getReplyTos().map((recipient) => m(RecipientButton, {
+                        label: getMailAddressDisplayText(recipient.name, recipient.address, false),
+                        click: createAsyncDropdown({
+                            lazyButtons: () => createMailAddressContextButtons({
+                                mailAddress: recipient,
+                                defaultInboxRuleField: null,
+                            }),
+                            width: bubbleMenuWidth,
+                        }),
+                        style: {
+                            flex: "0 1 auto",
+                        },
+                    }))),
+                ]
+                : null),
+        ]);
+    }
+    renderAttachments(viewModel, importFile) {
+        // Show a loading symbol if we are loading attachments
+        if (viewModel.isLoadingAttachments() && !viewModel.isConnectionLost()) {
+            return m(".flex." + responsiveCardHMargin(), [
+                m(".flex-v-center.pl-button", progressIcon()),
+                m(".small.flex-v-center.plr.button-height", lang.get("loading_msg")),
+            ]);
+        }
+        else {
+            const attachments = viewModel.getNonInlineAttachments();
+            const attachmentCount = attachments.length;
+            // Do nothing if we have no attachments
+            if (attachmentCount === 0) {
+                return null;
+            }
+            // Get the total size of the attachments
+            let totalAttachmentSize = 0;
+            for (const attachment of attachments) {
+                totalAttachmentSize += Number(attachment.size);
+            }
+            return [
+                m(".flex.mt-s.mb-s" + "." + responsiveCardHMargin(), liveDataAttrs(), [
+                    attachmentCount === 1
+                        ? // If we have exactly one attachment, just show the attachment
+                            this.renderAttachmentContainer(viewModel, attachments, importFile)
+                        : // Otherwise, we show the number of attachments and its total size along with a show all button
+                            m(ExpanderButton, {
+                                label: lang.makeTranslation("attachmentAmount_label", lang.get("attachmentAmount_label", { "{amount}": attachmentCount + "" }) + ` (${formatStorageSize(totalAttachmentSize)})`),
+                                style: {
+                                    "padding-top": "inherit",
+                                    height: "inherit",
+                                    "min-height": "inherit",
+                                    "text-decoration": "none",
+                                    "font-weight": "normal",
+                                },
+                                expanded: this.filesExpanded,
+                                color: theme.content_fg,
+                                isBig: true,
+                                isUnformattedLabel: true,
+                                onExpandedChange: (change) => {
+                                    this.filesExpanded = change;
+                                },
+                            }),
+                ]),
+                // if we have more than one attachment, list them here in this expander panel
+                attachments.length > 1
+                    ? m(ExpanderPanel, {
+                        expanded: this.filesExpanded,
+                    }, m(".flex.col." + responsiveCardHMargin(), [
+                        m(".flex.flex-wrap.gap-hpad", this.renderAttachmentContainer(viewModel, attachments, importFile)),
+                        isIOSApp()
+                            ? null
+                            : m(".flex", m(Button, {
+                                label: "saveAll_action",
+                                type: "secondary" /* ButtonType.Secondary */,
+                                click: () => viewModel.downloadAll(),
+                            })),
+                    ]))
+                    : null,
+            ];
+        }
+    }
+    renderAttachmentContainer(viewModel, attachments, importFile) {
+        return attachments.map((attachment) => {
+            const attachmentType = getAttachmentType(attachment.mimeType ?? "");
+            return m(AttachmentBubble, {
+                attachment,
+                remove: null,
+                download: isAndroidApp() || isDesktop()
+                    ? () => viewModel.downloadAndOpenAttachment(attachment, false)
+                    : () => viewModel.downloadAndOpenAttachment(attachment, true),
+                open: isAndroidApp() || isDesktop() ? () => viewModel.downloadAndOpenAttachment(attachment, true) : null,
+                fileImport: viewModel.canImportFile(attachment) ? () => importFile(attachment) : null,
+                type: attachmentType,
+            });
+        });
+    }
+    tutaoBadge(viewModel) {
+        return isTutanotaTeamMail(viewModel.mail)
+            ? m(Badge, {
+                classes: ".mr-s",
+            }, companyTeamLabel)
+            : null;
+    }
+    renderPhishingWarning(viewModel) {
+        if (viewModel.isMailSuspicious()) {
+            return m(InfoBanner, {
+                message: "phishingMessageBody_msg",
+                icon: "Warning" /* Icons.Warning */,
+                type: "warning" /* BannerType.Warning */,
+                helpLink: canSeeTutaLinks(viewModel.logins) ? "https://tuta.com/faq#phishing" /* InfoLink.Phishing */ : null,
+                buttons: [
+                    {
+                        label: "markAsNotPhishing_action",
+                        click: () => viewModel.markAsNotPhishing().then(() => m.redraw()),
+                    },
+                ],
+            });
+        }
+    }
+    renderHardAuthenticationFailWarning(viewModel) {
+        const authFailed = viewModel.checkMailAuthenticationStatus(MailAuthenticationStatus.HARD_FAIL) ||
+            viewModel.mail.encryptionAuthStatus === EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED;
+        if (authFailed) {
+            return m(InfoBanner, {
+                message: "mailAuthFailed_msg",
+                icon: "Warning" /* Icons.Warning */,
+                helpLink: canSeeTutaLinks(viewModel.logins) ? "https://tuta.com/faq#mail-auth" /* InfoLink.MailAuth */ : null,
+                type: "warning" /* BannerType.Warning */,
+                buttons: [
+                    {
+                        label: "close_alt",
+                        click: () => viewModel.setWarningDismissed(true),
+                    },
+                ],
+            });
+        }
+    }
+    renderSoftAuthenticationFailWarning(viewModel) {
+        const buttons = [
+            {
+                label: "close_alt",
+                click: () => viewModel.setWarningDismissed(true),
+            },
+        ];
+        if (viewModel.mail.encryptionAuthStatus === EncryptionAuthStatus.RSA_DESPITE_TUTACRYPT) {
+            return m(InfoBanner, {
+                message: () => lang.get("deprecatedKeyWarning_msg"),
+                icon: "Warning" /* Icons.Warning */,
+                helpLink: canSeeTutaLinks(viewModel.logins) ? "https://tuta.com/support#deprecated-key-warning" /* InfoLink.DeprecatedKey */ : null,
+                buttons: buttons,
+            });
+        }
+        else if (viewModel.checkMailAuthenticationStatus(MailAuthenticationStatus.SOFT_FAIL)) {
+            return m(InfoBanner, {
+                message: () => viewModel.mail.differentEnvelopeSender
+                    ? lang.get("mailAuthMissingWithTechnicalSender_msg", {
+                        "{sender}": viewModel.mail.differentEnvelopeSender,
+                    })
+                    : lang.get("mailAuthMissing_label"),
+                icon: "Warning" /* Icons.Warning */,
+                helpLink: canSeeTutaLinks(viewModel.logins) ? "https://tuta.com/faq#mail-auth" /* InfoLink.MailAuth */ : null,
+                buttons: buttons,
+            });
+        }
+        else {
+            return null;
+        }
+    }
+    renderExternalContentBanner(attrs) {
+        // only show banner when there are blocked images and the user hasn't made a decision about how to handle them
+        if (attrs.viewModel.getContentBlockingStatus() !== "0" /* ContentBlockingStatus.Block */) {
+            return null;
+        }
+        const showButton = {
+            label: "showBlockedContent_action",
+            click: () => attrs.viewModel.setContentBlockingStatus("1" /* ContentBlockingStatus.Show */),
+        };
+        const alwaysOrNeverAllowButtons = attrs.viewModel.canPersistBlockingStatus()
+            ? [
+                attrs.viewModel.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED)
+                    ? {
+                        label: "allowExternalContentSender_action",
+                        click: () => attrs.viewModel.setContentBlockingStatus("2" /* ContentBlockingStatus.AlwaysShow */),
+                    }
+                    : null,
+                {
+                    label: "blockExternalContentSender_action",
+                    click: () => attrs.viewModel.setContentBlockingStatus("4" /* ContentBlockingStatus.AlwaysBlock */),
+                },
+            ].filter(isNotNull)
+            : [];
+        // on narrow screens the buttons will end up on 2 lines if there are too many, this looks bad.
+        const maybeDropdownButtons = styles.isSingleColumnLayout() && alwaysOrNeverAllowButtons.length > 1
+            ? [
+                {
+                    label: "more_label",
+                    click: createAsyncDropdown({
+                        width: 216,
+                        lazyButtons: async () => resolveMaybeLazy(alwaysOrNeverAllowButtons),
+                    }),
+                },
+            ]
+            : alwaysOrNeverAllowButtons;
+        return m(InfoBanner, {
+            message: "contentBlocked_msg",
+            icon: "Picture" /* Icons.Picture */,
+            helpLink: canSeeTutaLinks(attrs.viewModel.logins) ? "https://tuta.com/faq#load-images" /* InfoLink.LoadImages */ : null,
+            buttons: [showButton, ...maybeDropdownButtons],
+        });
+    }
+    moreButton(attrs) {
+        return m(IconButton, {
+            title: "more_label",
+            icon: "More" /* Icons.More */,
+            click: this.prepareMoreActions(attrs),
+        });
+    }
+    prepareMoreActions({ viewModel }) {
+        return createDropdown({
+            lazyButtons: () => {
+                let actionButtons = [];
+                if (viewModel.isDraftMail()) {
+                    actionButtons.push({
+                        label: "edit_action",
+                        click: () => editDraft(viewModel),
+                        icon: "Edit" /* Icons.Edit */,
+                    });
+                    actionButtons.push({
+                        label: "move_action",
+                        click: (_, dom) => showMoveMailsDropdown(viewModel.mailboxModel, viewModel.mailModel, dom.getBoundingClientRect(), [viewModel.mail]),
+                        icon: "Folder" /* Icons.Folder */,
+                    });
+                    actionButtons.push({
+                        label: "delete_action",
+                        click: () => promptAndDeleteMails(viewModel.mailModel, [viewModel.mail], noOp),
+                        icon: "Trash" /* Icons.Trash */,
+                    });
+                }
+                else {
+                    if (viewModel.canForwardOrMove()) {
+                        actionButtons.push({
+                            label: "reply_action",
+                            click: () => viewModel.reply(false),
+                            icon: "Reply" /* Icons.Reply */,
+                        });
+                        if (viewModel.canReplyAll()) {
+                            actionButtons.push({
+                                label: "replyAll_action",
+                                click: () => viewModel.reply(true),
+                                icon: "ReplyAll" /* Icons.ReplyAll */,
+                            });
+                        }
+                        actionButtons.push({
+                            label: "forward_action",
+                            click: () => viewModel.forward(),
+                            icon: "Forward" /* Icons.Forward */,
+                        });
+                        actionButtons.push({
+                            label: "move_action",
+                            click: (_, dom) => showMoveMailsDropdown(viewModel.mailboxModel, viewModel.mailModel, dom.getBoundingClientRect(), [viewModel.mail]),
+                            icon: "Folder" /* Icons.Folder */,
+                        });
+                    }
+                    if (viewModel.mailModel.canAssignLabels()) {
+                        actionButtons.push({
+                            label: "assignLabel_action",
+                            click: (_, dom) => {
+                                const popup = new LabelsPopup(dom, dom.getBoundingClientRect(), styles.isDesktopLayout() ? 300 : 200, viewModel.mailModel.getLabelsForMails([viewModel.mail]), viewModel.mailModel.getLabelStatesForMails([viewModel.mail]), (addedLabels, removedLabels) => viewModel.mailModel.applyLabels([viewModel.mail], addedLabels, removedLabels));
+                                // waiting for the dropdown to be closed
+                                setTimeout(() => {
+                                    popup.show();
+                                }, 16);
+                            },
+                            icon: "Label" /* Icons.Label */,
+                        });
+                    }
+                    actionButtons.push({
+                        label: "delete_action",
+                        click: () => promptAndDeleteMails(viewModel.mailModel, [viewModel.mail], noOp),
+                        icon: "Trash" /* Icons.Trash */,
+                    });
+                    actionButtons.push(...mailViewerMoreActions(viewModel));
+                }
+                return actionButtons;
+            },
+            width: 300,
+        });
+    }
+    getRecipientEmailAddress({ viewModel }) {
+        const relevantRecipient = viewModel.getRelevantRecipient();
+        if (relevantRecipient) {
+            const numberOfAllRecipients = viewModel.getNumberOfRecipients();
+            return m(".flex.click.small.ml-between-s.items-center", {
+                style: {
+                    // use this to allow the container to shrink, otherwise it doesn't want to cut the recipient address
+                    minWidth: "20px",
+                },
+            }, [
+                m("", lang.get("mailViewerRecipients_label")),
+                m(".text-ellipsis", relevantRecipient.address),
+                m(".flex.no-wrap", [
+                    numberOfAllRecipients > 1 ? `+ ${numberOfAllRecipients - 1}` : null,
+                    m(Icon, {
+                        icon: "Expand" /* BootIcons.Expand */,
+                        container: "div",
+                        style: {
+                            fill: theme.content_fg,
+                            transform: this.detailsExpanded ? "rotate(180deg)" : "",
+                        },
+                    }),
+                ]),
+            ]);
+        }
+        else {
+            return "";
+        }
+    }
+}
+//# sourceMappingURL=MailViewerHeader.js.map

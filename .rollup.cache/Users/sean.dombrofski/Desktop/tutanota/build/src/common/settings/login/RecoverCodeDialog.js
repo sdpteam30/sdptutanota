@@ -1,0 +1,118 @@
+import { lang } from "../../misc/LanguageViewModel.js";
+import { Dialog } from "../../gui/base/Dialog.js";
+import { assertNotNull, noOp, ofClass } from "@tutao/tutanota-utils";
+import m from "mithril";
+import { assertMainOrNode, isApp } from "../../api/common/Env.js";
+import { copyToClipboard } from "../../misc/ClipboardUtils.js";
+import { AccessBlockedError, NotAuthenticatedError } from "../../api/common/error/RestError.js";
+import { locator } from "../../api/main/CommonLocator.js";
+import { getEtId, isSameId } from "../../api/common/utils/EntityUtils.js";
+import { GroupType } from "../../api/common/TutanotaConstants.js";
+import { IconButton } from "../../gui/base/IconButton.js";
+import { MoreInfoLink } from "../../misc/news/MoreInfoLink.js";
+import { showRequestPasswordDialog } from "../../misc/passwords/PasswordRequestDialog.js";
+assertMainOrNode();
+export function showRecoverCodeDialogAfterPasswordVerificationAndInfoDialog(user) {
+    // We only show the recovery code if it is for the current user and it is a global admin
+    if (!isSameId(getEtId(locator.logins.getUserController().user), getEtId(user)) || !user.memberships.some((gm) => gm.groupType === GroupType.Admin)) {
+        return;
+    }
+    const isRecoverCodeAvailable = user.auth && user.auth.recoverCode != null;
+    Dialog.showActionDialog({
+        title: "recoveryCode_label",
+        type: "EditMedium" /* DialogType.EditMedium */,
+        child: () => m(".pt", lang.get("recoveryCode_msg")),
+        allowOkWithReturn: true,
+        okAction: (dialog) => {
+            dialog.close();
+            showRecoverCodeDialogAfterPasswordVerification(isRecoverCodeAvailable ? "get" : "create", false);
+        },
+        okActionTextId: isRecoverCodeAvailable ? "show_action" : "setUp_action",
+    });
+}
+export function showRecoverCodeDialogAfterPasswordVerification(action, showMessage = true) {
+    const recoverCodeFacade = locator.recoverCodeFacade;
+    const dialog = showRequestPasswordDialog({
+        action: (pw) => {
+            return (action === "get" ? recoverCodeFacade.getRecoverCodeHex(pw) : recoverCodeFacade.createRecoveryCode(pw))
+                .then((recoverCode) => {
+                dialog.close();
+                showRecoverCodeDialog(recoverCode, showMessage);
+                return "";
+            })
+                .catch(ofClass(NotAuthenticatedError, () => lang.get("invalidPassword_msg")))
+                .catch(ofClass(AccessBlockedError, () => lang.get("tooManyAttempts_msg")));
+        },
+        cancel: {
+            textId: "cancel_action",
+            action: noOp,
+        },
+    });
+}
+export function showRecoverCodeDialog(recoverCode, showMessage) {
+    return new Promise((resolve) => {
+        Dialog.showActionDialog({
+            title: "recoveryCode_label",
+            child: {
+                view: () => {
+                    return m(RecoverCodeField, {
+                        showMessage,
+                        recoverCode,
+                    });
+                },
+            },
+            allowCancel: false,
+            allowOkWithReturn: true,
+            okAction: (dialog) => {
+                dialog.close();
+                resolve();
+            },
+            type: "EditMedium" /* DialogType.EditMedium */,
+        });
+    });
+}
+export class RecoverCodeField {
+    view(vnode) {
+        let { recoverCode, showButtons, showMessage, image } = vnode.attrs;
+        showButtons = showButtons ?? true;
+        const splitRecoverCode = assertNotNull(recoverCode.match(/.{4}/g)).join(" ");
+        return [
+            showMessage
+                ? image
+                    ? m(".flex-space-around.flex-wrap", [
+                        m(".flex-grow-shrink-half.plr-l.flex-center.align-self-center", this.renderRecoveryText()),
+                        m(".flex-grow-shrink-half.plr-l.flex-center.align-self-center", m("img.pt.bg-white.pt.pb", {
+                            src: image.src,
+                            alt: lang.getTranslationText(image.alt),
+                            style: {
+                                width: "200px",
+                            },
+                        })),
+                    ])
+                    : this.renderRecoveryText()
+                : m("", lang.get("emptyString_msg")),
+            m(".text-break.monospace.selectable.flex.flex-wrap.border.pt.pb.plr", splitRecoverCode),
+            showButtons
+                ? m(".flex.flex-end.mt-m", [
+                    m(IconButton, {
+                        title: "copy_action",
+                        icon: "Clipboard" /* Icons.Clipboard */,
+                        click: () => copyToClipboard(splitRecoverCode),
+                    }),
+                    isApp() || typeof window.print !== "function"
+                        ? null
+                        : m(IconButton, {
+                            title: "print_action",
+                            icon: "Print" /* Icons.Print */,
+                            click: () => window.print(),
+                        }),
+                ])
+                : null,
+        ];
+    }
+    renderRecoveryText() {
+        const link = "https://tuta.com/faq#reset" /* InfoLink.RecoverCode */;
+        return m(".pt.pb", [lang.get("recoveryCode_msg"), m("", [m(MoreInfoLink, { link, isSmall: true })])]);
+    }
+}
+//# sourceMappingURL=RecoverCodeDialog.js.map

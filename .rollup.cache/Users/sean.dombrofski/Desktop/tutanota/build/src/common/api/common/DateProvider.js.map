@@ -1,0 +1,1 @@
+{"version":3,"file":"DateProvider.js","sourceRoot":"","sources":["../../../../../src/common/api/common/DateProvider.ts"],"names":[],"mappings":"","sourcesContent":["/** provide the current date/timezone depending on the environments capabilities. */\nexport interface DateProvider {\n\tnow(): number\n\n\ttimeZone(): string\n}\n"]}

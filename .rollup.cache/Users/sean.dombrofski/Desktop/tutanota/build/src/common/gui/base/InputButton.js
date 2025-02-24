@@ -1,0 +1,118 @@
+import m from "mithril";
+import { theme } from "../theme.js";
+import { SingleLineTextField } from "./SingleLineTextField.js";
+import { px, size } from "../size.js";
+export var InputButtonVariant;
+(function (InputButtonVariant) {
+    InputButtonVariant["OUTLINE"] = "outline";
+})(InputButtonVariant || (InputButtonVariant = {}));
+/**
+ * A button with an input that can be activated when clicked or focused
+ * @see Component attributes: {InputButtonAttributes}
+ * @example
+ * m(InputButton, {
+ *   ariaLabel: lang.get("dateFrom_label")
+ *   inputValue: this.value,
+ * 	 oninput: (newValue) => (model.value = newValue),
+ * 	 display: lang.get("placeholder"),
+ * 	 variant: InputButtonVariant.OUTLINE,
+ * 	 onclick: console.log,
+ * 	 disabled: false,
+ *   displayStyle: {
+ *     color: "blue"
+ *   }
+ * }),
+ */
+export class InputButton {
+    isFocused = false;
+    inputDOM;
+    buttonDOM;
+    view({ attrs }) {
+        return m("button", {
+            title: attrs.ariaLabel,
+            "aria-live": "off", // Button contents and label will be handled by the input field
+            class: this.resolveContainerClasses(attrs.variant, attrs.classes, attrs.disabled),
+            tabIndex: attrs.tabIndex,
+            style: {
+                borderColor: theme.content_message_bg,
+                padding: 0,
+                ...attrs.containerStyle,
+            },
+            oncreate: (vnode) => {
+                this.buttonDOM = vnode.dom;
+            },
+            onclick: (event) => {
+                this.isFocused = true;
+                if (this.inputDOM) {
+                    this.inputDOM.style.display = "block";
+                    this.inputDOM.click();
+                }
+                attrs.onclick?.(event);
+            },
+            onfocus: () => {
+                this.isFocused = true;
+                if (this.inputDOM) {
+                    this.inputDOM.style.display = "block";
+                    if (this.buttonDOM) {
+                        this.buttonDOM.tabIndex = Number("-1" /* TabIndex.Programmatic */);
+                    }
+                    this.inputDOM.focus();
+                }
+            },
+            disabled: attrs.disabled,
+        }, [
+            m.fragment({}, [
+                m(SingleLineTextField, {
+                    ariaLabel: attrs.ariaLabel,
+                    onblur: () => {
+                        this.isFocused = false;
+                        this.inputDOM.style.display = "none";
+                        if (this.buttonDOM) {
+                            this.buttonDOM.tabIndex = Number(attrs.tabIndex ?? "0" /* TabIndex.Default */);
+                        }
+                        attrs.onblur?.();
+                    },
+                    oncreate: (vnode) => {
+                        this.inputDOM = vnode.dom;
+                        this.inputDOM.style.display = "none";
+                        attrs.oncreate?.(vnode);
+                    },
+                    disabled: attrs.disabled,
+                    value: attrs.inputValue,
+                    oninput: attrs.oninput,
+                    onkeydown: attrs.onkeydown,
+                    onfocus: attrs.onfocus,
+                    classes: this.resolveInputClasses(attrs.variant),
+                    style: {
+                        padding: `${px(size.vpad_small)} 0`,
+                    },
+                    type: "text" /* TextFieldType.Text */,
+                }),
+            ]),
+            m("span.tutaui-text-field", {
+                style: {
+                    display: this.isFocused ? "none" : "block",
+                    padding: `${px(size.vpad_small)} 0`,
+                    ...attrs.displayStyle,
+                },
+            }, attrs.display),
+        ]);
+    }
+    resolveInputClasses(variant) {
+        const resolvedClasses = ["text-center", "noselect"];
+        if (variant === InputButtonVariant.OUTLINE && this.isFocused) {
+            resolvedClasses.push("tutaui-button-outline", "border-content-message-bg");
+        }
+        return resolvedClasses;
+    }
+    resolveContainerClasses(variant = InputButtonVariant.OUTLINE, classes = [], disabled = false) {
+        const resolvedClasses = [...classes, "full-width"];
+        if (disabled)
+            resolvedClasses.push("disabled", "click-disabled");
+        if (variant === InputButtonVariant.OUTLINE && !this.isFocused) {
+            resolvedClasses.push("tutaui-button-outline");
+        }
+        return resolvedClasses.join(" ");
+    }
+}
+//# sourceMappingURL=InputButton.js.map

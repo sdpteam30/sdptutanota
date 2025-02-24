@@ -1,0 +1,1 @@
+{"version":3,"file":"SseInfo.js","sourceRoot":"","sources":["../../../../../src/common/desktop/sse/SseInfo.ts"],"names":[],"mappings":"","sourcesContent":["/**\n * Data used for notifications\n */\nexport interface SseInfo {\n\t/** device identifier */\n\tidentifier: string\n\t/** origin to connect to */\n\tsseOrigin: string\n\tuserIds: Array<string>\n}\n"]}

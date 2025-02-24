@@ -1,0 +1,72 @@
+import { defer, noOp } from "@tutao/tutanota-utils";
+export class SuspensionHandler {
+    infoMessageHandler;
+    _isSuspended;
+    _suspendedUntil;
+    _deferredRequests;
+    _hasSentInfoMessage;
+    _timeout;
+    constructor(infoMessageHandler, systemTimeout) {
+        this.infoMessageHandler = infoMessageHandler;
+        this._isSuspended = false;
+        this._suspendedUntil = 0;
+        this._deferredRequests = [];
+        this._hasSentInfoMessage = false;
+        this._timeout = systemTimeout;
+    }
+    /**
+     * Activates suspension states for the given amount of seconds. After the end of the suspension time all deferred requests are executed.
+     */
+    // if already suspended do we want to ignore incoming suspensions?
+    activateSuspensionIfInactive(suspensionDurationSeconds, resourceURL) {
+        if (!this.isSuspended()) {
+            console.log(`Activating suspension (${resourceURL}):  ${suspensionDurationSeconds}s`);
+            this._isSuspended = true;
+            const suspensionStartTime = Date.now();
+            this._timeout.setTimeout(async () => {
+                this._isSuspended = false;
+                console.log(`Suspension released after ${(Date.now() - suspensionStartTime) / 1000}s`);
+                await this._onSuspensionComplete();
+            }, suspensionDurationSeconds * 1000);
+            if (!this._hasSentInfoMessage) {
+                this.infoMessageHandler.onInfoMessage({
+                    translationKey: "clientSuspensionWait_label",
+                    args: {},
+                });
+                this._hasSentInfoMessage = true;
+            }
+        }
+    }
+    isSuspended() {
+        return this._isSuspended;
+    }
+    /**
+     * Adds a request to the deferred queue.
+     * @param request
+     * @returns {Promise<T>}
+     */
+    deferRequest(request) {
+        if (this._isSuspended) {
+            const deferredObject = defer();
+            this._deferredRequests.push(deferredObject);
+            // assign request promise to deferred object
+            deferredObject.promise = deferredObject.promise.then(() => request());
+            return deferredObject.promise;
+        }
+        else {
+            // if suspension is not activated then immediately execute the request
+            return request();
+        }
+    }
+    async _onSuspensionComplete() {
+        const deferredRequests = this._deferredRequests;
+        this._deferredRequests = [];
+        // do wee need to delay those requests?
+        for (let deferredRequest of deferredRequests) {
+            deferredRequest.resolve(null);
+            // Ignore all errors here, any errors should be caught by whoever is handling the deferred request
+            await deferredRequest.promise.catch(noOp);
+        }
+    }
+}
+//# sourceMappingURL=SuspensionHandler.js.map

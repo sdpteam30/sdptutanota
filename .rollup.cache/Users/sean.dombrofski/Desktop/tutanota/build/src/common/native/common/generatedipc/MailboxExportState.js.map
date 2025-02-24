@@ -1,0 +1,1 @@
+{"version":3,"file":"MailboxExportState.js","sourceRoot":"","sources":["../../../../../../src/common/native/common/generatedipc/MailboxExportState.ts"],"names":[],"mappings":"AAAA,iCAAiC","sourcesContent":["/* generated file, don't edit. */\n\nexport { MailboxExportState } from \"../../../desktop/export/MailboxExportPersistence.js\"\n"]}

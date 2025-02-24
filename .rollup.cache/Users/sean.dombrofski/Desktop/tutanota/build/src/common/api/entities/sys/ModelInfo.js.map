@@ -1,0 +1,1 @@
+{"version":3,"file":"ModelInfo.js","sourceRoot":"","sources":["../../../../../../src/common/api/entities/sys/ModelInfo.ts"],"names":[],"mappings":"AAAA,MAAM,SAAS,GAAG;IACjB,OAAO,EAAE,GAAG;IACZ,eAAe,EAAE,GAAG;CACpB,CAAA;AAED,eAAe,SAAS,CAAA","sourcesContent":["const modelInfo = {\n\tversion: 122,\n\tcompatibleSince: 121,\n}\n\nexport default modelInfo"]}

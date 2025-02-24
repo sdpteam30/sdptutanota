@@ -1,0 +1,1 @@
+{"version":3,"file":"MobilePaymentResultType.js","sourceRoot":"","sources":["../../../../../../src/common/native/common/generatedipc/MobilePaymentResultType.ts"],"names":[],"mappings":"AAAA,iCAAiC","sourcesContent":["/* generated file, don't edit. */\n\nexport const enum MobilePaymentResultType {\n\tSuccess = \"0\",\n\tCancelled = \"1\",\n\tPending = \"2\",\n}\n"]}

@@ -1,0 +1,1 @@
+{"version":3,"file":"NoElementIdForStateImportError.js","sourceRoot":"","sources":["../../../../../src/common/desktop/mailimport/NoElementIdForStateImportError.ts"],"names":[],"mappings":";AAAA,MAAM,8BAA+B,SAAQ,KAAK;CAAG","sourcesContent":["class NoElementIdForStateImportError extends Error {}\n"]}

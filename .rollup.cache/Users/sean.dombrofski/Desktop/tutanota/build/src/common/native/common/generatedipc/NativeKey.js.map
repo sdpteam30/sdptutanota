@@ -1,0 +1,1 @@
+{"version":3,"file":"NativeKey.js","sourceRoot":"","sources":["../../../../../../src/common/native/common/generatedipc/NativeKey.ts"],"names":[],"mappings":"AAAA,iCAAiC","sourcesContent":["/* generated file, don't edit. */\n\n/**\n * Key definition for shortcuts.\n */\nexport interface NativeKey {\n\treadonly code: number\n\treadonly name: string\n}\n"]}

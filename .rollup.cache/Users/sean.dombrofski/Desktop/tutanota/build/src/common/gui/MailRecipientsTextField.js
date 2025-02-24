@@ -1,0 +1,238 @@
+import m from "mithril";
+import { BubbleTextField } from "./base/BubbleTextField.js";
+import { px, size } from "./size.js";
+import { Icon, progressIcon } from "./base/Icon.js";
+import { lang } from "../misc/LanguageViewModel.js";
+import { stringToNameAndMailAddress } from "../misc/parsing/MailAddressParser.js";
+import { getFirstOrThrow } from "@tutao/tutanota-utils";
+import { Dialog } from "./base/Dialog.js";
+import { SearchDropDown } from "./SearchDropDown.js";
+import { findRecipientWithAddress } from "../api/common/utils/CommonCalendarUtils.js";
+import { theme } from "./theme.js";
+import { getMailAddressDisplayText } from "../mailFunctionality/SharedMailUtils.js";
+/**
+ * A component for inputting a list of recipients
+ * recipients are represented as bubbles, and a contact search dropdown is shown as the user types
+ */
+export class MailRecipientsTextField {
+    // don't access me directly, use getter and setter
+    selectedSuggestionIdx = 0;
+    focused = false;
+    view({ attrs }) {
+        return [this.renderTextField(attrs), this.focused ? this.renderSuggestions(attrs) : null];
+    }
+    renderTextField(attrs) {
+        return m(BubbleTextField, {
+            label: attrs.label,
+            text: attrs.text,
+            helpLabel: attrs.helpLabel,
+            onInput: (text) => {
+                attrs.search.search(text).then(() => m.redraw());
+                // if the new text length is more than one character longer,
+                // it means the user pasted the text in, so we want to try and resolve a list of contacts
+                const { remainingText, newRecipients, errors } = text.length - attrs.text.length > 1 ? parsePastedInput(text) : parseTypedInput(text);
+                for (const { address, name } of newRecipients) {
+                    attrs.onRecipientAdded(address, name, null);
+                }
+                if (errors.length === 1 && newRecipients.length === 0) {
+                    // if there was a single recipient and it was invalid then just pretend nothing happened
+                    attrs.onTextChanged(getFirstOrThrow(errors));
+                }
+                else {
+                    if (errors.length > 0) {
+                        Dialog.message(lang.makeTranslation("invalidPastedRecipients_msg", `${lang.get("invalidPastedRecipients_msg")}\n\n${errors.join("\n")}`));
+                    }
+                    attrs.onTextChanged(remainingText);
+                }
+            },
+            items: attrs.recipients.map((recipient) => recipient.address),
+            renderBubbleText: (address) => {
+                const name = findRecipientWithAddress(attrs.recipients, address)?.name ?? null;
+                return lang.makeTranslation(address, getMailAddressDisplayText(name, address, false));
+            },
+            getBubbleDropdownAttrs: async (address) => (await attrs.getRecipientClickedDropdownAttrs?.(address)) ?? [],
+            onBackspace: () => {
+                if (attrs.text === "" && attrs.recipients.length > 0) {
+                    const { address } = attrs.recipients.slice().pop();
+                    attrs.onTextChanged(address);
+                    attrs.onRecipientRemoved(address);
+                    return false;
+                }
+                return true;
+            },
+            onEnterKey: () => {
+                this.resolveInput(attrs, true);
+                return true;
+            },
+            onUpKey: () => {
+                this.setSelectedSuggestionIdx(this.getSelectedSuggestionIdx(attrs) + 1);
+                return false;
+            },
+            onDownKey: () => {
+                this.setSelectedSuggestionIdx(this.getSelectedSuggestionIdx(attrs) - 1);
+                return false;
+            },
+            onFocus: () => {
+                this.focused = true;
+            },
+            onBlur: () => {
+                this.focused = false;
+                this.resolveInput(attrs, false);
+                return true;
+            },
+            disabled: attrs.disabled,
+            injectionsRight: m(".flex.items-center", [
+                // Placeholder element for the suggestion progress icon with a fixed width and height to avoid flickering.
+                // when reaching the end of the input line and when entering a text into the second line.
+                m(".flex.align-right.mr-s.flex.items-end.pb-s", {
+                    style: {
+                        width: px(20), // in case the progress icon is not shown we reserve the width of the progress icon
+                        height: px(size.button_height_compact),
+                    },
+                }, attrs.search.isLoading() ? progressIcon() : null),
+                attrs.injectionsRight,
+            ]),
+        });
+    }
+    renderSuggestions(attrs) {
+        return m(".rel", m(SearchDropDown, {
+            suggestions: attrs.search.results().map((suggestion) => {
+                if (suggestion.type === "recipient") {
+                    return {
+                        firstRow: suggestion.value.name,
+                        secondRow: suggestion.value.address,
+                    };
+                }
+                else {
+                    return {
+                        firstRow: m(Icon, {
+                            icon: "People" /* Icons.People */,
+                            style: {
+                                fill: theme.content_fg,
+                                "aria-describedby": lang.get("contactListName_label"),
+                            },
+                        }),
+                        secondRow: suggestion.value.name,
+                    };
+                }
+            }),
+            selectedSuggestionIndex: this.getSelectedSuggestionIdx(attrs),
+            onSuggestionSelected: (idx) => this.selectSuggestion(attrs, idx),
+            maxHeight: attrs.maxSuggestionsToShow ?? null,
+        }));
+    }
+    /**
+     * Resolves a typed in mail address or one of the suggested ones.
+     * @param selectSuggestion boolean value indicating whether a suggestion should be selected or not. Should be true if a suggestion is explicitly selected by
+     * for example hitting the enter key and false e.g. if the dialog is closed
+     */
+    resolveInput(attrs, selectSuggestion) {
+        const suggestions = attrs.search.results();
+        if (suggestions.length > 0 && selectSuggestion) {
+            this.selectSuggestion(attrs, this.getSelectedSuggestionIdx(attrs));
+        }
+        else {
+            const parsed = parseMailAddress(attrs.text);
+            if (parsed != null) {
+                attrs.onRecipientAdded(parsed.address, parsed.name, null);
+                attrs.onTextChanged("");
+            }
+        }
+    }
+    async selectSuggestion(attrs, index) {
+        const selection = attrs.search.results()[index];
+        if (selection == null) {
+            return;
+        }
+        if (selection.type === "recipient") {
+            const { address, name, contact } = selection.value;
+            attrs.onRecipientAdded(address, name, contact);
+            attrs.search.clear();
+            attrs.onTextChanged("");
+        }
+        else {
+            attrs.search.clear();
+            attrs.onTextChanged("");
+            const recipients = await attrs.search.resolveContactList(selection.value);
+            for (const { address, name, contact } of recipients) {
+                attrs.onRecipientAdded(address, name, contact);
+            }
+            m.redraw();
+        }
+    }
+    getSelectedSuggestionIdx(attrs) {
+        return Math.min(Math.max(this.selectedSuggestionIdx, 0), attrs.search.results().length - 1);
+    }
+    setSelectedSuggestionIdx(idx) {
+        this.selectedSuggestionIdx = idx;
+    }
+}
+/**
+ * Parse a list of valid mail addresses separated by either a semicolon or a comma.
+ * Invalid addresses will be returned as a separate list
+ */
+export function parsePastedInput(text) {
+    const separator = text.indexOf(";") !== -1 ? ";" : ",";
+    const textParts = text.split(separator).map((part) => part.trim());
+    const result = {
+        remainingText: "",
+        newRecipients: [],
+        errors: [],
+    };
+    for (let part of textParts) {
+        part = part.trim();
+        if (part.length !== 0) {
+            const parsed = parseMailAddress(part);
+            if (!parsed) {
+                result.errors.push(part);
+            }
+            else {
+                result.newRecipients.push(parsed);
+            }
+        }
+    }
+    return result;
+}
+/**
+ * Parse text when it is typed by the user
+ * When the final character is an expected delimiter (';', ',', ' '),
+ * then we attempt to parse the preceding text. If it is a valid mail address,
+ * it is successfully parsed
+ * invalid input gets returned in `remainingText`, `errors` is always empty
+ * @param text
+ */
+export function parseTypedInput(text) {
+    const lastCharacter = text.slice(-1);
+    // on semicolon, comman or space we want to try to resolve the input text
+    if (lastCharacter === ";" || lastCharacter === "," || lastCharacter === " ") {
+        const textMinusLast = text.slice(0, -1);
+        const result = parseMailAddress(textMinusLast);
+        const remainingText = result != null ? "" : textMinusLast;
+        return {
+            remainingText,
+            newRecipients: result ? [result] : [],
+            errors: [],
+        };
+    }
+    else {
+        return {
+            remainingText: text,
+            newRecipients: [],
+            errors: [],
+        };
+    }
+}
+export function parseMailAddress(text) {
+    text = text.trim();
+    if (text === "")
+        return null;
+    const nameAndMailAddress = stringToNameAndMailAddress(text);
+    if (nameAndMailAddress) {
+        const name = nameAndMailAddress.name ? nameAndMailAddress.name : null;
+        return { name, address: nameAndMailAddress.mailAddress };
+    }
+    else {
+        return null;
+    }
+}
+//# sourceMappingURL=MailRecipientsTextField.js.map

@@ -1,0 +1,93 @@
+import { DeviceStorageUnavailableError } from "../../api/common/error/DeviceStorageUnavailableError.js";
+export function preselectGnomeLibsecret(electron) {
+    // this is how chromium selects a backend:
+    // https://chromium.googlesource.com/chromium/src/+/main/components/os_crypt/sync/key_storage_util_linux.cc
+    // also for DE detection, which happens before:
+    // https://chromium.googlesource.com/chromium/src/+/main/base/nix/xdg_util.cc
+    // I'm 90% sure that it's the deprecated "GNOME_DESKTOP_SESSION_ID" env var that's set once you have logged into gnome
+    // and back out that makes it suddenly work with i3 since chromium falls back to that if none of the more modern vars
+    // contain something it recognizes.
+    // if no explicit backend is given, we default to trying gnome-libsecret since that was what we required before.
+    if (process.platform === "linux" && !process.argv.some((a) => a.startsWith("--password-store="))) {
+        electron.app.commandLine.appendSwitch("password-store", "gnome-libsecret");
+    }
+}
+/**
+ * Secret Storage impl using the electron 15+ SafeStorage API
+ *
+ * Note: the main thread will be blocked while the keychain is being unlocked,
+ * potentially for as long as the user takes to enter a password.
+ * We're asking for access before any windows are created, which should prevent
+ * any weirdness arising from that.
+ */
+export class SafeStorageSecretStorage {
+    electron;
+    fs;
+    path;
+    initialized = false;
+    constructor(electron, fs, path) {
+        this.electron = electron;
+        this.fs = fs;
+        this.path = path;
+    }
+    async getPassword(service, account) {
+        await this.assertAvailable();
+        const keyPath = this.getKeyPath(service, account);
+        try {
+            const encPwBuffer = await this.fs.promises.readFile(keyPath);
+            return this.electron.safeStorage.decryptString(encPwBuffer);
+        }
+        catch (e) {
+            if (e.code === "ENOENT") {
+                // the key wasn't created yet
+                return null;
+            }
+            throw e;
+        }
+    }
+    async setPassword(service, account, password) {
+        await this.assertAvailable();
+        const keyPath = this.getKeyPath(service, account);
+        const cypherBuffer = this.electron.safeStorage.encryptString(password);
+        return this.fs.promises.writeFile(keyPath, cypherBuffer);
+    }
+    getKeyPath(service, account) {
+        const fname = service.concat("-", account);
+        const safeStoragePath = this.getSafeStoragePath();
+        return this.path.join(safeStoragePath, fname);
+    }
+    /**
+     * this should always be a path inside the user's home directory (or equivalent)
+     * @private
+     */
+    getSafeStoragePath() {
+        return this.path.join(this.electron.app.getPath("userData"), "safe_storage");
+    }
+    /**
+     * ensures that the safe_storage directory exists and that we can use the
+     * safeStorage API
+     * @private
+     */
+    async assertAvailable() {
+        await this.electron.app.whenReady();
+        await this.fs.promises.mkdir(this.getSafeStoragePath(), { recursive: true });
+        const onLinux = process.platform === "linux";
+        const backend = onLinux ? this.electron.safeStorage.getSelectedStorageBackend() : null;
+        if (!this.initialized && backend === "basic_text") {
+            // this will force isEncryptionAvailable to return true
+            this.electron.safeStorage.setUsePlainTextEncryption(true);
+            // note that `basic_text` uses a hardcoded key which is insecure
+            console.warn(`Detected safeStorage backend is insecure: ${backend}. Consider choosing a different one via command line args, or set up an app password to protect local data`);
+        }
+        if (this.electron.safeStorage.isEncryptionAvailable()) {
+            if (!this.initialized && onLinux) {
+                // only linux has variable backends
+                this.initialized = true;
+                console.log("using safeStorage with backend", backend);
+            }
+            return;
+        }
+        throw new DeviceStorageUnavailableError("safeStorage API is not available", null);
+    }
+}
+//# sourceMappingURL=SecretStorage.js.map

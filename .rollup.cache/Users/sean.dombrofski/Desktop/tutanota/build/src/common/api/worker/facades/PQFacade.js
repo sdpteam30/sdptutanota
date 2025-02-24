@@ -1,0 +1,60 @@
+import { aesEncrypt, authenticatedAesDecrypt, eccDecapsulate, eccEncapsulate, generateEccKeyPair, hkdf, KEY_LENGTH_BYTES_AES_256, KeyPairType, kyberPublicKeyToBytes, pqKeyPairsToPublicKeys, uint8ArrayToKey, } from "@tutao/tutanota-crypto";
+import { concat, stringToUtf8Uint8Array } from "@tutao/tutanota-utils";
+import { decodePQMessage, encodePQMessage } from "./PQMessage.js";
+import { CryptoProtocolVersion } from "../../common/TutanotaConstants.js";
+export class PQFacade {
+    kyberFacade;
+    constructor(kyberFacade) {
+        this.kyberFacade = kyberFacade;
+    }
+    async generateKeyPairs() {
+        return {
+            keyPairType: KeyPairType.TUTA_CRYPT,
+            eccKeyPair: generateEccKeyPair(),
+            kyberKeyPair: await this.kyberFacade.generateKeypair(),
+        };
+    }
+    async encapsulateAndEncode(senderIdentityKeyPair, ephemeralKeyPair, recipientPublicKeys, bucketKey) {
+        const encapsulated = await this.encapsulate(senderIdentityKeyPair, ephemeralKeyPair, recipientPublicKeys, bucketKey);
+        return encodePQMessage(encapsulated);
+    }
+    /**
+     * @VisibleForTesting
+     */
+    async encapsulate(senderIdentityKeyPair, ephemeralKeyPair, recipientPublicKeys, bucketKey) {
+        const eccSharedSecret = eccEncapsulate(senderIdentityKeyPair.privateKey, ephemeralKeyPair.privateKey, recipientPublicKeys.eccPublicKey);
+        const kyberEncapsulation = await this.kyberFacade.encapsulate(recipientPublicKeys.kyberPublicKey);
+        const kyberCipherText = kyberEncapsulation.ciphertext;
+        const kek = this.derivePQKEK(senderIdentityKeyPair.publicKey, ephemeralKeyPair.publicKey, recipientPublicKeys, kyberCipherText, kyberEncapsulation.sharedSecret, eccSharedSecret, CryptoProtocolVersion.TUTA_CRYPT);
+        const kekEncBucketKey = aesEncrypt(kek, bucketKey);
+        return {
+            senderIdentityPubKey: senderIdentityKeyPair.publicKey,
+            ephemeralPubKey: ephemeralKeyPair.publicKey,
+            encapsulation: {
+                kyberCipherText,
+                kekEncBucketKey: kekEncBucketKey,
+            },
+        };
+    }
+    async decapsulateEncoded(encodedPQMessage, recipientKeys) {
+        const decoded = decodePQMessage(encodedPQMessage);
+        return { decryptedSymKeyBytes: await this.decapsulate(decoded, recipientKeys), senderIdentityPubKey: decoded.senderIdentityPubKey };
+    }
+    /**
+     * @VisibleForTesting
+     */
+    async decapsulate(message, recipientKeys) {
+        const kyberCipherText = message.encapsulation.kyberCipherText;
+        const eccSharedSecret = eccDecapsulate(message.senderIdentityPubKey, message.ephemeralPubKey, recipientKeys.eccKeyPair.privateKey);
+        const kyberSharedSecret = await this.kyberFacade.decapsulate(recipientKeys.kyberKeyPair.privateKey, kyberCipherText);
+        const kek = this.derivePQKEK(message.senderIdentityPubKey, message.ephemeralPubKey, pqKeyPairsToPublicKeys(recipientKeys), kyberCipherText, kyberSharedSecret, eccSharedSecret, CryptoProtocolVersion.TUTA_CRYPT);
+        return authenticatedAesDecrypt(kek, message.encapsulation.kekEncBucketKey);
+    }
+    derivePQKEK(senderIdentityPublicKey, ephemeralPublicKey, recipientPublicKeys, kyberCipherText, kyberSharedSecret, eccSharedSecret, cryptoProtocolVersion) {
+        const context = concat(senderIdentityPublicKey, ephemeralPublicKey, recipientPublicKeys.eccPublicKey, kyberPublicKeyToBytes(recipientPublicKeys.kyberPublicKey), kyberCipherText, new Uint8Array([Number(cryptoProtocolVersion)]));
+        const inputKeyMaterial = concat(eccSharedSecret.ephemeralSharedSecret, eccSharedSecret.authSharedSecret, kyberSharedSecret);
+        const kekBytes = hkdf(context, inputKeyMaterial, stringToUtf8Uint8Array("kek"), KEY_LENGTH_BYTES_AES_256);
+        return uint8ArrayToKey(kekBytes);
+    }
+}
+//# sourceMappingURL=PQFacade.js.map

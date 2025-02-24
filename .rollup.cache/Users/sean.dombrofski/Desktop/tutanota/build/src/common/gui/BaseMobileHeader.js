@@ -1,0 +1,22 @@
+import { pureComponent } from "./base/PureComponent.js";
+import m from "mithril";
+import { px, size } from "./size.js";
+/**
+ * A base component that should be used for all mobile headers.
+ */
+export const BaseMobileHeader = pureComponent(({ left, center, right, injections }) => {
+    return m(".flex.items-center.rel.button-height.mt-safe-inset.plr-safe-inset", {
+        style: {
+            height: px(size.navbar_height_mobile),
+        },
+    }, [
+        left ?? null,
+        // normally min-width: is 0 but inside flex it's auto and we need to teach it how to shrink
+        m(".flex-grow.flex.items-center.min-width-0", {
+            class: !left ? "ml-hpad_small" : "",
+        }, center ?? null),
+        right ?? null,
+        injections ?? null,
+    ]);
+});
+//# sourceMappingURL=BaseMobileHeader.js.map

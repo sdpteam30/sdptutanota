@@ -1,0 +1,1 @@
+{"version":3,"file":"KyberPublicKey.js","sourceRoot":"","sources":["../../../../../../src/common/native/common/generatedipc/KyberPublicKey.ts"],"names":[],"mappings":"AAAA,iCAAiC","sourcesContent":["/* generated file, don't edit. */\n\nexport interface KyberPublicKey {\n\treadonly raw: Uint8Array\n}\n"]}

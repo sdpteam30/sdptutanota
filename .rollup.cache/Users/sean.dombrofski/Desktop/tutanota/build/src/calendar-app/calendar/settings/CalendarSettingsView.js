@@ -1,0 +1,389 @@
+import m from "mithril";
+import stream from "mithril/stream";
+import { assertMainOrNode, isApp, isIOSApp } from "../../../common/api/common/Env.js";
+import { isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js";
+import { Header } from "../../../common/gui/Header.js";
+import { BaseTopLevelView } from "../../../common/gui/BaseTopLevelView.js";
+import { ViewSlider } from "../../../common/gui/nav/ViewSlider.js";
+import { ViewColumn } from "../../../common/gui/base/ViewColumn.js";
+import { SettingsFolder } from "../../../common/settings/SettingsFolder.js";
+import { LazyLoaded, lazyStringValue } from "@tutao/tutanota-utils";
+import { FeatureType, GroupType } from "../../../common/api/common/TutanotaConstants.js";
+import { LoginSettingsViewer } from "../../../common/settings/login/LoginSettingsViewer.js";
+import { AppearanceSettingsViewer } from "../../../common/settings/AppearanceSettingsViewer.js";
+import { px, size } from "../../../common/gui/size.js";
+import { lang } from "../../../common/misc/LanguageViewModel.js";
+import { BackgroundColumnLayout } from "../../../common/gui/BackgroundColumnLayout.js";
+import { theme } from "../../../common/gui/theme.js";
+import { styles } from "../../../common/gui/styles.js";
+import { MobileHeader } from "../../../common/gui/MobileHeader.js";
+import { getAvailableDomains } from "../../../common/settings/mailaddress/MailAddressesUtils.js";
+import { WhitelabelSettingsViewer } from "../../../common/settings/whitelabel/WhitelabelSettingsViewer.js";
+import { SubscriptionViewer } from "../../../common/subscription/SubscriptionViewer.js";
+import { PaymentViewer } from "../../../common/subscription/PaymentViewer.js";
+import { ReferralSettingsViewer } from "../../../common/settings/ReferralSettingsViewer.js";
+import { CustomerInfoTypeRef, CustomerTypeRef } from "../../../common/api/entities/sys/TypeRefs.js";
+import { Dialog } from "../../../common/gui/base/Dialog.js";
+import { AboutDialog } from "../../../common/settings/AboutDialog.js";
+import { NotificationSettingsViewer } from "./NotificationSettingsViewer.js";
+import { GlobalSettingsViewer } from "./GlobalSettingsViewer.js";
+import { calendarLocator } from "../../calendarLocator.js";
+import { locator } from "../../../common/api/main/CommonLocator.js";
+import { CALENDAR_PREFIX, SETTINGS_PREFIX } from "../../../common/misc/RouteChange.js";
+import { SettingsNavButton } from "../../gui/SettingsNavButton.js";
+import { getSafeAreaInsetBottom } from "../../../common/gui/HtmlUtils.js";
+import { BaseButton } from "../../../common/gui/base/buttons/BaseButton.js";
+import { Icon, IconSize } from "../../../common/gui/base/Icon.js";
+import { showSupportDialog } from "../../../common/support/SupportDialog.js";
+assertMainOrNode();
+export class CalendarSettingsView extends BaseTopLevelView {
+    viewSlider;
+    settingsFoldersColumn;
+    userFolders;
+    adminFolders;
+    subscriptionFolders;
+    logins;
+    selectedFolder;
+    currentViewer = null;
+    showBusinessSettings = stream(false);
+    targetFolder;
+    targetRoute;
+    settingsColumn;
+    detailsViewer = null; // the component for the details column. can be set by settings views
+    customDomains;
+    constructor(vnode) {
+        super();
+        this.logins = vnode.attrs.logins;
+        this.userFolders = [
+            new SettingsFolder(() => "login_label", () => "Contacts" /* BootIcons.Contacts */, "login", () => new LoginSettingsViewer(calendarLocator.credentialsProvider, isApp() ? calendarLocator.systemFacade : null), undefined),
+            new SettingsFolder(() => "appearanceSettings_label", () => "Palette" /* Icons.Palette */, "appearance", () => new AppearanceSettingsViewer(), undefined),
+            new SettingsFolder(() => "notificationSettings_action", () => "Bell" /* Icons.Bell */, "notifications", () => new NotificationSettingsViewer(), undefined),
+        ];
+        this.adminFolders = [];
+        this.subscriptionFolders = [];
+        this.selectedFolder = this.userFolders[0];
+        this.settingsFoldersColumn = this.renderSettingsMainColumn(vnode);
+        this.settingsColumn = this.renderSettingsColumn(vnode);
+        this.viewSlider = new ViewSlider([this.settingsFoldersColumn, this.settingsColumn], false);
+        this.customDomains = new LazyLoaded(async () => {
+            const domainInfos = await getAvailableDomains(this.logins, true);
+            return domainInfos.map((info) => info.domain);
+        });
+        this.customDomains.getAsync().then(() => m.redraw());
+        this.targetFolder = m.route.param("folder");
+        this.targetRoute = m.route.get();
+    }
+    isTabletView() {
+        return (styles.isSingleColumnLayout() && this.viewSlider && this.viewSlider.allColumnsVisible()) || !styles.isSingleColumnLayout();
+    }
+    renderSettingsColumn(vnode) {
+        return new ViewColumn({
+            // the CSS improves the situation on devices with notches (no control elements
+            // are concealed), but there's still room for improvement for scrollbars
+            view: () => m(BackgroundColumnLayout, {
+                backgroundColor: theme.navigation_bg,
+                classes: this.isTabletView() ? "pr-m pl-vpad-s" : "",
+                columnLayout: m(".mlr-safe-inset.fill-absolute.content-bg.border-radius-top-left-m.border-radius-top-right-m", {
+                    class: this.isTabletView() ? "border-radius-top-left-big" : "",
+                    style: this.isTabletView()
+                        ? {
+                            "margin-top": px(size.navbar_height_mobile + size.vpad_small),
+                        }
+                        : {},
+                }, m(this._getCurrentViewer())),
+                mobileHeader: () => !this.isTabletView()
+                    ? m(MobileHeader, {
+                        ...vnode.attrs.header,
+                        backAction: () => {
+                            this._setUrl(SETTINGS_PREFIX);
+                            this.viewSlider.focusPreviousColumn();
+                        },
+                        columnType: "first",
+                        title: this.selectedFolder.name(),
+                        actions: [],
+                        useBackButton: true,
+                        primaryAction: () => null,
+                    })
+                    : null,
+                desktopToolbar: () => null,
+            }),
+        }, 1 /* ColumnType.Background */, {
+            minWidth: size.second_col_min_width,
+            maxWidth: size.third_col_max_width,
+            headerCenter: this.selectedFolder.name,
+        });
+    }
+    renderSettingsMainColumn(vnode) {
+        return new ViewColumn({
+            view: () => {
+                return m(BackgroundColumnLayout, {
+                    backgroundColor: theme.navigation_bg,
+                    columnLayout: m(".flex.flex-grow.col.full-height", [
+                        this.renderSettingsNavigation(this.userFolders, "userSettings_label"),
+                        this.renderLoggedInNavigationLinks(),
+                        this.bottomSection(),
+                    ]),
+                    mobileHeader: () => m(MobileHeader, {
+                        ...vnode.attrs.header,
+                        backAction: () => m.route.set(CALENDAR_PREFIX),
+                        columnType: "first",
+                        title: "settings_label",
+                        actions: [],
+                        useBackButton: true,
+                        primaryAction: () => null,
+                    }),
+                    desktopToolbar: () => null,
+                });
+            },
+        }, 1 /* ColumnType.Background */, {
+            minWidth: size.first_col_min_width,
+            maxWidth: size.first_col_max_width,
+            headerCenter: "settings_label",
+        });
+    }
+    bottomSection() {
+        const isFirstPartyDomain = locator.domainConfigProvider().getCurrentDomainConfig().firstPartyDomain;
+        const safeArea = isIOSApp() ? getSafeAreaInsetBottom() : 0;
+        return m(".pb.pt-l.flex-no-shrink.flex.col.justify-end.items-center.gap-vpad", {
+            style: {
+                paddingBottom: safeArea > 0 ? px(safeArea) : px(size.vpad),
+            },
+        }, [
+            // Support button
+            m(BaseButton, {
+                class: "flash flex justify-center center-vertically pt-s pb-s plr-2l border-radius",
+                style: {
+                    marginInline: "auto",
+                    border: `1px solid ${theme.navigation_button}`,
+                    color: theme.navigation_button,
+                },
+                label: "supportMenu_label",
+                text: m(".pl-m", lang.getTranslation("supportMenu_label").text),
+                icon: m(Icon, {
+                    icon: "SpeechBubbleFill" /* Icons.SpeechBubbleFill */,
+                    size: IconSize.Medium,
+                    class: "center-h",
+                    container: "div",
+                    style: { fill: theme.navigation_button },
+                }),
+                onclick: () => void showSupportDialog(locator.logins),
+            }),
+            // About button
+            isFirstPartyDomain ? this._aboutThisSoftwareLink() : null,
+        ]);
+    }
+    renderLoggedInNavigationLinks() {
+        if (!this.logins.isUserLoggedIn()) {
+            return m.fragment({}, []);
+        }
+        return m.fragment({}, [
+            this.renderSettingsNavigation(this.adminFolders, "adminSettings_label"),
+            this.renderSettingsNavigation(this.subscriptionFolders, "subscriptionSettings_label"),
+        ]);
+    }
+    async populateSubscriptionFolders() {
+        if (this.logins.isEnabled(FeatureType.WhitelabelChild) || !this.logins.getUserController().isGlobalAdmin()) {
+            return;
+        }
+        const currentPlanType = await this.logins.getUserController().getPlanType();
+        this.subscriptionFolders.push(new SettingsFolder(() => "adminSubscription_action", () => "Premium" /* BootIcons.Premium */, "subscription", () => new SubscriptionViewer(currentPlanType, isIOSApp() ? locator.mobilePaymentsFacade : null), undefined));
+        this.subscriptionFolders.push(new SettingsFolder(() => "adminPayment_action", () => "CreditCard" /* Icons.CreditCard */, "invoice", () => new PaymentViewer(), undefined));
+        this.subscriptionFolders.push(new SettingsFolder(() => "referralSettings_label", () => "Share" /* BootIcons.Share */, "referral", () => new ReferralSettingsViewer(), undefined).setIsVisibleHandler(() => !this.showBusinessSettings()));
+        m.redraw();
+    }
+    async populateAdminFolders() {
+        await this.updateShowBusinessSettings();
+        if (!this.logins.getUserController().isGlobalAdmin()) {
+            return;
+        }
+        this.adminFolders.push(new SettingsFolder(() => "globalSettings_label", () => "Settings" /* BootIcons.Settings */, "global", () => new GlobalSettingsViewer(), undefined));
+        if (!this.logins.isEnabled(FeatureType.WhitelabelChild) && !isIOSApp()) {
+            this.adminFolders.push(new SettingsFolder(() => "whitelabel_label", () => "Wand" /* Icons.Wand */, "whitelabel", () => new WhitelabelSettingsViewer(calendarLocator.entityClient, this.logins), undefined));
+        }
+        m.redraw();
+    }
+    oncreate(vnode) {
+        calendarLocator.eventController.addEntityListener(this.entityListener);
+        Promise.all([this.populateAdminFolders(), this.populateSubscriptionFolders()]).then(() => {
+            // We have to wait for the folders to be initialized before setting the URL,
+            // otherwise we won't find the requested folder and will just pick the default folder
+            const stillAtDefaultUrl = m.route.get() === this.userFolders[0].url || (m.route.get() === this.targetRoute && this.selectedFolder.url !== this.targetRoute);
+            if (stillAtDefaultUrl) {
+                this.onNewUrl({ folder: this.targetFolder }, this.targetRoute);
+            }
+        });
+    }
+    onremove(vnode) {
+        calendarLocator.eventController.removeEntityListener(this.entityListener);
+    }
+    entityListener = (updates, eventOwnerGroupId) => {
+        return this.entityEventsReceived(updates, eventOwnerGroupId);
+    };
+    view({ attrs }) {
+        return m("#settings.main-view", m(this.viewSlider, {
+            header: m(Header, {
+                ...attrs.header,
+            }),
+        }));
+    }
+    _createSettingsFolderNavButton(folder) {
+        return {
+            label: folder.name(),
+            icon: folder.icon,
+            href: folder.url,
+            colors: "nav" /* NavButtonColor.Nav */,
+            click: () => this.viewSlider.focus(this.settingsColumn),
+            persistentBackground: true,
+        };
+    }
+    renderSettingsNavigation(folders, title) {
+        if (folders.length === 0) {
+            return null;
+        }
+        return m(".flex.col.pl-vpad-m.pt-s.pb-s", {
+            class: styles.isSingleColumnLayout() ? "pr-m" : "pr-vpad-s",
+        }, [
+            m("small.uppercase.pb-s.b.text-ellipsis", { style: { color: theme.navigation_button } }, lang.getTranslationText(title)),
+            m(".flex.col.border-radius-m.list-bg", folders
+                .filter((folder) => folder.isVisible())
+                .map((folder) => {
+                const buttonAttrs = this._createSettingsFolderNavButton(folder);
+                return m(SettingsNavButton, {
+                    label: buttonAttrs.label,
+                    click: buttonAttrs.click ?? (() => null),
+                    icon: buttonAttrs.icon,
+                    href: lazyStringValue(buttonAttrs.href),
+                    class: "settings-item",
+                });
+            })),
+        ]);
+    }
+    _getCurrentViewer() {
+        if (!this.currentViewer) {
+            this.detailsViewer = null;
+            this.currentViewer = this.selectedFolder.viewerCreator();
+        }
+        return this.currentViewer;
+    }
+    /**
+     * Notifies the current view about changes of the url within its scope.
+     */
+    onNewUrl(args, requestedPath) {
+        if (args.folder || !m.route.get().startsWith(SETTINGS_PREFIX)) {
+            // ensure that current viewer will be reinitialized
+            const folder = this._allSettingsFolders().find((folder) => folder.url === requestedPath);
+            if (folder && this.selectedFolder.path === folder.path) {
+                // folder path has not changed
+                this.selectedFolder = folder; // instance of SettingsFolder might have been changed in membership update, so replace this instance
+                m.redraw();
+            }
+            else if (folder) {
+                // folder path has changed
+                // to avoid misleading information, set the url to the folder's url, so the browser url
+                // is changed to correctly represents the displayed content
+                this._setUrl(folder.url);
+                this.selectedFolder = folder;
+                this.currentViewer = null;
+                this.detailsViewer = null;
+                // make sure the currentViewer is available
+                this._getCurrentViewer();
+                this.viewSlider.focus(this.settingsColumn);
+                m.redraw();
+            }
+            else {
+                this.viewSlider.focus(this.settingsFoldersColumn);
+            }
+        }
+    }
+    _allSettingsFolders() {
+        return [...this.userFolders, ...this.adminFolders, ...this.subscriptionFolders];
+    }
+    _setUrl(url) {
+        m.route.set(url + location.hash);
+    }
+    _isGlobalAdmin(user) {
+        return user.memberships.some((m) => m.groupType === GroupType.Admin);
+    }
+    async updateShowBusinessSettings() {
+        this.showBusinessSettings((await this.logins.getUserController().loadCustomer()).businessUse);
+    }
+    async entityEventsReceived(updates, eventOwnerGroupId) {
+        for (const update of updates) {
+            if (isUpdateForTypeRef(CustomerTypeRef, update)) {
+                await this.updateShowBusinessSettings();
+            }
+            else if (this.logins.getUserController().isUpdateForLoggedInUserInstance(update, eventOwnerGroupId)) {
+                const user = this.logins.getUserController().user;
+                // the user admin status might have changed
+                if (!this._isGlobalAdmin(user) &&
+                    this.currentViewer &&
+                    (this.adminFolders.some((f) => f.isActive()) || this.subscriptionFolders.some((f) => f.isActive()))) {
+                    this._setUrl(this.userFolders[0].url);
+                }
+                m.redraw();
+            }
+            else if (isUpdateForTypeRef(CustomerInfoTypeRef, update)) {
+                this.customDomains.reset();
+                this.adminFolders.length = 0;
+                this.subscriptionFolders.length = 0;
+                // When switching a plan we hide/show certain admin settings.
+                await Promise.all([this.populateAdminFolders(), this.populateSubscriptionFolders(), this.customDomains.getAsync()]);
+                m.redraw();
+            }
+        }
+        await this.currentViewer?.entityEventsReceived(updates);
+        await this.detailsViewer?.entityEventsReceived(updates);
+    }
+    getViewSlider() {
+        return this.viewSlider;
+    }
+    _aboutThisSoftwareLink() {
+        const label = lang.get("about_label");
+        const versionLabel = `Tuta v${env.versionNumber}`;
+        return m("", [
+            m("button.text-center.small.no-text-decoration", {
+                style: {
+                    backgroundColor: "transparent",
+                },
+                href: "#",
+                "aria-label": label,
+                "aria-description": versionLabel,
+                "aria-haspopup": "dialog",
+                onclick: () => {
+                    setTimeout(() => {
+                        const dialog = Dialog.showActionDialog({
+                            title: "about_label",
+                            child: () => m(AboutDialog, {
+                                onShowSetupWizard: () => {
+                                    dialog.close();
+                                    calendarLocator.showSetupWizard();
+                                },
+                            }),
+                            allowOkWithReturn: true,
+                            okAction: (dialog) => dialog.close(),
+                            allowCancel: false,
+                        });
+                    }, 200);
+                },
+            }, [
+                m("", versionLabel),
+                m(".b", {
+                    style: {
+                        color: theme.navigation_button_selected,
+                    },
+                }, label),
+            ]),
+        ]);
+    }
+    handleBackButton() {
+        if (m.route.get().endsWith(SETTINGS_PREFIX)) {
+            m.route.set(CALENDAR_PREFIX);
+        }
+        else {
+            m.route.set(SETTINGS_PREFIX);
+            this.viewSlider.focus(this.settingsFoldersColumn);
+        }
+        return true;
+    }
+}
+//# sourceMappingURL=CalendarSettingsView.js.map

@@ -1,0 +1,871 @@
+import { assert, clone, decodeBase64, deepEqual, downcast, filterInt, findAllAndRemove, getFirstOrThrow, getFromMap, getStartOfDay, incrementDate, insertIntoSortedArray, isNotNull, isSameDayOfDate, isValidDate, neverNull, TIMESTAMP_ZERO_YEAR, } from "@tutao/tutanota-utils";
+import { CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID, CLIENT_ONLY_CALENDARS, getWeekStart, RepeatPeriod, } from "../../api/common/TutanotaConstants";
+import { DateTime, FixedOffsetZone, IANAZone } from "luxon";
+import { CalendarEventTypeRef, createCalendarRepeatRule, } from "../../api/entities/tutanota/TypeRefs.js";
+import { DAYS_SHIFTED_MS, generateEventElementId, isAllDayEvent, isAllDayEventByTimes } from "../../api/common/utils/CommonCalendarUtils";
+import { createDateWrapper } from "../../api/entities/sys/TypeRefs.js";
+import { isSameId } from "../../api/common/utils/EntityUtils";
+import { ParserError } from "../../misc/parsing/ParserCombinator.js";
+export function eventStartsBefore(currentDate, zone, event) {
+    return getEventStart(event, zone).getTime() < currentDate.getTime();
+}
+export function eventEndsBefore(date, zone, event) {
+    return getEventEnd(event, zone).getTime() < date.getTime();
+}
+export function eventStartsAfter(date, zone, event) {
+    return getEventStart(event, zone).getTime() > date.getTime();
+}
+export function eventEndsAfterDay(currentDate, zone, event) {
+    return getEventEnd(event, zone).getTime() > getStartOfNextDayWithZone(currentDate, zone).getTime();
+}
+export function eventEndsAfterOrOn(currentDate, zone, event) {
+    return getEventEnd(event, zone).getTime() >= getStartOfNextDayWithZone(currentDate, zone).getTime();
+}
+export function generateUid(groupId, timestamp) {
+    return `${groupId}${timestamp}@tuta.com`;
+}
+export function isBirthdayEvent(uid) {
+    return uid?.includes(CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID) ?? false;
+}
+/** get the timestamps of the start date and end date of the month the given date is in. */
+export function getMonthRange(date, zone) {
+    const startDateTime = DateTime.fromJSDate(date, {
+        zone,
+    }).set({
+        day: 1,
+        hour: 0,
+        minute: 0,
+        second: 0,
+        millisecond: 0,
+    });
+    const start = startDateTime.toJSDate().getTime();
+    const end = startDateTime
+        .plus({
+        month: 1,
+    })
+        .toJSDate()
+        .getTime();
+    return {
+        start,
+        end,
+    };
+}
+export function getDayRange(date, zone) {
+    const startDateTime = DateTime.fromJSDate(date, {
+        zone,
+    }).set({
+        hour: 0,
+        minute: 0,
+        second: 0,
+        millisecond: 0,
+    });
+    const start = startDateTime.toJSDate().getTime();
+    const end = startDateTime
+        .plus({
+        day: 1,
+    })
+        .toJSDate()
+        .getTime();
+    return {
+        start,
+        end,
+    };
+}
+/**
+ * @param date a date object representing a calendar date (like 1st of May 2023 15:15) in {@param zone}
+ * @param zone the time zone to calculate which calendar date {@param date} represents.
+ * @returns a date object representing the beginning of the given day in local time, like 1st of May 2023 00:00)
+ */
+export function getStartOfDayWithZone(date, zone) {
+    return DateTime.fromJSDate(date, { zone }).set({ hour: 0, minute: 0, second: 0, millisecond: 0 }).toJSDate();
+}
+/** @param date a date object representing some time on some calendar date (like 1st of May 2023) in {@param zone}
+ * @param zone the time zone for which to calculate the calendar date that {@param date} represents
+ * @returns a date object representing the start of the next calendar date (2nd of May 2023 00:00) in {@param zone} */
+export function getStartOfNextDayWithZone(date, zone) {
+    return DateTime.fromJSDate(date, { zone }).set({ hour: 0, minute: 0, second: 0, millisecond: 0 }).plus({ day: 1 }).toJSDate();
+}
+export function getEndOfDayWithZone(date, zone) {
+    return DateTime.fromJSDate(date, { zone }).set({ hour: 23, minute: 59, second: 59, millisecond: 0 }).toJSDate();
+}
+export function calculateAlarmTime(date, interval, ianaTimeZone) {
+    const diff = alarmIntervalToLuxonDurationLikeObject(interval);
+    return DateTime.fromJSDate(date, {
+        zone: ianaTimeZone,
+    })
+        .minus(diff)
+        .toJSDate();
+}
+/** takes a date which encodes the day in UTC and produces a date that encodes the same date but in local time zone. All times must be 0. */
+export function getAllDayDateForTimezone(utcDate, zone) {
+    return DateTime.fromJSDate(utcDate, { zone: "utc" })
+        .setZone(zone, { keepLocalTime: true })
+        .set({ hour: 0, minute: 0, second: 0, millisecond: 0 })
+        .toJSDate();
+}
+export function incrementByRepeatPeriod(date, repeatPeriod, interval, ianaTimeZone) {
+    switch (repeatPeriod) {
+        case RepeatPeriod.DAILY:
+            return DateTime.fromJSDate(date, {
+                zone: ianaTimeZone,
+            })
+                .plus({
+                days: interval,
+            })
+                .toJSDate();
+        case RepeatPeriod.WEEKLY:
+            return DateTime.fromJSDate(date, {
+                zone: ianaTimeZone,
+            })
+                .plus({
+                weeks: interval,
+            })
+                .toJSDate();
+        case RepeatPeriod.MONTHLY:
+            return DateTime.fromJSDate(date, {
+                zone: ianaTimeZone,
+            })
+                .plus({
+                months: interval,
+            })
+                .toJSDate();
+        case RepeatPeriod.ANNUALLY:
+            return DateTime.fromJSDate(date, {
+                zone: ianaTimeZone,
+            })
+                .plus({
+                years: interval,
+            })
+                .toJSDate();
+        default:
+            throw new Error("Unknown repeat period");
+    }
+}
+export function getValidTimeZone(zone, fallback) {
+    if (IANAZone.isValidZone(zone)) {
+        return zone;
+    }
+    else {
+        if (fallback && IANAZone.isValidZone(fallback)) {
+            console.warn(`Time zone ${zone} is not valid, falling back to ${fallback}`);
+            return fallback;
+        }
+        else {
+            const actualFallback = FixedOffsetZone.instance(new Date().getTimezoneOffset()).name;
+            console.warn(`Fallback time zone ${zone} is not valid, falling back to ${actualFallback}`);
+            return actualFallback;
+        }
+    }
+}
+export function getTimeZone() {
+    return DateTime.local().zoneName;
+}
+export class DefaultDateProvider {
+    now() {
+        return Date.now();
+    }
+    timeZone() {
+        return getTimeZone();
+    }
+}
+export function createRepeatRuleWithValues(frequency, interval, timeZone = getTimeZone()) {
+    return createCalendarRepeatRule({
+        timeZone: timeZone,
+        frequency: frequency,
+        interval: String(interval),
+        endValue: null,
+        endType: "0",
+        excludedDates: [],
+        advancedRules: [],
+    });
+}
+/**
+ * difference in whole 24-hour-intervals between two dates, not anticommutative.
+ * Result is positive or 0 if b > a, result is negative or 0 otherwise
+ */
+export function getDiffIn24hIntervals(a, b, zone) {
+    return Math.floor(DateTime.fromJSDate(b, { zone }).diff(DateTime.fromJSDate(a, { zone }), "day").days);
+}
+/**
+ * difference in whole 60 minute intervals between two dates
+ * result is 0 if the diff is less than 60 minutes, otherwise
+ * positive if b is after a, otherwise negative.
+ *
+ * not anticommutative.
+ */
+export function getDiffIn60mIntervals(a, b) {
+    return Math.floor(DateTime.fromJSDate(b).diff(DateTime.fromJSDate(a), "hours").hours);
+}
+export function getStartOfWeek(date, firstDayOfWeekFromOffset) {
+    let firstDay;
+    if (firstDayOfWeekFromOffset > date.getDay()) {
+        firstDay = date.getDay() + 7 - firstDayOfWeekFromOffset;
+    }
+    else {
+        firstDay = date.getDay() - firstDayOfWeekFromOffset;
+    }
+    return incrementDate(getStartOfDay(date), -firstDay);
+}
+export function getRangeOfDays(startDay, numDays) {
+    let calculationDate = startDay;
+    const days = [];
+    for (let i = 0; i < numDays; i++) {
+        days.push(calculationDate);
+        calculationDate = incrementDate(new Date(calculationDate), 1);
+    }
+    return days;
+}
+/** Start of the week offset relative to Sunday (forward). */
+export function getStartOfTheWeekOffset(weekStart) {
+    switch (weekStart) {
+        case "1" /* WeekStart.SUNDAY */:
+            return 0;
+        case "2" /* WeekStart.SATURDAY */:
+            return 6;
+        case "0" /* WeekStart.MONDAY */:
+        default:
+            return 1;
+    }
+}
+/** {@see getStartOfTheWeekOffset} */
+export function getStartOfTheWeekOffsetForUser(userSettingsGroupRoot) {
+    return getStartOfTheWeekOffset(getWeekStart(userSettingsGroupRoot));
+}
+export function getTimeFormatForUser(userSettingsGroupRoot) {
+    // it's saved as a string, but is a const enum.
+    return userSettingsGroupRoot.timeFormat;
+}
+export function getWeekNumber(startOfTheWeek) {
+    // Currently it doesn't support US-based week numbering system with partial weeks.
+    return DateTime.fromJSDate(startOfTheWeek).weekNumber;
+}
+export function getEventEnd(event, timeZone) {
+    if (isAllDayEvent(event)) {
+        return getAllDayDateForTimezone(event.endTime, timeZone);
+    }
+    else {
+        return event.endTime;
+    }
+}
+export function getEventStart({ startTime, endTime }, timeZone) {
+    return getEventStartByTimes(startTime, endTime, timeZone);
+}
+export function getEventStartByTimes(startTime, endTime, timeZone) {
+    if (isAllDayEventByTimes(startTime, endTime)) {
+        return getAllDayDateForTimezone(startTime, timeZone);
+    }
+    else {
+        return startTime;
+    }
+}
+/** @param date encodes some calendar date in {@param zone} (like the 1st of May 2023)
+ * @returns {Date} encodes the same calendar date in UTC */
+export function getAllDayDateUTCFromZone(date, zone) {
+    return DateTime.fromJSDate(date, { zone }).setZone("utc", { keepLocalTime: true }).set({ hour: 0, minute: 0, second: 0, millisecond: 0 }).toJSDate();
+}
+export function isLongEvent(event, zone) {
+    // long events are longer than the event ID randomization range. we need to distinguish them
+    // to be able to still load and display the ones overlapping the query range even though their
+    // id might not be contained in the query timerange +- randomization range.
+    // this also applies to events that repeat.
+    return event.repeatRule != null || getEventEnd(event, zone).getTime() - getEventStart(event, zone).getTime() > DAYS_SHIFTED_MS;
+}
+/** create an event id depending on the calendar it is in and on its length */
+export function assignEventId(event, zone, groupRoot) {
+    const listId = isLongEvent(event, zone) ? groupRoot.longEvents : groupRoot.shortEvents;
+    event._id = [listId, generateEventElementId(event.startTime.getTime())];
+}
+/** predicate that tells us if two CalendarEvent objects refer to the same instance or different ones.*/
+export function isSameEventInstance(left, right) {
+    // in addition to the id we compare the start time equality to be able to distinguish repeating events. They have the same id but different start time.
+    // altered events with recurrenceId never have the same Id as another event instance, but might start at the same time.
+    return isSameId(left._id, right._id) && left.startTime.getTime() === right.startTime.getTime();
+}
+export function hasAlarmsForTheUser(user, event) {
+    const useAlarmList = neverNull(user.alarmInfoList).alarms;
+    return event.alarmInfos.some(([listId]) => isSameId(listId, useAlarmList));
+}
+export function eventComparator(l, r) {
+    return l.startTime.getTime() - r.startTime.getTime();
+}
+function assertDateIsValid(date) {
+    if (!isValidDate(date)) {
+        throw new Error("Date is invalid!");
+    }
+}
+/**
+ * check if a given event should be allowed to be created in a tutanota calendar.
+ * @param event
+ * @returns Enum describing the reason to reject the event, if any.
+ */
+export function checkEventValidity(event) {
+    if (!isValidDate(event.startTime) || !isValidDate(event.endTime)) {
+        return 0 /* CalendarEventValidity.InvalidContainsInvalidDate */;
+    }
+    else if (event.endTime.getTime() <= event.startTime.getTime()) {
+        return 1 /* CalendarEventValidity.InvalidEndBeforeStart */;
+    }
+    else if (event.startTime.getTime() < TIMESTAMP_ZERO_YEAR) {
+        return 2 /* CalendarEventValidity.InvalidPre1970 */;
+    }
+    return 3 /* CalendarEventValidity.Valid */;
+}
+const MAX_EVENT_ITERATIONS = 10000;
+/**
+ * add the days the given {@param event} is happening on during the given {@param range} to {@param daysToEvents}.
+ *
+ * ignores repeat rules.
+ * @param zone
+ */
+export function addDaysForEventInstance(daysToEvents, event, range, zone) {
+    const { start: rangeStart, end: rangeEnd } = range;
+    const clippedRange = clipRanges(getEventStart(event, zone).getTime(), getEventEnd(event, zone).getTime(), rangeStart, rangeEnd);
+    // the event and range do not intersect
+    if (clippedRange == null)
+        return;
+    const { start: eventStartInRange, end: eventEndInRange } = clippedRange;
+    let calculationDate = getStartOfDayWithZone(new Date(eventStartInRange), zone);
+    let calculationTime = calculationDate.getTime();
+    let iterations = 0;
+    while (calculationTime < rangeEnd) {
+        assertDateIsValid(calculationDate);
+        assert(iterations <= MAX_EVENT_ITERATIONS, "Run into the infinite loop, addDaysForEvent");
+        if (calculationTime < eventEndInRange) {
+            const eventsForCalculationDate = getFromMap(daysToEvents, calculationTime, () => []);
+            insertIntoSortedArray(event, eventsForCalculationDate, eventComparator, isSameEventInstance);
+        }
+        else {
+            // If the duration of the original event instance was reduced, we also have to delete the remaining days of the previous event instance.
+            const removed = findAllAndRemove(getFromMap(daysToEvents, calculationTime, () => []), (e) => isSameEventInstance(e, event));
+            if (!removed) {
+                // no further days this event instance occurred on
+                break;
+            }
+        }
+        calculationDate = incrementByRepeatPeriod(calculationDate, RepeatPeriod.DAILY, 1, zone);
+        calculationTime = calculationDate.getTime();
+        iterations++;
+    }
+}
+/** add the days a repeating {@param event} occurs on during {@param range} to {@param daysToEvents} by calling addDaysForEventInstance() for each of its
+ * non-excluded instances.
+ * @param timeZone
+ */
+export function addDaysForRecurringEvent(daysToEvents, event, range, timeZone = getTimeZone()) {
+    const repeatRule = event.repeatRule;
+    if (repeatRule == null) {
+        throw new Error("Invalid argument: event doesn't have a repeatRule" + JSON.stringify(event));
+    }
+    const allDay = isAllDayEvent(event);
+    const exclusions = allDay
+        ? repeatRule.excludedDates.map(({ date }) => createDateWrapper({ date: getAllDayDateForTimezone(date, timeZone) }))
+        : repeatRule.excludedDates;
+    for (const { startTime, endTime } of generateEventOccurrences(event, timeZone)) {
+        if (startTime.getTime() > range.end)
+            break;
+        if (endTime.getTime() < range.start)
+            continue;
+        if (isExcludedDate(startTime, exclusions)) {
+            const eventsOnExcludedDay = daysToEvents.get(getStartOfDayWithZone(startTime, timeZone).getTime());
+            if (!eventsOnExcludedDay)
+                continue;
+        }
+        else {
+            const eventClone = clone(event);
+            if (allDay) {
+                eventClone.startTime = getAllDayDateUTCFromZone(startTime, timeZone);
+                eventClone.endTime = getAllDayDateUTCFromZone(endTime, timeZone);
+            }
+            else {
+                eventClone.startTime = new Date(startTime);
+                eventClone.endTime = new Date(endTime);
+            }
+            addDaysForEventInstance(daysToEvents, eventClone, range, timeZone);
+        }
+    }
+}
+/**
+ * get all instances of all series in a list of event series progenitors that intersect with the given range.
+ * will return a sorted array of instances (by start time), interleaving the series if necessary.
+ *
+ */
+export function generateCalendarInstancesInRange(progenitors, range, max = Infinity, timeZone = getTimeZone()) {
+    const ret = [];
+    const getNextCandidate = (previousCandidate, generator, excludedDates) => {
+        const allDay = isAllDayEvent(previousCandidate);
+        const exclusions = allDay ? excludedDates.map(({ date }) => createDateWrapper({ date: getAllDayDateForTimezone(date, timeZone) })) : excludedDates;
+        let current;
+        // not using for-of because that automatically closes the generator
+        // when breaking or returning, and we want to suspend and resume iteration.
+        while (ret.length < max) {
+            current = generator.next();
+            if (current.done)
+                break;
+            let { startTime, endTime } = current.value;
+            if (startTime.getTime() > range.end)
+                break;
+            // using "<=" because an all-day-event that lasts n days spans n+1 days,
+            // ending at midnight utc on the day after. So they seem to intersect
+            // the range if it starts on the day after the event ends.
+            if (endTime.getTime() <= range.start)
+                continue;
+            if (!isExcludedDate(startTime, exclusions)) {
+                const nextCandidate = clone(previousCandidate);
+                if (allDay) {
+                    nextCandidate.startTime = getAllDayDateUTCFromZone(startTime, timeZone);
+                    nextCandidate.endTime = getAllDayDateUTCFromZone(endTime, timeZone);
+                }
+                else {
+                    nextCandidate.startTime = new Date(startTime);
+                    nextCandidate.endTime = new Date(endTime);
+                }
+                return nextCandidate;
+            }
+        }
+        return null;
+    };
+    // we need to have one candidate for each series and then check which one gets added first.
+    // if we added one, we advance the generator that generated it to the next candidate and repeat.
+    const generators = progenitors
+        .map((p) => {
+        const generator = generateEventOccurrences(p, timeZone);
+        const excludedDates = p.repeatRule?.excludedDates ?? [];
+        const nextCandidate = getNextCandidate(p, generator, excludedDates);
+        if (nextCandidate == null)
+            return null;
+        return {
+            excludedDates,
+            generator,
+            nextCandidate,
+        };
+    })
+        .filter(isNotNull);
+    while (generators.length > 0) {
+        // performance: put the smallest nextCandidate in front. we only change the first item in each iteration, so this should be quick to re-sort.
+        // still O(n²) in the best case >:(
+        // we might improve runtime here by re-inserting the new nextCandidate into the list manually using a linear or binary search instead of invoking
+        // sort.
+        // we can then also maintain an index to the first still-open generator instead of splicing out the first generator when it stops yielding instances.
+        generators.sort((a, b) => (a.nextCandidate?.startTime.getTime() ?? 0) - (b.nextCandidate?.startTime.getTime() ?? 0));
+        const first = getFirstOrThrow(generators);
+        const newNext = getNextCandidate(first.nextCandidate, first.generator, first.excludedDates);
+        ret.push(first.nextCandidate);
+        if (newNext == null) {
+            generators.splice(0, 1);
+            continue;
+        }
+        first.nextCandidate = newNext;
+    }
+    return ret;
+}
+/**
+ * Returns the end date of a repeating rule that can be used to display in the ui.
+ *
+ * The actual end date that is stored on the repeat rule is always one day behind the displayed end date:
+ * * for all-day events:
+ *   - displayed end date: 2023-05-18
+ *   - last occurrence can be: 2023-05-18
+ *   - exported end date: 2023-05-18
+ *   - actual timestamp on the entity: Midnight UTC 2023-05-19 (start of day)
+ * * normal events behave the same except:
+ *   - actual timestamp on the entity is Midnight local timezone 2023-05-19 (start of day)
+ * @returns {Date}
+ */
+export function getRepeatEndTimeForDisplay(repeatRule, isAllDay, timeZone) {
+    if (repeatRule.endType !== "2" /* EndType.UntilDate */) {
+        throw new Error("Event has no repeat rule end type is not UntilDate: " + JSON.stringify(repeatRule));
+    }
+    const rawEndDate = new Date(filterInt(repeatRule.endValue ?? "0"));
+    const localDate = isAllDay ? getAllDayDateForTimezone(rawEndDate, timeZone) : rawEndDate;
+    // Shown date is one day behind the actual end (but it is still excluded)
+    return incrementByRepeatPeriod(localDate, RepeatPeriod.DAILY, -1, timeZone);
+}
+/**
+ * generates all event occurrences in chronological order, including the progenitor.
+ * terminates once the end condition of the repeat rule is hit.
+ * @param event the event to iterate occurrences on.
+ * @param timeZone
+ */
+function* generateEventOccurrences(event, timeZone) {
+    const { repeatRule } = event;
+    if (repeatRule == null) {
+        yield event;
+        return;
+    }
+    const frequency = downcast(repeatRule.frequency);
+    const interval = Number(repeatRule.interval);
+    let eventStartTime = getEventStart(event, timeZone);
+    let eventEndTime = getEventEnd(event, timeZone);
+    // Loop by the frequency step
+    let repeatEndTime = null;
+    let endOccurrences = null;
+    const allDay = isAllDayEvent(event);
+    // For all-day events we should rely on the local time zone or at least we must use the same zone as in getAllDayDateUTCFromZone
+    // below. If they are not in sync, then daylight saving shifts may cause us to extract wrong UTC date (day in repeat rule zone and in
+    // local zone may be different).
+    const repeatTimeZone = allDay ? timeZone : getValidTimeZone(repeatRule.timeZone);
+    if (repeatRule.endType === "1" /* EndType.Count */) {
+        endOccurrences = Number(repeatRule.endValue);
+    }
+    else if (repeatRule.endType === "2" /* EndType.UntilDate */) {
+        // See CalendarEventDialog for an explanation why it's needed
+        if (allDay) {
+            repeatEndTime = getAllDayDateForTimezone(new Date(Number(repeatRule.endValue)), timeZone);
+        }
+        else {
+            repeatEndTime = new Date(Number(repeatRule.endValue));
+        }
+    }
+    let calcStartTime = eventStartTime;
+    const calcDuration = allDay ? getDiffIn24hIntervals(eventStartTime, eventEndTime, timeZone) : eventEndTime.getTime() - eventStartTime.getTime();
+    let calcEndTime = eventEndTime;
+    let iteration = 1;
+    while ((endOccurrences == null || iteration <= endOccurrences) && (repeatEndTime == null || calcStartTime.getTime() < repeatEndTime.getTime())) {
+        assertDateIsValid(calcStartTime);
+        assertDateIsValid(calcEndTime);
+        yield { startTime: calcStartTime, endTime: calcEndTime };
+        calcStartTime = incrementByRepeatPeriod(eventStartTime, frequency, interval * iteration, repeatTimeZone);
+        calcEndTime = allDay
+            ? incrementByRepeatPeriod(calcStartTime, RepeatPeriod.DAILY, calcDuration, repeatTimeZone)
+            : DateTime.fromJSDate(calcStartTime).plus(calcDuration).toJSDate();
+        iteration++;
+    }
+}
+/**
+ * return true if an event has more than one visible occurrence according to its repeat rule and excluded dates
+ *
+ * will compare exclusion time stamps with the exact date-time value of the occurrences startTime
+ *
+ * @param event the calendar event to check. to get correct results, this must be the progenitor.
+ */
+export function calendarEventHasMoreThanOneOccurrencesLeft({ progenitor, alteredInstances }) {
+    if (progenitor == null) {
+        // this may happen if we accept multiple invites to altered instances without ever getting the progenitor.
+        return alteredInstances.length > 1;
+    }
+    const { repeatRule } = progenitor;
+    if (repeatRule == null) {
+        return false;
+    }
+    const { endType, endValue, excludedDates } = repeatRule;
+    if (endType === "0" /* EndType.Never */) {
+        // there are infinite occurrences
+        return true;
+    }
+    else if (endType === "1" /* EndType.Count */ && Number(endValue ?? "0") + alteredInstances.length > excludedDates.length + 1) {
+        // if there are not enough exclusions to delete all but one occurrence, we can return true
+        return true;
+    }
+    else if (alteredInstances.length > 1) {
+        return true;
+    }
+    else {
+        // we need to count occurrences and match them up against altered instances & exclusions.
+        const excludedTimestamps = excludedDates.map(({ date }) => date.getTime());
+        let i = 0;
+        // in our model, we have an extra exclusion for each altered instance. this code
+        // assumes that this invariant is upheld here and does not match each recurrenceId
+        // against an exclusion, but only tallies them up.
+        let occurrencesFound = alteredInstances.length;
+        for (const { startTime } of generateEventOccurrences(progenitor, getTimeZone())) {
+            const startTimestamp = startTime.getTime();
+            while (i < excludedTimestamps.length && startTimestamp > excludedTimestamps[i]) {
+                // exclusions are sorted
+                i++;
+            }
+            if (startTimestamp !== excludedTimestamps[i]) {
+                // we found the place in the array where the startTimestamp would
+                // be if it were in the array
+                occurrencesFound += 1;
+                if (occurrencesFound > 1)
+                    return true;
+            }
+        }
+        return false;
+    }
+}
+/**
+ * find out if a given date is in a list of excluded dates
+ * @param currentDate the date to check
+ * @param excludedDates a sorted list of excluded dates, earliest to latest
+ */
+function isExcludedDate(currentDate, excludedDates = []) {
+    return excludedDates.some((dw) => dw.date.getTime() === currentDate.getTime());
+}
+export function findNextAlarmOccurrence(now, timeZone, eventStart, eventEnd, frequency, interval, endType, endValue, exclusions, alarmTrigger, localTimeZone) {
+    let occurrenceNumber = 0;
+    const isAllDayEvent = isAllDayEventByTimes(eventStart, eventEnd);
+    const calcEventStart = isAllDayEvent ? getAllDayDateForTimezone(eventStart, localTimeZone) : eventStart;
+    assertDateIsValid(calcEventStart);
+    const endDate = endType === "2" /* EndType.UntilDate */ ? (isAllDayEvent ? getAllDayDateForTimezone(new Date(endValue), localTimeZone) : new Date(endValue)) : null;
+    while (endType !== "1" /* EndType.Count */ || occurrenceNumber < endValue) {
+        const occurrenceDate = incrementByRepeatPeriod(calcEventStart, frequency, interval * occurrenceNumber, isAllDayEvent ? localTimeZone : timeZone);
+        if (endDate && occurrenceDate.getTime() >= endDate.getTime()) {
+            return null;
+        }
+        if (!exclusions.some((d) => d.getTime() === occurrenceDate.getTime())) {
+            const alarmTime = calculateAlarmTime(occurrenceDate, alarmTrigger, localTimeZone);
+            if (alarmTime >= now) {
+                return {
+                    alarmTime,
+                    occurrenceNumber: occurrenceNumber,
+                    eventTime: occurrenceDate,
+                };
+            }
+        }
+        occurrenceNumber++;
+    }
+    return null;
+}
+/**
+ *
+ * https://www.kanzaki.com/docs/ical/sequence.html
+ * The "Organizer" includes this property in an iCalendar object that it sends to an
+ * "Attendee" to specify the current version of the calendar component.
+ *
+ * The "Attendee" includes this property in an iCalendar object that it sends to the "Organizer"
+ * to specify the version of the calendar component that the "Attendee" is referring to.
+ *
+ * @param sequence
+ */
+export function incrementSequence(sequence) {
+    const current = filterInt(sequence) || 0;
+    // Only the organizer should increase sequence numbers
+    return String(current + 1);
+}
+export function findFirstPrivateCalendar(calendarInfo) {
+    for (const calendar of calendarInfo.values()) {
+        if (calendar.userIsOwner && !calendar.isExternal)
+            return calendar;
+    }
+    return null;
+}
+/**
+ * Prepare calendar event description to be shown to the user.
+ *
+ * It is needed to fix special format of links from Outlook which otherwise disappear during sanitizing.
+ * They look like this:
+ * ```
+ * text<https://example.com>
+ * ```
+ *
+ * @param description description to clean up
+ * @param sanitizer optional sanitizer to apply after preparing the description
+ */
+export function prepareCalendarDescription(description, sanitizer) {
+    const prepared = description.replace(/<(http|https):\/\/[A-z0-9$-_.+!*‘(),/?]+>/gi, (possiblyLink) => {
+        try {
+            const withoutBrackets = possiblyLink.slice(1, -1);
+            const url = new URL(withoutBrackets);
+            return `<a href="${url.toString()}">${withoutBrackets}</a>`;
+        }
+        catch (e) {
+            return possiblyLink;
+        }
+    });
+    return sanitizer(prepared);
+}
+export const DEFAULT_HOUR_OF_DAY = 6;
+/** Get CSS class for the date element. */
+export function getDateIndicator(day, selectedDate) {
+    if (isSameDayOfDate(day, selectedDate)) {
+        return ".accent-bg.circle";
+    }
+    else {
+        return "";
+    }
+}
+/**
+ * Determine what format the time of an event should be rendered in given a surrounding time period
+ */
+export function getTimeTextFormatForLongEvent(ev, startDay, endDay, zone) {
+    const startsBefore = eventStartsBefore(startDay, zone, ev);
+    const endsAfter = eventEndsAfterOrOn(endDay, zone, ev);
+    if ((startsBefore && endsAfter) || isAllDayEvent(ev)) {
+        return null;
+    }
+    else if (startsBefore && !endsAfter) {
+        return "endTime" /* EventTextTimeOption.END_TIME */;
+    }
+    else if (!startsBefore && endsAfter) {
+        return "startTime" /* EventTextTimeOption.START_TIME */;
+    }
+    else {
+        return "startAndEndTime" /* EventTextTimeOption.START_END_TIME */;
+    }
+}
+/**
+ * Creates a new date with the year, month and day from the Date and the hours and minutes from the Time
+ * @param date
+ * @param time
+ */
+export function combineDateWithTime(date, time) {
+    const newDate = new Date(date);
+    newDate.setHours(time.hour);
+    newDate.setMinutes(time.minute);
+    return newDate;
+}
+/**
+ * Check if an event occurs during some time period of days, either partially or entirely
+ * Expects that firstDayOfWeek is before lastDayOfWeek, and that event starts before it ends, otherwise result is invalid
+ */
+export function isEventBetweenDays(event, firstDay, lastDay, zone) {
+    const endOfDay = DateTime.fromJSDate(lastDay, { zone }).endOf("day").toJSDate();
+    return !(eventEndsBefore(firstDay, zone, event) || eventStartsAfter(endOfDay, zone, event));
+}
+export function getFirstDayOfMonth(d) {
+    const date = new Date(d);
+    date.setDate(1);
+    return date;
+}
+/**
+ * get the "primary" event of a series - the one that contains the repeat rule and is not a repeated or a rescheduled instance.
+ * @param calendarEvent
+ * @param entityClient
+ */
+export async function resolveCalendarEventProgenitor(calendarEvent, entityClient) {
+    return calendarEvent.repeatRule ? await entityClient.load(CalendarEventTypeRef, calendarEvent._id) : calendarEvent;
+}
+/** clip the range start-end to the range given by min-max. if the result would have length 0, null is returned. */
+export function clipRanges(start, end, min, max) {
+    const res = {
+        start: Math.max(start, min),
+        end: Math.min(end, max),
+    };
+    return res.start < res.end ? res : null;
+}
+export var AlarmIntervalUnit;
+(function (AlarmIntervalUnit) {
+    AlarmIntervalUnit["MINUTE"] = "M";
+    AlarmIntervalUnit["HOUR"] = "H";
+    AlarmIntervalUnit["DAY"] = "D";
+    AlarmIntervalUnit["WEEK"] = "W";
+})(AlarmIntervalUnit || (AlarmIntervalUnit = {}));
+export const StandardAlarmInterval = Object.freeze({
+    ZERO_MINUTES: { value: 0, unit: AlarmIntervalUnit.MINUTE },
+    FIVE_MINUTES: { value: 5, unit: AlarmIntervalUnit.MINUTE },
+    TEN_MINUTES: { value: 10, unit: AlarmIntervalUnit.MINUTE },
+    THIRTY_MINUTES: { value: 30, unit: AlarmIntervalUnit.MINUTE },
+    ONE_HOUR: { value: 1, unit: AlarmIntervalUnit.HOUR },
+    ONE_DAY: { value: 1, unit: AlarmIntervalUnit.DAY },
+    TWO_DAYS: { value: 2, unit: AlarmIntervalUnit.DAY },
+    THREE_DAYS: { value: 3, unit: AlarmIntervalUnit.DAY },
+    ONE_WEEK: { value: 1, unit: AlarmIntervalUnit.WEEK },
+});
+export function alarmIntervalToLuxonDurationLikeObject(alarmInterval) {
+    switch (alarmInterval.unit) {
+        case AlarmIntervalUnit.MINUTE:
+            return { minutes: alarmInterval.value };
+        case AlarmIntervalUnit.HOUR:
+            return { hours: alarmInterval.value };
+        case AlarmIntervalUnit.DAY:
+            return { days: alarmInterval.value };
+        case AlarmIntervalUnit.WEEK:
+            return { weeks: alarmInterval.value };
+    }
+}
+/**
+ * compare two lists of dates that are sorted from earliest to latest. return true if they are equivalent.
+ */
+export function areExcludedDatesEqual(e1, e2) {
+    if (e1.length !== e2.length)
+        return false;
+    return e1.every(({ date }, i) => e2[i].date.getTime() === date.getTime());
+}
+export function areRepeatRulesEqual(r1, r2) {
+    return (r1 === r2 ||
+        (r1?.endType === r2?.endType &&
+            r1?.endValue === r2?.endValue &&
+            r1?.frequency === r2?.frequency &&
+            r1?.interval === r2?.interval &&
+            /** r1?.timeZone === r2?.timeZone && we're ignoring time zone because it's not an observable change. */
+            areExcludedDatesEqual(r1?.excludedDates ?? [], r2?.excludedDates ?? []) &&
+            deepEqual(r1?.advancedRules, r2?.advancedRules)));
+}
+/**
+ * Converts db representation of alarm to a runtime one.
+ */
+export function parseAlarmInterval(serialized) {
+    const matched = serialized.match(/^(\d+)([MHDW])$/);
+    if (matched) {
+        const [_, digits, unit] = matched;
+        const value = filterInt(digits);
+        if (isNaN(value)) {
+            throw new ParserError(`Invalid value: ${value}`);
+        }
+        else {
+            return { value, unit: unit };
+        }
+    }
+    else {
+        throw new ParserError(`Invalid alarm interval: ${serialized}`);
+    }
+}
+export var CalendarType;
+(function (CalendarType) {
+    CalendarType[CalendarType["NORMAL"] = 0] = "NORMAL";
+    CalendarType[CalendarType["URL"] = 1] = "URL";
+    CalendarType[CalendarType["CLIENT_ONLY"] = 2] = "CLIENT_ONLY";
+})(CalendarType || (CalendarType = {}));
+export function isClientOnlyCalendar(calendarId) {
+    const clientOnlyId = calendarId.match(/#(.*)/)?.[1];
+    return CLIENT_ONLY_CALENDARS.has(clientOnlyId);
+}
+export function isClientOnlyCalendarType(calendarType) {
+    return calendarType === CalendarType.CLIENT_ONLY;
+}
+export function isNormalCalendarType(calendarType) {
+    return calendarType === CalendarType.NORMAL;
+}
+export function isExternalCalendarType(calendarType) {
+    return calendarType === CalendarType.URL;
+}
+export function hasSourceUrl(groupSettings) {
+    return isNotNull(groupSettings?.sourceUrl) && groupSettings?.sourceUrl !== "";
+}
+export function getCalendarType(groupSettings, groupInfo) {
+    if (hasSourceUrl(groupSettings))
+        return CalendarType.URL;
+    if (isClientOnlyCalendar(groupSettings ? groupSettings._id : groupInfo.group))
+        return CalendarType.CLIENT_ONLY;
+    return CalendarType.NORMAL;
+}
+export function extractYearFromBirthday(birthday) {
+    if (!birthday) {
+        return null;
+    }
+    const dateParts = birthday.split("-");
+    const partsLength = dateParts.length;
+    // A valid ISO date should contain 3 parts:
+    // YYYY-mm-dd => [yyyy, mm, dd]
+    if (partsLength !== 3) {
+        return null;
+    }
+    return Number.parseInt(dateParts[0]);
+}
+export async function retrieveClientOnlyEventsForUser(logins, events, localEvents) {
+    if (!(await logins.getUserController().isNewPaidPlan())) {
+        return [];
+    }
+    const clientOnlyEvents = events.filter(([calendarId, _]) => isClientOnlyCalendar(calendarId)).flatMap((event) => event.join("/"));
+    const retrievedEvents = [];
+    for (const event of Array.from(localEvents.values()).flat()) {
+        if (clientOnlyEvents.includes(event.event._id.join("/"))) {
+            retrievedEvents.push(event.event);
+        }
+    }
+    return retrievedEvents;
+}
+export function calculateContactsAge(birthYear, currentYear) {
+    if (!birthYear) {
+        return null;
+    }
+    return currentYear - birthYear;
+}
+export function extractContactIdFromEvent(id) {
+    if (id == null) {
+        return null;
+    }
+    return decodeBase64("utf-8", id);
+}
+//# sourceMappingURL=CalendarUtils.js.map

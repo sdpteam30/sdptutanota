@@ -1,0 +1,1 @@
+{"version":3,"file":"ContactAddressType.js","sourceRoot":"","sources":["../../../../../../src/common/native/common/generatedipc/ContactAddressType.ts"],"names":[],"mappings":"AAAA,iCAAiC","sourcesContent":["/* generated file, don't edit. */\n\nexport { ContactAddressType } from \"../../../api/common/TutanotaConstants.js\"\n"]}

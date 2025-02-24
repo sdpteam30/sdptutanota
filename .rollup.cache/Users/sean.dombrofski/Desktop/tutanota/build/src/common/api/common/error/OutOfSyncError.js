@@ -1,0 +1,8 @@
+//@bundleInto:common-min
+import { TutanotaError } from "@tutao/tutanota-error";
+export class OutOfSyncError extends TutanotaError {
+    constructor(message) {
+        super("OutOfSyncError", message);
+    }
+}
+//# sourceMappingURL=OutOfSyncError.js.map

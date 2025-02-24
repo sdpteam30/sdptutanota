@@ -1,0 +1,1 @@
+{"version":3,"file":"ConfigCommon.js","sourceRoot":"","sources":["../../../../../src/common/desktop/config/ConfigCommon.ts"],"names":[],"mappings":"","sourcesContent":["export type Config = Record<string, unknown>\nexport type ConfigMigration = (arg0: Config) => Promise<void>\n"]}

@@ -1,0 +1,1 @@
+{"version":3,"file":"TaggedSqlValue.js","sourceRoot":"","sources":["../../../../../../src/common/native/common/generatedipc/TaggedSqlValue.ts"],"names":[],"mappings":"AAAA,iCAAiC","sourcesContent":["/* generated file, don't edit. */\n\nexport { TaggedSqlValue } from \"../../../api/worker/offline/SqlValue.js\"\n"]}

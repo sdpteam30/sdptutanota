@@ -1,0 +1,12 @@
+import { CustomerTypeRef } from "../../../entities/sys/TypeRefs.js";
+import { migrateAllElements, removeValue } from "../StandardMigrations.js";
+export const sys97 = {
+    app: "sys",
+    version: 97,
+    async migrate(storage) {
+        // As of 2020 the canceledPremiumAccount boolean value has always been set to
+        // false therefore this value is no longer needed, and we can remove it.
+        await migrateAllElements(CustomerTypeRef, storage, [removeValue("canceledPremiumAccount")]);
+    },
+};
+//# sourceMappingURL=sys-v97.js.map

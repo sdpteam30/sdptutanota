@@ -1,0 +1,1 @@
+{"version":3,"file":"MailBundle.js","sourceRoot":"","sources":["../../../../../../src/common/native/common/generatedipc/MailBundle.ts"],"names":[],"mappings":"AAAA,iCAAiC","sourcesContent":["/* generated file, don't edit. */\n\nexport { MailBundle } from \"../../../mailFunctionality/SharedMailUtils.js\"\n"]}
