@@ -26,7 +26,7 @@ Instructions here will produce a *release* version of the client. For *debug* ve
 9. Update submodules: `git submodule update`
 10. run `npm ci` to install dependencies.
 11. Build packages: `npm run build-packages`
-12. Build the web part: `node webapp prod`
+12. Build the web part: `node make prod`
 13. Switch into the build directory: `cd build`
 14. Run the local server e.g. `npx serve build -s -p 9000` or `python -m SimpleHTTPServer 9000`.
 15. Open `localhost:9000` with your favorite browser (tested: Firefox, Chrome/Chromium, Safari).
