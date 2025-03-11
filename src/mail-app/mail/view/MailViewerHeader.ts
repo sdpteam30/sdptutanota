@@ -32,11 +32,9 @@ import { MailAddressAndName } from "../../../common/api/common/CommonMailUtils.j
 import { LabelsPopup } from "./LabelsPopup.js"
 import { Label } from "../../../common/gui/base/Label.js"
 import { px, size } from "../../../common/gui/size.js"
-import { MobyPhishModal } from "./MobyPhishModal";
-import { modal } from "../../../common/gui/base/Modal";
+import { MobyPhishModal } from "./MobyPhishModal"
+import { modal } from "../../../common/gui/base/Modal"
 import { MobyPhishDenyModal } from "./MobyPhishDenyModal.js"
-
-
 
 export type MailAddressDropdownCreator = (args: {
 	mailAddress: MailAddressAndName
@@ -616,18 +614,18 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 	private renderPhishingWarning(viewModel: MailViewerViewModel): Children | null {
 		//if (viewModel.isMailSuspicious()) {
-			return m(InfoBanner, {
-				message: "phishingMessageBody_msg",
-				icon: Icons.Warning,
-				type: BannerType.Warning,
-				helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.Phishing : null,
-				buttons: [
-					{
-						label: "markAsNotPhishing_action",
-						click: () => viewModel.markAsNotPhishing().then(() => m.redraw()),
-					},
-				],
-			})
+		return m(InfoBanner, {
+			message: "phishingMessageBody_msg",
+			icon: Icons.Warning,
+			type: BannerType.Warning,
+			helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.Phishing : null,
+			buttons: [
+				{
+					label: "markAsNotPhishing_action",
+					click: () => viewModel.markAsNotPhishing().then(() => m.redraw()),
+				},
+			],
+		})
 		//}
 	}
 
@@ -741,14 +739,14 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	// 	// 		console.log("viewModel:", viewModel);
 	// 	// 	},
 	// 	// };
-		
+
 	// 	const confirmButton: BannerButtonAttrs = {
 	// 		label: "mobyPhish_confirm",
 	// 		click: () => {
 	// 			console.log("Moby Phish Confirm Button Clicked!");
 	// 		},
 	// 	};
-		
+
 	// 	const denyButton: BannerButtonAttrs = {
 	// 		label: "mobyPhish_deny",
 	// 		click: () => {
@@ -768,46 +766,69 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	//
 	//
 	private renderMobyPhishBanner(viewModel: MailViewerViewModel): Children | null {
-		if (this.isSenderConfirmed) {			
+		if (this.isSenderConfirmed) {
 			return m(InfoBanner as any, {
 				message: "mobyPhish_sender_confirmed",
 				icon: Icons.Warning,
 				type: BannerType.Warning,
 				helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.Phishing : null,
 				buttons: [],
-			});
+			})
 		}
 
 		const confirmButton: BannerButtonAttrs = {
 			label: "mobyPhish_confirm",
 			click: (event: MouseEvent) => {
-				console.log("Moby Phish Confirm Button Clicked!");
-				this.isSenderConfirmed = true;
-				m.redraw();
+				console.log("Moby Phish Confirm Button Clicked!")
+				this.isSenderConfirmed = true
+
+				const senderEmail = viewModel.mail.sender.address
+				if (senderEmail) {
+					this.addTrustedSender(senderEmail)
+				}
+				// console.log("ViewModel: ", viewModel);
+
+				m.redraw()
 				//modal.display(new MobyPhishModal("This sender has been marked as trusted.", event.currentTarget as HTMLElement));
-			}
-		};
-	
+			},
+		}
+
 		const denyButton: BannerButtonAttrs = {
 			label: "mobyPhish_deny",
 			click: (event: MouseEvent) => {
-				console.log("Moby Phish Deny Button Clicked!");
+				console.log("Moby Phish Deny Button Clicked!")
 				//modal.display(new MobyPhishModal("This sender has been marked as untrusted.", event.currentTarget as HTMLElement));
-				modal.display(new MobyPhishDenyModal());
-			}
-		};
-	
-		
+				modal.display(new MobyPhishDenyModal())
+			},
+		}
+
 		return m(InfoBanner, {
 			message: "mobyPhish_is_trusted",
 			icon: Icons.Warning,
 			type: BannerType.Warning,
 			helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.Phishing : null,
 			buttons: [confirmButton, denyButton],
-		});
+		})
 	}
-	
-	
+
+	// function to add sender to trusted senders list (saved in localStorage)
+	private addTrustedSender(email: string): void {
+		let trustedSenders = JSON.parse(localStorage.getItem("trusted_senders") || "[]")
+
+		if (!trustedSenders.includes(email)) {
+			trustedSenders.push(email)
+			localStorage.setItem("trusted_senders", JSON.stringify(trustedSenders))
+			console.log(`Added ${email} to trusted senders list.`)
+		} else {
+			console.log(`${email} is already in the trusted senders list.`)
+		}
+	}
+
+	// function to check if sender is in trusted senders list
+	private isTrustedSender(email: string): boolean {
+		const trustedSenders = JSON.parse(localStorage.getItem("trusted_senders") || "[]")
+		return trustedSenders.includes(email)
+	}
 
 	private moreButton(attrs: MailViewerHeaderAttrs): Children {
 		return m(IconButton, {
