@@ -813,6 +813,11 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 	// function to add sender to trusted senders list (saved in localStorage)
 	private addTrustedSender(email: string): void {
+		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/ // Basic email validation added by Sean 3/17/25
+		if (!emailRegex.test(email)) {
+			console.error(`Invalid email format: ${email}`)
+			return // Don't add invalid emails
+		}
 		let trustedSenders = JSON.parse(localStorage.getItem("trusted_senders") || "[]")
 
 		if (!trustedSenders.includes(email)) {
