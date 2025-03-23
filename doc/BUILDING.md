@@ -24,12 +24,14 @@ Instructions here will produce a *release* version of the client. For *debug* ve
 7. Initialize liboqs and argon2 submodules: `git submodule init`
 8. Synchronize submodules: `git submodule sync --recursive`
 9. Update submodules: `git submodule update`
-10. run `npm ci` to install dependencies.
-11. Build packages: `npm run build-packages`
-12. Build the web part: `node make prod`
-13. Switch into the build directory: `cd build`
-14. Run the local server e.g. `npx serve build -s -p 9000` or `python -m http.server 9000`.
-15. Open `localhost:9000` with your favorite browser (tested: Firefox, Chrome/Chromium, Safari).
+10. Run `git checkout development` to switch to the current development branch.
+11. Run `git pull` to ensure you have the most recent changes. 
+12. run `npm ci` to install dependencies.
+13. Build packages: `npm run build-packages`
+14. Build the web part: `node make prod`
+15. Switch into the build directory: `cd build`
+16. Run the local server e.g. `npx serve build -s -p 9000` or `python -m http.server 9000`.
+17. Open `localhost:9000` with your favorite browser (tested: Firefox, Chrome/Chromium, Safari).
 
 > If you try building without initializing the submodules, you might end up with
 > the following error:
