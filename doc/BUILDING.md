@@ -15,7 +15,7 @@ Instructions here will produce a *release* version of the client. For *debug* ve
 
 #### Build steps:
 
-1. Clone this repository: `git clone https://github.com/msa20006/sdptutanota.git`
+1. Clone this repository: `git clone https://github.com/sdpteam30/sdptutanota.git`
 2. Switch into the repository directory: `cd sdptutanota`
 3. Add the upstream tutao/tutanota branches with `git remote add upstream https://github.com/tutao/tutanota.git`
 4. Fetch the official Tuta Mail release branches with `git fetch upstream`
