@@ -1,32 +1,57 @@
-<div align="center">
-	<a href="https://tuta.com/" target="_blank"><img src="resources/images/logo-red.svg" alt="Tuta Mail logo" width="300"></a>
-	<br/>
-	<h1>Tuta Mail makes encryption easy</h1>
-</div>
+## [fastlane match](https://docs.fastlane.tools/actions/match/)
 
-Tuta Mail is the [secure email](https://tuta.com) service with built-in end-to-end encryption that enables you to
-communicate securely with anyone on all your devices.
+> Do not modify this file, as it gets overwritten every time you run _match_.
 
-* Forum for bug reports/feature requests: https://www.reddit.com/r/tutanota
-* Roadmap: https://tuta.com/roadmap/
-* Issue and feature tracker: https://github.com/tutao/tutanota/issues. Please submit your feature requests via Reddit or
-  via support mail.
+This repository contains all your certificates and provisioning profiles needed to build and sign your applications. They are encrypted using OpenSSL via a passphrase.
 
-<div align="center">
-<a href="https://play.google.com/store/apps/details?id=de.tutao.tutanota"><img src="https://play.google.com/intl/en_us/badges/images/generic/en_badge_web_generic.png" height="75"></a><a href="https://f-droid.org/packages/de.tutao.tutanota/"><img src="https://f-droid.org/badge/get-it-on.png" height="75"></a>
+**Important:** Make sure this repository is set to private and only your team members have access to this repo.
 
-<a href="https://app.tuta.com">Web client</a>
-•
-<a href="https://itunes.apple.com/us/app/tutanota/id922429609">iOS App Store</a>
-•
-<a href="https://tuta.com/#download">Desktop Client</a>
+### Installation
 
-</div>
+Make sure you have the latest version of the Xcode command line tools installed:
 
-### Building
+```
+xcode-select --install
+```
 
-See [BUILDING.md](doc/BUILDING.md).
+Install _fastlane_ using bundler by following instructions here on [fastlane docs](https://docs.fastlane.tools).
 
-### Developing Tuta Mail
+or alternatively using 
 
-See [HACKING.md](doc/HACKING.md).
+`brew install fastlane`
+
+### Usage
+
+Navigate to your project folder and run
+
+```
+fastlane match appstore
+```
+
+```
+fastlane match adhoc
+```
+
+```
+fastlane match development
+```
+
+```
+fastlane match enterprise
+```
+
+For more information open [fastlane match git repo](https://docs.fastlane.tools/actions/match/)
+
+### Content
+
+#### certs
+
+This directory contains all your certificates with their private keys
+
+#### profiles
+
+This directory contains all provisioning profiles
+
+---
+
+For more information open [fastlane match git repo](https://docs.fastlane.tools/actions/match/)
