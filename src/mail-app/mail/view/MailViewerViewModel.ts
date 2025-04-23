@@ -86,7 +86,7 @@ export const enum ContentBlockingStatus {
 	AlwaysBlock = "4",
 }
 
-export const API_BASE_URL = "http://98.81.86.226:3000";
+export const API_BASE_URL = "http://13.218.237.52:3000";
 
 export interface TrustedSenderInfo {
     name: string;
