@@ -44,6 +44,7 @@ export class MobyPhishConfirmAddSenderModal implements ModalComponent {
 								fontWeight: "bold",
 								textAlign: "center",
 								marginBottom: "15px",
+								color: "#0074D9", // Add this line for blue text
 							},
 						},
 						"Add to Trusted Senders?",
@@ -55,6 +56,7 @@ export class MobyPhishConfirmAddSenderModal implements ModalComponent {
 								fontSize: "14px",
 								textAlign: "center",
 								marginBottom: "20px",
+								color: "#0074D9", // Add this line for blue text
 							},
 						},
 						["Are you sure you want to add ", m("strong", this.senderDisplay), " to your trusted senders list?"],
