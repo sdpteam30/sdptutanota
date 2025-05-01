@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3000
 const HOST = "0.0.0.0" // Listen on all interfaces
 
 // --- Corrected CORS Setup ---
-const allowedOrigins = ["http://localhost:9000"]
+const allowedOrigins = ["http://localhost:9000", "http://localhost:7000"]
 
 const corsOptions = {
 	origin: function (origin, callback) {
