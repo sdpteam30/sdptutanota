@@ -37,6 +37,7 @@ export class MobyPhishRemoveConfirmationModal implements ModalComponent {
 						"p",
 						{
 							style: {
+								color: "#000",
 								fontSize: "16px",
 								fontWeight: "bold",
 								textAlign: "center",
@@ -49,6 +50,7 @@ export class MobyPhishRemoveConfirmationModal implements ModalComponent {
 						"p",
 						{
 							style: {
+								color: "#000",
 								fontSize: "14px",
 								textAlign: "center",
 								marginBottom: "20px",
@@ -68,7 +70,7 @@ export class MobyPhishRemoveConfirmationModal implements ModalComponent {
 										color: "#6c757d",
 									},
 								},
-								"(This action will also reset the status for all previous emails from this sender.)",
+								"This action will also reset the status for all previous emails from this sender.",
 							),
 						],
 					),
