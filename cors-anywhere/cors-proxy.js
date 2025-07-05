@@ -30,9 +30,6 @@ app.use(
 	createProxyMiddleware({
 		target: "https://mail.tutanota.com",
 		changeOrigin: true,
-		pathRewrite: {
-			"^/rest/tutanota": "/rest/tutanota",
-		},
 	}),
 )
 
