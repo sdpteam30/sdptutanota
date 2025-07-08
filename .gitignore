@@ -6,7 +6,7 @@ build-calendar-app
 build-with-emsdk.sh
 dist
 node_modules
-.env
+**/.env
 .idea
 .gradle
 /.run
