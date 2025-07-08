@@ -24,6 +24,15 @@ app.use(
 	}),
 )
 
+// Proxy to Tutanota REST API for anything starting with /rest/tutanota
+app.use(
+	"/rest/tutanota",
+	createProxyMiddleware({
+		target: "https://mail.tutanota.com",
+		changeOrigin: true,
+	}),
+)
+
 // Proxy to your trusted senders backend for anything starting with /trusted
 app.use(
 	"/trusted",

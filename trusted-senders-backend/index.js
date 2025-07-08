@@ -1,20 +1,25 @@
-// index.js (FINAL corrected version)
+// index.js (Supabase version)
 
 require("dotenv").config()
 const express = require("express")
-const sqlite3 = require("sqlite3").verbose()
 const cors = require("cors")
+const { createClient } = require("@supabase/supabase-js")
 
 const app = express()
 const PORT = process.env.PORT || 3000
-const HOST = "0.0.0.0" // Listen on all interfaces
+const HOST = "0.0.0.0"
 
-// --- Corrected CORS Setup ---
+// Initialize Supabase client
+const supabaseUrl = process.env.SUPABASE_URL
+const supabaseKey = process.env.SUPABASE_ANON_KEY
+const supabase = createClient(supabaseUrl, supabaseKey)
+
+// --- CORS Setup ---
 const allowedOrigins = ["http://localhost:9000"]
 
 const corsOptions = {
 	origin: function (origin, callback) {
-		if (!origin) return callback(null, true) // Allow tools like Postman
+		if (!origin) return callback(null, true)
 		if (allowedOrigins.includes(origin)) {
 			callback(null, true)
 		} else {
@@ -24,184 +29,153 @@ const corsOptions = {
 	credentials: true,
 	methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 	allowedHeaders: ["Content-Type", "Accept", "Authorization"],
-	exposedHeaders: ["Content-Type", "Authorization"], // Add this to avoid future minor errors
+	exposedHeaders: ["Content-Type", "Authorization"],
 }
 
 app.use(cors(corsOptions))
 app.use(express.json())
 
-// --- Database Setup ---
-const db = new sqlite3.Database("./trusted_senders.db", (err) => {
-	if (err) {
-		console.error("Database connection error:", err.message)
-	} else {
-		console.log("Connected to SQLite database.")
-	}
-})
-
-// --- Database Migration ---
-db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='trusted_senders'", (tableErr, tableRow) => {
-	if (tableErr) {
-		console.error("Error checking if trusted_senders table exists:", tableErr.message)
-		return
-	}
-	if (tableRow) {
-		db.all("PRAGMA table_info(trusted_senders)", [], (pragmaErr, columns) => {
-			if (pragmaErr) {
-				console.error("Error getting column info:", pragmaErr.message)
-				return
-			}
-			const hasNameColumn = columns.some((col) => col.name === "trusted_name")
-			if (!hasNameColumn) {
-				console.log("Adding missing trusted_name column...")
-				db.run("ALTER TABLE trusted_senders ADD COLUMN trusted_name TEXT DEFAULT ''", (alterErr) => {
-					if (alterErr) {
-						console.error("Error adding trusted_name column:", alterErr.message)
-					} else {
-						console.log("Successfully added trusted_name column.")
-					}
-				})
-			} else {
-				console.log("trusted_name column already exists.")
-			}
-		})
-	}
-})
-
-// --- Table Creation ---
-db.run(
-	`
-  CREATE TABLE IF NOT EXISTS trusted_senders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_email TEXT NOT NULL,
-    trusted_email TEXT NOT NULL,
-    trusted_name TEXT DEFAULT '',
-    UNIQUE(user_email, trusted_email)
-  )
-`,
-	handleError("creating trusted_senders table"),
-)
-
-db.run(
-	`
-  CREATE TABLE IF NOT EXISTS email_sender_status (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_email TEXT NOT NULL,
-    email_id TEXT NOT NULL,
-    sender_email TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (
-      status IN ('confirmed', 'denied', 'added_to_trusted', 'removed_from_trusted', 'reported_phishing', 'trusted_once')
-    ),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_email, email_id)
-  )
-`,
-	handleError("creating email_sender_status table"),
-)
-
-// --- Helper for error logging ---
-function handleError(action) {
-	return (err) => {
-		if (err) console.error(`Error ${action}:`, err.message)
-		else console.log(`${action} - OK`)
-	}
-}
-
 // --- API Endpoints ---
 
-app.post("/add-trusted", (req, res) => {
+app.post("/add-trusted", async (req, res) => {
 	const { user_email, trusted_email, trusted_name = "" } = req.body
+
 	if (!user_email || !trusted_email) {
 		return res.status(400).json({ error: "Missing user_email or trusted_email" })
 	}
-	const sql = `
-    INSERT INTO trusted_senders (user_email, trusted_email, trusted_name)
-    VALUES (?, ?, ?)
-    ON CONFLICT(user_email, trusted_email) DO UPDATE SET
-      trusted_name = excluded.trusted_name
-  `
-	db.run(sql, [user_email, trusted_email, trusted_name], function (err) {
-		if (err) {
-			console.error("DB Error adding/updating trusted sender:", err.message)
+
+	try {
+		const { data, error } = await supabase
+			.from("trusted_senders")
+			.upsert(
+				{
+					user_email,
+					trusted_email,
+					trusted_name,
+				},
+				{
+					onConflict: "user_email,trusted_email",
+				},
+			)
+			.select()
+
+		if (error) {
+			console.error("Supabase Error adding/updating trusted sender:", error.message)
 			return res.status(500).json({ error: "Failed to add trusted sender." })
 		}
-		res.status(201).json({ message: "Trusted sender added/updated.", id: this.lastID })
-	})
+
+		res.status(201).json({
+			message: "Trusted sender added/updated.",
+			data: data[0],
+		})
+	} catch (err) {
+		console.error("Error adding trusted sender:", err.message)
+		res.status(500).json({ error: "Failed to add trusted sender." })
+	}
 })
 
-app.post("/remove-trusted", (req, res) => {
+app.post("/remove-trusted", async (req, res) => {
 	const { user_email, trusted_email } = req.body
+
 	if (!user_email || !trusted_email) {
 		return res.status(400).json({ error: "Missing user_email or trusted_email" })
 	}
 
-	const deleteTrustedSql = `DELETE FROM trusted_senders WHERE user_email = ? AND trusted_email = ?`
-	const deleteStatusesSql = `DELETE FROM email_sender_status WHERE user_email = ? AND sender_email = ?`
+	try {
+		// Remove from trusted_senders
+		const { error: trustedError } = await supabase.from("trusted_senders").delete().eq("user_email", user_email).eq("trusted_email", trusted_email)
 
-	db.serialize(() => {
-		db.run(deleteTrustedSql, [user_email, trusted_email], function (err) {
-			if (err) {
-				console.error("DB Error removing trusted sender:", err.message)
-				return res.status(500).json({ error: "Failed to remove trusted sender." })
-			}
-			db.run(deleteStatusesSql, [user_email, trusted_email], function (statusErr) {
-				if (statusErr) {
-					console.error("DB Error removing statuses:", statusErr.message)
-					return res.status(500).json({ error: "Failed to remove email statuses." })
-				}
-				res.json({ message: "Trusted sender and statuses removed." })
-			})
-		})
-	})
+		if (trustedError) {
+			console.error("Supabase Error removing trusted sender:", trustedError.message)
+			return res.status(500).json({ error: "Failed to remove trusted sender." })
+		}
+
+		// Remove related email statuses
+		const { error: statusError } = await supabase.from("email_sender_status").delete().eq("user_email", user_email).eq("sender_email", trusted_email)
+
+		if (statusError) {
+			console.error("Supabase Error removing statuses:", statusError.message)
+			return res.status(500).json({ error: "Failed to remove email statuses." })
+		}
+
+		res.json({ message: "Trusted sender and statuses removed." })
+	} catch (err) {
+		console.error("Error removing trusted sender:", err.message)
+		res.status(500).json({ error: "Failed to remove trusted sender." })
+	}
 })
 
-// Reset all email statuses for a specific sender
-app.post("/reset-email-statuses", (req, res) => {
+app.post("/reset-email-statuses", async (req, res) => {
 	const { user_email, sender_email } = req.body
 
 	if (!user_email || !sender_email) {
 		return res.status(400).json({ error: "Missing user_email or sender_email" })
 	}
 
-	const sql = `DELETE FROM email_sender_status WHERE user_email = ? AND sender_email = ?`
+	try {
+		const { error, count } = await supabase.from("email_sender_status").delete().eq("user_email", user_email).eq("sender_email", sender_email)
 
-	db.run(sql, [user_email, sender_email], function (err) {
-		if (err) {
-			console.error("DB Error resetting statuses:", err.message)
+		if (error) {
+			console.error("Supabase Error resetting statuses:", error.message)
 			return res.status(500).json({ error: "Failed to reset email statuses." })
 		}
 
-		res.json({ message: "Statuses reset successfully.", count: this.changes })
-	})
+		res.json({ message: "Statuses reset successfully.", count })
+	} catch (err) {
+		console.error("Error resetting statuses:", err.message)
+		res.status(500).json({ error: "Failed to reset email statuses." })
+	}
 })
 
-app.get("/trusted-senders/:user_email", (req, res) => {
+app.get("/trusted-senders/:user_email", async (req, res) => {
 	const { user_email } = req.params
-	db.all("SELECT trusted_email, trusted_name FROM trusted_senders WHERE user_email = ? ORDER BY trusted_name, trusted_email", [user_email], (err, rows) => {
-		if (err) {
-			console.error("DB Error fetching trusted senders:", err.message)
+
+	try {
+		const { data, error } = await supabase
+			.from("trusted_senders")
+			.select("trusted_email, trusted_name")
+			.eq("user_email", user_email)
+			.order("trusted_name", { ascending: true })
+			.order("trusted_email", { ascending: true })
+		if (error) {
+			console.error("Supabase Error fetching trusted senders:", error.message)
 			return res.status(500).json({ error: "Failed to retrieve trusted senders." })
 		}
-		const trustedSendersList = rows.map((row) => ({
+
+		const trustedSendersList = data.map((row) => ({
 			name: row.trusted_name || "",
 			address: row.trusted_email,
 		}))
+
 		res.json({ trusted_senders: trustedSendersList })
-	})
+	} catch (err) {
+		console.error("Error fetching trusted senders:", err.message)
+		res.status(500).json({ error: "Failed to retrieve trusted senders." })
+	}
 })
 
-app.get("/email-status/:user_email/:email_id", (req, res) => {
+app.get("/email-status/:user_email/:email_id", async (req, res) => {
 	const { user_email, email_id } = req.params
-	db.get("SELECT sender_email, status FROM email_sender_status WHERE user_email = ? AND email_id = ?", [user_email, email_id], (err, row) => {
-		if (err) {
-			console.error("DB Error fetching email status:", err.message)
+	try {
+		const { data, error } = await supabase
+			.from("email_sender_status")
+			.select("sender_email, status")
+			.eq("user_email", user_email)
+			.eq("email_id", email_id)
+			.single()
+		if (error && error.code !== "PGRST116") {
+			// PGRST116 is "no rows returned"
+			console.error("Supabase Error fetching email status:", error.message)
 			return res.status(500).json({ error: "Failed to retrieve email status." })
 		}
-		res.json(row || { status: null })
-	})
+		res.json(data || { status: null })
+	} catch (err) {
+		console.error("Error fetching email status:", err.message)
+		res.status(500).json({ error: "Failed to retrieve email status." })
+	}
 })
 
-app.post("/update-email-status", (req, res) => {
+app.post("/update-email-status", async (req, res) => {
 	const { user_email, email_id, sender_email, status } = req.body
 	if (!user_email || !email_id || !sender_email || !status) {
 		return res.status(400).json({ error: "Missing fields." })
@@ -210,53 +184,55 @@ app.post("/update-email-status", (req, res) => {
 	if (!validStatuses.includes(status)) {
 		return res.status(400).json({ error: "Invalid status value." })
 	}
-
-	const sql = `
-    INSERT INTO email_sender_status (user_email, email_id, sender_email, status)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(user_email, email_id) DO UPDATE SET
-      status = excluded.status,
-      sender_email = excluded.sender_email
-  `
-	db.run(sql, [user_email, email_id, sender_email, status], function (err) {
-		if (err) {
-			console.error("DB Error updating email status:", err.message)
+	try {
+		const { data, error } = await supabase
+			.from("email_sender_status")
+			.upsert(
+				{
+					user_email,
+					email_id,
+					sender_email,
+					status,
+				},
+				{
+					onConflict: "user_email,email_id",
+				},
+			)
+			.select()
+		if (error) {
+			console.error("Supabase Error updating email status:", error.message)
 			return res.status(500).json({ error: "Failed to update email status." })
 		}
-		res.json({ message: "Email status updated." })
-	})
+		res.json({ message: "Email status updated.", data: data[0] })
+	} catch (err) {
+		console.error("Error updating email status:", err.message)
+		res.status(500).json({ error: "Failed to update email status." })
+	}
 })
-
-app.delete("/reset-single-email-status", (req, res) => {
+app.delete("/reset-single-email-status", async (req, res) => {
 	const { user_email, email_id } = req.body
 	if (!user_email || !email_id) {
 		return res.status(400).json({ error: "Missing user_email or email_id" })
 	}
-
-	db.run("DELETE FROM email_sender_status WHERE user_email = ? AND email_id = ?", [user_email, email_id], function (err) {
-		if (err) {
-			console.error("DB Error resetting status:", err.message)
+	try {
+		const { error, count } = await supabase.from("email_sender_status").delete().eq("user_email", user_email).eq("email_id", email_id)
+		if (error) {
+			console.error("Supabase Error resetting status:", error.message)
 			return res.status(500).json({ error: "Failed to reset email status." })
 		}
-		res.json({ message: "Email status reset.", count: this.changes })
-	})
+		res.json({ message: "Email status reset.", count })
+	} catch (err) {
+		console.error("Error resetting email status:", err.message)
+		res.status(500).json({ error: "Failed to reset email status." })
+	}
 })
-
 app.get("/", (req, res) => {
-	res.send("Trusted Senders Backend is Running...")
+	res.send("Trusted Senders Backend is Running with Supabase...")
 })
-
 app.listen(PORT, HOST, () => {
 	console.log(`Server running on http://${HOST}:${PORT}`)
 })
-
 process.on("SIGINT", () => {
-	db.close((err) => {
-		if (err) {
-			console.error("Error closing database:", err.message)
-		} else {
-			console.log("Database connection closed.")
-		}
-		process.exit(0)
-	})
+	console.log("Shutting down gracefully...")
+	process.exit(0)
 })
