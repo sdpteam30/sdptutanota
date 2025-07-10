@@ -38,9 +38,7 @@ import { MobyPhishDenyModal } from "./MobyPhishDenyModal.js"
 import { MobyPhishConfirmSenderModal } from "./MobyPhishConfirmSenderModal"
 import { TRUSTED_SENDERS_API_URL } from "./MailViewerViewModel.js"
 import { MobyPhishAlreadyTrustedModal } from "./MobyPhishAlreadyTrustedModal.js"
-import { MobyPhishConfirmAddSenderModal } from "./MobyPhishConfirmAddSenderModal.js"
 import { MobyPhishNotTrustedModal } from "./MobyPhishNotTrustedModal.js"
-import { MobyPhishRemoveConfirmationModal } from "./MobyPhishRemoveConfirmationModal.js"
 import { MobyPhishInfoModal } from "./MobyPhishInfoModal"
 import { MobyPhishReportModal } from "./MobyPhishReportModal.js"
 
@@ -770,14 +768,6 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			}
 		}
 
-		const addAction = () => {
-			console.log(`🔒 MOBYPHISH_LOG: Add sender button clicked for sender="${viewModel.getSender().address}", isTrusted=${isTrusted}`)
-
-			const modalInstance = isTrusted ? new MobyPhishAlreadyTrustedModal(viewModel) : new MobyPhishConfirmAddSenderModal(viewModel)
-			const handle = modal.display(modalInstance)
-			modalInstance.setModalHandle?.(handle)
-		}
-
 		const trustOnceAction = () => {
 			console.log(`🔒 MOBYPHISH_LOG: Trust once button clicked for sender="${viewModel.getSender().address}", isTrusted=${isTrusted}`)
 
@@ -788,14 +778,6 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			} else {
 				viewModel.updateSenderStatus("trusted_once")
 			}
-		}
-
-		const removeAction = () => {
-			console.log(`🔒 MOBYPHISH_LOG: Remove sender button clicked for sender="${viewModel.getSender().address}", isTrusted=${isTrusted}`)
-
-			const modalInstance = isTrusted ? new MobyPhishRemoveConfirmationModal(viewModel) : new MobyPhishNotTrustedModal()
-			const handle = modal.display(modalInstance)
-			modalInstance.setModalHandle?.(handle)
 		}
 
 		const showInfoModal = () => {
@@ -819,12 +801,6 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			label: "mobyPhish_confirm",
 			icon: m(Icon, { icon: Icons.Checkmark }),
 			click: confirmAction,
-		}
-
-		const addSenderButton: BannerButtonAttrs = {
-			label: "mobyPhish_add",
-			icon: m(Icon, { icon: Icons.Add }),
-			click: addAction,
 		}
 
 		// --- Determine Message and Buttons Based on Screen Size ---
@@ -851,13 +827,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			messageKey = "mobyPhish_sender_confirmed"
 			bannerType = BannerType.Info
 			bannerIcon = Icons.CircleCheckmark
-			buttons = [
-				{
-					label: "mobyPhish_remove",
-					icon: m(Icon, { icon: Icons.CircleReject }),
-					click: removeAction,
-				},
-			]
+			buttons = []
 		} else {
 			// Default case - show different buttons based on screen size
 			if (styles.isSingleColumnLayout()) {
@@ -873,19 +843,9 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 								click: confirmAction,
 							},
 							{
-								label: "mobyPhish_add" as const,
-								icon: Icons.Add,
-								click: addAction,
-							},
-							{
 								label: "mobyPhish_trusted_once" as const,
 								icon: Icons.Unlock,
 								click: trustOnceAction,
-							},
-							{
-								label: "mobyPhish_remove" as const,
-								icon: Icons.CircleReject,
-								click: removeAction,
 							},
 							{
 								label: "reportPhishing_action",
@@ -909,12 +869,6 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					click: trustOnceAction,
 				}
 
-				const removeButton: BannerButtonAttrs = {
-					label: "mobyPhish_remove",
-					icon: m(Icon, { icon: Icons.CircleReject }),
-					click: removeAction,
-				}
-
 				const learnMoreButton: BannerButtonAttrs = {
 					label: "mobyPhish_learn_more",
 					icon: m(Icon, { icon: Icons.QuestionMark }),
@@ -927,7 +881,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					click: reportAction,
 				}
 
-				buttons = [confirmButton, addSenderButton, trustOnceButton, removeButton, reportButton, learnMoreButton]
+				buttons = [confirmButton, trustOnceButton, reportButton, learnMoreButton]
 			}
 		}
 
