@@ -7,7 +7,6 @@ import { preludeEnvPlugin } from "./env.js"
 import { fileURLToPath } from "node:url"
 import * as LaunchHtml from "./LaunchHtml.js"
 import os from "node:os"
-import { checkOfflineDatabaseMigrations } from "./checkOfflineDbMigratons.js"
 import { buildRuntimePackages } from "./packageBuilderFunctions.js"
 import { domainConfigs } from "./DomainConfigs.js"
 import { sh } from "./sh.js"
@@ -19,7 +18,7 @@ import { napiPlugin } from "./napiPlugin.js"
 const buildSrc = dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(path.join(buildSrc, ".."))
 
-export async function runDevBuild({ stage, host, desktop, clean, ignoreMigrations, app }) {
+export async function runDevBuild({ stage, host, desktop, clean, ignoreMigrations, networkDebugging, app }) {
 	const isCalendarBuild = app === "calendar"
 	const tsConfig = isCalendarBuild ? "tsconfig-calendar-app.json" : "tsconfig.json"
 	const buildDir = isCalendarBuild ? "build-calendar-app" : "build"
@@ -33,14 +32,6 @@ export async function runDevBuild({ stage, host, desktop, clean, ignoreMigration
 			await fs.rm(liboqsIncludeDir, { recursive: true, force: true })
 		})
 	}
-
-	await runStep("Validate", () => {
-		if (ignoreMigrations) {
-			console.warn("CAUTION: Offline migrations are not being validated.")
-		} else {
-			checkOfflineDatabaseMigrations()
-		}
-	})
 
 	await runStep("Packages", async () => {
 		await buildRuntimePackages()
@@ -61,22 +52,25 @@ export async function runDevBuild({ stage, host, desktop, clean, ignoreMigration
 			return { ...domainConfigs }
 		} else {
 			const url = new URL(host)
-			const { protocol, hostname, port } = url
+			const { protocol, hostname } = url
+			const port = parseInt(url.port)
+			// the URL object does not include the port if it is the schema's default
+			const uri = port ? `${protocol}//${hostname}:${port}` : `${protocol}//${hostname}`
 			return {
 				...domainConfigs,
 				[url.hostname]: {
 					firstPartyDomain: true,
-					partneredDomainTransitionUrl: `${protocol}//${hostname}:${port}`,
-					apiUrl: `${protocol}//${hostname}:${port}`,
-					paymentUrl: `${protocol}//${hostname}:${port}/braintree.html`,
-					webauthnUrl: `${protocol}//${hostname}:${port}/webauthn`,
-					legacyWebauthnUrl: `${protocol}//${hostname}:${port}/webauthn`,
-					webauthnMobileUrl: `${protocol}//${hostname}:${port}/webauthnmobile`,
-					legacyWebauthnMobileUrl: `${protocol}//${hostname}:${port}/webauthnmobile`,
-					webauthnRpId: `${hostname}`,
-					u2fAppId: `${protocol}//${hostname}:${port}/u2f-appid.json`,
-					giftCardBaseUrl: `${protocol}//${hostname}:${port}/giftcard`,
-					referralBaseUrl: `${protocol}//${hostname}:${port}/signup`,
+					partneredDomainTransitionUrl: uri,
+					apiUrl: uri,
+					paymentUrl: `${uri}/braintree.html`,
+					webauthnUrl: `${uri}/webauthn`,
+					legacyWebauthnUrl: `${uri}/webauthn`,
+					webauthnMobileUrl: `${uri}/webauthnmobile`,
+					legacyWebauthnMobileUrl: `${uri}/webauthnmobile`,
+					webauthnRpId: hostname,
+					u2fAppId: `${uri}/u2f-appid.json`,
+					giftCardBaseUrl: `${uri}/giftcard`,
+					referralBaseUrl: `${uri}/signup`,
 					websiteBaseUrl: "https://tuta.com",
 				},
 			}
@@ -85,10 +79,10 @@ export async function runDevBuild({ stage, host, desktop, clean, ignoreMigration
 
 	const extendedDomainConfigs = updateDomainConfigForHostname(host)
 
-	await buildWebPart({ stage, host, version, domainConfigs: extendedDomainConfigs, app })
+	await buildWebPart({ stage, host, version, domainConfigs: extendedDomainConfigs, networkDebugging, app })
 
 	if (desktop) {
-		await buildDesktopPart({ version, app })
+		await buildDesktopPart({ version, networkDebugging, app })
 	}
 }
 
@@ -98,10 +92,11 @@ export async function runDevBuild({ stage, host, desktop, clean, ignoreMigration
  * @param p.host {string|null}
  * @param p.version {string}
  * @param p.domainConfigs {DomainConfigMap}
+ * @param p.networkDebugging {boolean}
  * @param p.app {string}
  * @return {Promise<void>}
  */
-async function buildWebPart({ stage, host, version, domainConfigs, app }) {
+async function buildWebPart({ stage, host, version, domainConfigs, networkDebugging, app }) {
 	const isCalendarBuild = app === "calendar"
 	const buildDir = isCalendarBuild ? "build-calendar-app" : "build"
 	const resolvedBuildDir = path.resolve(buildDir)
@@ -151,7 +146,7 @@ async function buildWebPart({ stage, host, version, domainConfigs, app }) {
 	// Do assets last so that server that listens to index.html changes does not reload too early
 
 	await runStep("Web: Assets", async () => {
-		await prepareAssets(stage, host, version, domainConfigs, buildDir)
+		await prepareAssets(stage, host, version, domainConfigs, buildDir, networkDebugging)
 		await fs.promises.writeFile(
 			`${buildDir}/worker-bootstrap.js`,
 			`import "./polyfill.js"
@@ -161,7 +156,7 @@ import "./worker.js"
 	})
 }
 
-async function buildDesktopPart({ version, app }) {
+async function buildDesktopPart({ version, networkDebugging, app }) {
 	const isCalendarBuild = app === "calendar"
 	const buildDir = isCalendarBuild ? "build-calendar-app" : "build"
 
@@ -179,15 +174,17 @@ async function buildDesktopPart({ version, app }) {
 					rootDir: projectRoot,
 					platform: getCanonicalPlatformName(process.platform),
 					architecture: getValidArchitecture(process.platform, process.arch),
-					nodeModule: "better-sqlite3",
-					environment: "electron",
+					nodeModule: "@signalapp/sqlcipher",
+					// we build for Electron, but it uses NAPI so it's fine to build for node
+					environment: "node",
+					targetName: "node_sqlcipher",
 				}),
 				napiPlugin({
 					nodeModule: "@tutao/node-mimimi",
 					platform: getCanonicalPlatformName(process.platform),
 					architecture: getValidArchitecture(process.platform, process.arch),
 				}),
-				preludeEnvPlugin(env.create({ staticUrl: null, version, mode: "Desktop", dist: false, domainConfigs })),
+				preludeEnvPlugin(env.create({ staticUrl: null, version, mode: "Desktop", dist: false, domainConfigs, networkDebugging })),
 			],
 		})
 
@@ -286,9 +283,10 @@ function getStaticUrl(stage, mode, host) {
  * @param version {string}
  * @param domainConfigs {DomainConfigMap}
  * @param buildDir {string}
+ * @param networkDebugging {boolean}
  * @return {Promise<void>}
  */
-export async function prepareAssets(stage, host, version, domainConfigs, buildDir) {
+export async function prepareAssets(stage, host, version, domainConfigs, buildDir, networkDebugging) {
 	await Promise.all([
 		await fs.emptyDir(path.join(root, `${buildDir}/images`)),
 		fs.copy(path.join(root, "/resources/favicon"), path.join(root, `/${buildDir}/images`)),
@@ -305,6 +303,6 @@ export async function prepareAssets(stage, host, version, domainConfigs, buildDi
 	/** @type {EnvMode[]} */
 	const modes = ["Browser", "App", "Desktop"]
 	for (const mode of modes) {
-		await createBootstrap(env.create({ staticUrl: getStaticUrl(stage, mode, host), version, mode, dist: false, domainConfigs }), buildDir)
+		await createBootstrap(env.create({ staticUrl: getStaticUrl(stage, mode, host), version, mode, dist: false, domainConfigs, networkDebugging }), buildDir)
 	}
 }

@@ -84,13 +84,24 @@ setup_upstream() {
 setup_release_and_branch() {
     print_status "Finding latest tutanota-release version..."
     
-    # Get all tutanota-release tags, sort them, and get the latest
-    local latest_release=$(git tag -l "tutanota-release-*" | sort -V | tail -n 1)
+    # First try to find newer 296.x versions
+    local latest_release=$(git tag -l "tutanota-release-296.*" | sort -V | tail -n 1)
+    
+    # If no 296.x versions found, fall back to 3.x.x versions
+    if [ -z "$latest_release" ]; then
+        latest_release=$(git tag -l "tutanota-release-3.*" | sort -V | tail -n 1)
+    fi
+    
+    # If still no release found, try all tutanota-release tags (excluding old timestamp versions)
+    if [ -z "$latest_release" ]; then
+        # Exclude the old timestamp format (tutanota-release-1536579556293)
+        latest_release=$(git tag -l "tutanota-release-*" | grep -v "tutanota-release-[0-9]\{13\}" | sort -V | tail -n 1)
+    fi
     
     if [ -z "$latest_release" ]; then
         print_error "No tutanota-release tags found. Checking remote tags..."
         # Try to get from upstream remote refs
-        latest_release=$(git ls-remote --tags upstream | grep "tutanota-release-" | grep -v "\^{}" | sort -V | tail -n 1 | sed 's/.*refs\/tags\///')
+        latest_release=$(git ls-remote --tags upstream | grep "tutanota-release-" | grep -v "\^{}" | grep -v "[0-9]\{13\}" | sort -V | tail -n 1 | sed 's/.*refs\/tags\///')
         
         if [ -z "$latest_release" ]; then
             print_error "Could not find any tutanota-release tags"
@@ -283,22 +294,7 @@ check_required_files() {
     done
 }
 
-# Clean up any previous builds
-cleanup_builds() {
-    print_status "Cleaning up previous builds..."
-    
-    # Remove build artifacts
-    rm -rf build/
-    rm -rf dist/
-    rm -rf node_modules/
-    rm -rf trusted-senders-backend/node_modules/
-    rm -rf cors-anywhere/node_modules/
-    
-    # Clean npm cache
-    npm cache clean --force 2>/dev/null || true
-    
-    print_success "Cleanup completed"
-}
+# Note: No cleanup needed - npm ci and build commands will handle overwrites
 
 # Main function
 main() {
@@ -312,20 +308,15 @@ main() {
     verify_submodules
     check_required_files
     
-    # Ask if user wants to clean up
-    echo ""
-    read -p "Do you want to clean up previous builds? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        cleanup_builds
-    fi
-    
     print_success "Repository setup completed!"
     print_success "================================================="
     print_success "You can now run Docker build:"
     print_success "  ./start-docker.sh"
     print_success "  or"
     print_success "  docker-compose up --build"
+    print_success ""
+    print_success "The build process (npm ci, npm run build-packages, node make prod)"
+    print_success "will automatically overwrite any previous builds."
 }
 
 # Run main function

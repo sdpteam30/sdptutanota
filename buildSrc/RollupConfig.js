@@ -1,6 +1,9 @@
 import path from "node:path"
 
-// These are the vendored dependencies. This map is to help bundler find the resolved path.
+/**
+ * These are the vendored dependencies. This map is to help bundler find the resolved path.
+ * Must stay in sync with ./updateLibs.js
+ */
 export const dependencyMap = {
 	mithril: path.normalize("./libs/mithril.js"),
 	"mithril/stream": path.normalize("./libs/stream.js"),
@@ -10,13 +13,14 @@ export const dependencyMap = {
 	jszip: path.normalize("./libs/jszip.js"),
 	luxon: path.normalize("./libs/luxon.js"),
 	linkifyjs: path.normalize("./libs/linkify.js"),
-	"linkifyjs/html": path.normalize("./libs/linkify-html.js"),
+	"linkify-html": path.normalize("./libs/linkify-html.js"),
 	cborg: path.normalize("./libs/cborg.js"),
-	// belaw this, the modules are only running in the desktop main thread.
+	// below this, the modules are only running in the desktop main thread.
 	"electron-updater": path.normalize("./libs/electron-updater.mjs"),
-	"better-sqlite3": path.normalize("./libs/better-sqlite3.mjs"),
 	winreg: path.normalize("./libs/winreg.mjs"),
 	undici: path.normalize("./libs/undici.mjs"),
+	jsqr: path.normalize("./libs/jsQR.js"),
+	"@signalapp/sqlcipher": path.normalize("./libs/node-sqlcipher.mjs"),
 }
 
 /**
@@ -33,7 +37,7 @@ export const allowedImports = {
 	main: ["polyfill-helpers", "common-min", "common", "boot", "gui-base", "date"],
 	sanitizer: ["polyfill-helpers", "common-min", "common", "boot", "gui-base"],
 	date: ["polyfill-helpers", "common-min", "common"],
-	"date-gui": ["polyfill-helpers", "common-min", "common", "boot", "gui-base", "main", "sharing", "date", "contacts"],
+	"date-gui": ["polyfill-helpers", "common-min", "common", "boot", "gui-base", "main", "sharing", "date", "contacts", "ui-extra"],
 	"mail-view": ["polyfill-helpers", "common-min", "common", "boot", "gui-base", "main"],
 	"mail-editor": ["polyfill-helpers", "common-min", "common", "boot", "gui-base", "main", "mail-view", "sanitizer", "sharing", "date-gui"],
 	search: ["polyfill-helpers", "common-min", "common", "boot", "gui-base", "main", "mail-view", "calendar-view", "contacts", "date", "date-gui", "sharing"],
@@ -175,7 +179,7 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 	} else if (
 		isIn("src/calendar-app/calendar/export") ||
 		isIn("src/common/misc/DateParser") ||
-		isIn("src/common/misc/CyberMondayUtils") ||
+		isIn("src/common/misc/ElevenYearsTutaUtils") ||
 		isIn("src/common/ratings") ||
 		isIn("src/calendar-app/calendar/model") ||
 		isIn("src/calendar-app/calendar/gui") ||
@@ -207,7 +211,7 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		isIn("src/mail-app/knowledgebase") ||
 		isIn("src/mail-app/mail/press")
 	) {
-		// squire is most often used with mail editor and they are both not too big so we merge them
+		// squire is most often used with mail editor, and they are both not too big so we merge them
 		return "mail-editor"
 	} else if (
 		isIn("src/common/api/main") ||
@@ -219,6 +223,7 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		isIn("src/common/misc") ||
 		isIn("src/common/file") ||
 		isIn("src/common/gui") ||
+		isIn("src/common/offline") ||
 		isIn("src/common/serviceworker") ||
 		moduleId.includes(path.normalize("packages/tutanota-usagetests")) ||
 		moduleId.includes("NotificationContentSelector") ||
@@ -260,7 +265,6 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		isIn("src/common/api/entities") ||
 		isIn("src/desktop/config/ConfigKeys") ||
 		moduleId.includes("cborg") ||
-		isIn("src/common/offline") ||
 		// CryptoError is needed on the main thread in order to check errors
 		// We have to define both the entry point and the files referenced from it which is annoying
 		isIn("packages/tutanota-crypto/dist/error") ||
@@ -276,7 +280,7 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		moduleId.includes("commonjs-dynamic-modules")
 	) {
 		return "polyfill-helpers"
-	} else if (isIn("src/common/settings") || isIn("src/common/subscription") || isIn("libs/qrcode") || isIn("src/common/termination")) {
+	} else if (isIn("src/common/settings") || isIn("src/common/subscription") || isIn("libs/qrcode") || isIn("libs/jsQR") || isIn("src/common/termination")) {
 		// subscription and settings depend on each other right now.
 		// subscription is also a kitchen sink with signup, utils and views, we should break it up
 		return "settings"
