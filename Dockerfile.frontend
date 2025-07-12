@@ -65,6 +65,13 @@ RUN if [ -d ".git" ]; then \
             LATEST_RELEASE=$(git ls-remote --tags upstream | grep "tutanota-release-" | grep -v "\^{}" | sort -V | tail -n 1 | sed 's/.*refs\/tags\///'); \
         fi && \
         echo "Using release: $LATEST_RELEASE" && \
+        echo "Stashing local changes before checkout..." && \
+        if ! git diff --quiet || ! git diff --cached --quiet; then \
+            git stash push -m "Auto-stash before checkout $LATEST_RELEASE ($(date))" && \
+            STASH_CREATED=true; \
+        else \
+            STASH_CREATED=false; \
+        fi && \
         git checkout "$LATEST_RELEASE" && \
         if [ -f ".gitmodules" ]; then \
             git submodule init && \
@@ -99,7 +106,11 @@ RUN if [ -d ".git" ]; then \
                 mv buildSrc.release.backup buildSrc; \
             fi; \
         fi && \
-        echo "Build setup complete on branch: $(git branch --show-current)"; \
+        echo "Build setup complete on branch: $(git branch --show-current)" && \
+        if [ "$STASH_CREATED" = true ]; then \
+            echo "Restoring stashed changes..." && \
+            git stash pop || echo "Warning: Failed to restore stashed changes - they remain in stash"; \
+        fi; \
     else \
         echo "Warning: Skipping git setup - not a git repository"; \
     fi

@@ -102,6 +102,17 @@ setup_release_and_branch() {
     
     print_success "Found latest release: $latest_release"
     
+    # Stash any local changes before checkout
+    print_status "Stashing local changes before checkout..."
+    local stash_created=false
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        git stash push -m "Auto-stash before checkout $latest_release ($(date))"
+        stash_created=true
+        print_success "Local changes stashed"
+    else
+        print_success "No local changes to stash"
+    fi
+    
     # Checkout the latest release
     print_status "Checking out $latest_release..."
     if git checkout "$latest_release"; then
@@ -163,6 +174,17 @@ setup_release_and_branch() {
             print_warning "buildSrc missing after branch switch - restoring from release"
             mv buildSrc.release.backup buildSrc
             print_success "Restored buildSrc files from $latest_release"
+        fi
+    fi
+    
+    # Restore stashed changes if any were stashed
+    if [ "$stash_created" = true ]; then
+        print_status "Restoring stashed changes..."
+        if git stash pop; then
+            print_success "Local changes restored"
+        else
+            print_warning "Failed to restore stashed changes automatically"
+            print_warning "Your changes are still in the stash - use 'git stash pop' to restore them manually"
         fi
     fi
     
