@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Frontend service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "9000:9000"
+    depends_on:
+      - backend
+      - cors-proxy
+    environment:
+      - NODE_ENV=production
+    networks:
+      - tutanota-network
+
+  # Backend service (trusted-senders-backend)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    volumes:
+      - backend-data:/app/data
+    networks:
+      - tutanota-network
+
+  # CORS proxy service
+  cors-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.cors
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - HOST=0.0.0.0
+      - CORSANYWHERE_WHITELIST=http://localhost:9000,http://frontend:9000
+    networks:
+      - tutanota-network
+
+networks:
+  tutanota-network:
+    driver: bridge
+
+volumes:
+  backend-data:
+    driver: local 

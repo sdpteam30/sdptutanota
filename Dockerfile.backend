@@ -1,0 +1,30 @@
+# Backend Dockerfile for Tutanota trusted-senders-backend
+FROM node:20-alpine
+
+# Install system dependencies
+RUN apk add --no-cache \
+    git \
+    python3 \
+    make \
+    g++
+
+# Set working directory
+WORKDIR /app
+
+# Copy backend package files
+COPY trusted-senders-backend/package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy backend source code
+COPY trusted-senders-backend/ ./
+
+# Create data directory for SQLite database
+RUN mkdir -p /app/data
+
+# Expose port
+EXPOSE 3000
+
+# Start backend server
+CMD ["node", "index.js"] 
