@@ -51,8 +51,8 @@ RUN if [ -d ".git" ]; then \
         if ! git remote | grep -q "upstream"; then \
             git remote add upstream https://github.com/tutao/tutanota.git; \
         fi && \
-        git fetch upstream --all --tags && \
-        git fetch origin --all --tags; \
+        git fetch upstream --tags && \
+        git fetch origin --tags; \
     else \
         echo "Warning: Not in a git repository"; \
     fi

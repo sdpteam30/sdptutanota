@@ -76,8 +76,8 @@ setup_upstream() {
     fi
     
     print_status "Fetching all branches and tags from upstream..."
-    git fetch upstream --all --tags
-    git fetch origin --all --tags
+    git fetch upstream --tags
+    git fetch origin --tags
 }
 
 # Find and checkout latest tutanota release, then switch to dockerized branch
