@@ -44,23 +44,64 @@ RUN git config --global user.email "docker@tutanota.com" && \
     git config --global user.name "Docker Build" && \
     git config --global --add safe.directory /app
 
-# Make sure we're on the correct branch/commit
-# The build script switches to specific branches, so we need to ensure we're set up correctly
+# Set up upstream remote and fetch all branches/tags
 RUN if [ -d ".git" ]; then \
+        echo "Setting up git repository for build..." && \
         git remote -v && \
-        git branch -a && \
-        git status; \
+        if ! git remote | grep -q "upstream"; then \
+            git remote add upstream https://github.com/tutao/tutanota.git; \
+        fi && \
+        git fetch upstream --all --tags && \
+        git fetch origin --all --tags; \
     else \
         echo "Warning: Not in a git repository"; \
     fi
 
-# Initialize and update submodules
+# Find latest tutanota-release, checkout, init submodules, then switch to dockerized branch
 RUN if [ -d ".git" ]; then \
-        git submodule init && \
-        git submodule sync --recursive && \
-        git submodule update; \
+        echo "Finding latest tutanota-release..." && \
+        LATEST_RELEASE=$(git tag -l "tutanota-release-*" | sort -V | tail -n 1) && \
+        if [ -z "$LATEST_RELEASE" ]; then \
+            LATEST_RELEASE=$(git ls-remote --tags upstream | grep "tutanota-release-" | grep -v "\^{}" | sort -V | tail -n 1 | sed 's/.*refs\/tags\///'); \
+        fi && \
+        echo "Using release: $LATEST_RELEASE" && \
+        git checkout "$LATEST_RELEASE" && \
+        if [ -f ".gitmodules" ]; then \
+            git submodule init && \
+            git submodule sync --recursive && \
+            git submodule update; \
+        fi && \
+        echo "Preserving buildSrc files from release..." && \
+        if [ -d "buildSrc" ]; then \
+            cp -r buildSrc buildSrc.release.backup; \
+        fi && \
+        echo "Switching to dockerized branch..." && \
+        if git show-ref --verify --quiet refs/heads/dockerized; then \
+            git checkout dockerized; \
+        elif git show-ref --verify --quiet refs/remotes/origin/dockerized; then \
+            git checkout -b dockerized origin/dockerized; \
+        else \
+            git checkout -b dockerized; \
+        fi && \
+        echo "Restoring buildSrc files from release if needed..." && \
+        if [ -d "buildSrc.release.backup" ]; then \
+            if [ -d "buildSrc" ]; then \
+                if ! diff -rq buildSrc buildSrc.release.backup > /dev/null 2>&1; then \
+                    echo "buildSrc files differ - restoring from release"; \
+                    rm -rf buildSrc; \
+                    mv buildSrc.release.backup buildSrc; \
+                else \
+                    echo "buildSrc files identical - no restoration needed"; \
+                    rm -rf buildSrc.release.backup; \
+                fi; \
+            else \
+                echo "buildSrc missing - restoring from release"; \
+                mv buildSrc.release.backup buildSrc; \
+            fi; \
+        fi && \
+        echo "Build setup complete on branch: $(git branch --show-current)"; \
     else \
-        echo "Warning: Skipping submodule initialization - not a git repository"; \
+        echo "Warning: Skipping git setup - not a git repository"; \
     fi
 
 # Install dependencies

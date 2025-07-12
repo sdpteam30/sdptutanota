@@ -48,8 +48,9 @@ chmod +x start-docker.sh
 The `setup-repo.sh` script ensures:
 - You're in the correct repository (sdpteam30/sdptutanota)
 - Upstream remote is configured
-- You're on the correct branch for your work
-- Git submodules are initialized and updated
+- Latest tutanota-release version is checked out
+- Git submodules are initialized and updated from the release
+- Switches to 'dockerized' branch for development
 - Required files are present
 - Previous builds are cleaned up (optional)
 
@@ -62,23 +63,28 @@ If you prefer to set up manually:
 git remote -v
 # Should show: origin https://github.com/sdpteam30/sdptutanota.git
 
-# 2. Add upstream remote (if not already added)
+# 2. Add upstream remote and fetch all branches/tags
 git remote add upstream https://github.com/tutao/tutanota.git
-git fetch upstream
+git fetch upstream --all --tags
+git fetch origin --all --tags
 
-# 3. Make sure you're on the correct branch
-git branch --show-current
-# Switch if needed: git checkout your-branch-name
+# 3. Find and checkout latest tutanota-release
+LATEST_RELEASE=$(git tag -l "tutanota-release-*" | sort -V | tail -n 1)
+echo "Using release: $LATEST_RELEASE"
+git checkout "$LATEST_RELEASE"
 
-# 4. Initialize submodules
+# 4. Initialize submodules from the release
 git submodule init
 git submodule sync --recursive
 git submodule update
 
-# 5. Clean previous builds (optional)
+# 5. Switch to dockerized branch
+git checkout -b dockerized  # or git checkout dockerized if it exists
+
+# 6. Clean previous builds (optional)
 rm -rf build/ dist/ node_modules/
 
-# 6. Now run Docker
+# 7. Now run Docker
 docker-compose up --build
 ```
 

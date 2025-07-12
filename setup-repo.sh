@@ -75,52 +75,116 @@ setup_upstream() {
         print_success "Added upstream remote"
     fi
     
-    print_status "Fetching upstream branches..."
-    git fetch upstream
+    print_status "Fetching all branches and tags from upstream..."
+    git fetch upstream --all --tags
+    git fetch origin --all --tags
 }
 
-# Check current branch
-check_branch() {
-    local current_branch=$(git branch --show-current)
-    print_status "Current branch: $current_branch"
+# Find and checkout latest tutanota release, then switch to dockerized branch
+setup_release_and_branch() {
+    print_status "Finding latest tutanota-release version..."
     
-    # List available branches
-    print_status "Available branches:"
-    git branch -a | head -10
+    # Get all tutanota-release tags, sort them, and get the latest
+    local latest_release=$(git tag -l "tutanota-release-*" | sort -V | tail -n 1)
     
-    # Ask user about branch
-    echo ""
-    print_status "Make sure you're on the correct branch for your development work."
-    print_status "Common branches: main, develop, sean-dev, my-testing-branch"
-    
-    read -p "Do you want to switch to a different branch? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        read -p "Enter branch name: " branch_name
-        if git show-ref --verify --quiet refs/heads/"$branch_name"; then
-            git checkout "$branch_name"
-            print_success "Switched to branch: $branch_name"
-        elif git show-ref --verify --quiet refs/remotes/origin/"$branch_name"; then
-            git checkout -b "$branch_name" origin/"$branch_name"
-            print_success "Checked out remote branch: $branch_name"
-        else
-            print_error "Branch '$branch_name' does not exist"
+    if [ -z "$latest_release" ]; then
+        print_error "No tutanota-release tags found. Checking remote tags..."
+        # Try to get from upstream remote refs
+        latest_release=$(git ls-remote --tags upstream | grep "tutanota-release-" | grep -v "\^{}" | sort -V | tail -n 1 | sed 's/.*refs\/tags\///')
+        
+        if [ -z "$latest_release" ]; then
+            print_error "Could not find any tutanota-release tags"
+            print_status "Available tags:"
+            git tag -l | head -10
             exit 1
         fi
     fi
-}
-
-# Initialize and update submodules
-setup_submodules() {
-    print_status "Initializing and updating submodules..."
     
+    print_success "Found latest release: $latest_release"
+    
+    # Checkout the latest release
+    print_status "Checking out $latest_release..."
+    if git checkout "$latest_release"; then
+        print_success "Successfully checked out $latest_release"
+    else
+        print_error "Failed to checkout $latest_release"
+        exit 1
+    fi
+    
+    # Initialize and update submodules from the release
+    print_status "Initializing and updating submodules from release..."
     if [ -f ".gitmodules" ]; then
         git submodule init
         git submodule sync --recursive
         git submodule update
-        print_success "Submodules updated successfully"
+        print_success "Submodules updated successfully from release"
     else
-        print_warning "No .gitmodules file found, skipping submodule setup"
+        print_warning "No .gitmodules file found in release"
+    fi
+    
+    # Preserve critical files from release before switching branches
+    print_status "Preserving buildSrc files from release..."
+    if [ -d "buildSrc" ]; then
+        cp -r buildSrc buildSrc.release.backup
+        print_success "Backed up buildSrc files from release"
+    fi
+    
+    # Now switch to dockerized branch
+    print_status "Switching to 'dockerized' branch..."
+    if git show-ref --verify --quiet refs/heads/dockerized; then
+        # Branch exists locally
+        git checkout dockerized
+        print_success "Switched to existing 'dockerized' branch"
+    elif git show-ref --verify --quiet refs/remotes/origin/dockerized; then
+        # Branch exists on remote
+        git checkout -b dockerized origin/dockerized
+        print_success "Checked out 'dockerized' branch from remote"
+    else
+        # Create new branch from current state (release + submodules)
+        git checkout -b dockerized
+        print_success "Created new 'dockerized' branch from $latest_release"
+    fi
+    
+    # Restore buildSrc files from release if they were overwritten
+    if [ -d "buildSrc.release.backup" ]; then
+        if [ -d "buildSrc" ]; then
+            # Check if buildSrc was modified by branch switch
+            if ! diff -rq buildSrc buildSrc.release.backup > /dev/null 2>&1; then
+                print_warning "buildSrc files differ between release and dockerized branch"
+                print_status "Restoring buildSrc files from release..."
+                rm -rf buildSrc
+                mv buildSrc.release.backup buildSrc
+                print_success "Restored buildSrc files from $latest_release"
+            else
+                print_success "buildSrc files are identical - no restoration needed"
+                rm -rf buildSrc.release.backup
+            fi
+        else
+            print_warning "buildSrc missing after branch switch - restoring from release"
+            mv buildSrc.release.backup buildSrc
+            print_success "Restored buildSrc files from $latest_release"
+        fi
+    fi
+    
+    print_status "Current branch: $(git branch --show-current)"
+    print_status "Based on release: $latest_release"
+}
+
+# Verify submodules are properly set up (called after branch setup)
+verify_submodules() {
+    print_status "Verifying submodules are properly initialized..."
+    
+    if [ -f ".gitmodules" ]; then
+        # Check if submodules are initialized
+        if git submodule status | grep -q "^-"; then
+            print_warning "Some submodules not initialized, updating..."
+            git submodule init
+            git submodule sync --recursive
+            git submodule update
+        fi
+        print_success "Submodules verified and ready"
+    else
+        print_warning "No .gitmodules file found"
     fi
 }
 
@@ -171,8 +235,8 @@ main() {
     check_git_repo
     check_repo_origin
     setup_upstream
-    check_branch
-    setup_submodules
+    setup_release_and_branch
+    verify_submodules
     check_required_files
     
     # Ask if user wants to clean up

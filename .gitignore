@@ -6,6 +6,8 @@ build-calendar-app
 build-with-emsdk.sh
 dist
 node_modules
+buildSrc.release.backup
+buildSrc.release.backup/
 **/.env
 .idea
 .gradle
