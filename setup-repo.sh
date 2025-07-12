@@ -102,6 +102,28 @@ setup_release_and_branch() {
     
     print_success "Found latest release: $latest_release"
     
+    # Handle untracked files that might conflict with checkout
+    print_status "Handling untracked files before checkout..."
+    local untracked_files=()
+    while IFS= read -r -d '' file; do
+        untracked_files+=("$file")
+    done < <(git ls-files --others --exclude-standard -z 2>/dev/null || true)
+    
+    if [ ${#untracked_files[@]} -gt 0 ]; then
+        print_status "Moving untracked files to temporary location..."
+        mkdir -p .git/untracked-backup
+        for file in "${untracked_files[@]}"; do
+            if [ -f "$file" ]; then
+                mkdir -p ".git/untracked-backup/$(dirname "$file")"
+                mv "$file" ".git/untracked-backup/$file"
+                print_status "Moved: $file"
+            fi
+        done
+        print_success "Untracked files moved to .git/untracked-backup/"
+    else
+        print_success "No untracked files to handle"
+    fi
+    
     # Stash any local changes before checkout
     print_status "Stashing local changes before checkout..."
     local stash_created=false
@@ -177,15 +199,44 @@ setup_release_and_branch() {
         fi
     fi
     
-    # Restore stashed changes if any were stashed
+    # Restore stashed changes if any were stashed, but exclude buildSrc files
     if [ "$stash_created" = true ]; then
-        print_status "Restoring stashed changes..."
-        if git stash pop; then
-            print_success "Local changes restored"
+        print_status "Restoring stashed changes (excluding buildSrc files)..."
+        # Create a temporary patch excluding buildSrc files
+        git stash show -p > .git/stash-patch.tmp
+        
+        # Apply the stash but don't pop it yet
+        if git apply --index .git/stash-patch.tmp --exclude="buildSrc/*" 2>/dev/null; then
+            print_success "Non-buildSrc changes restored"
+            # Now drop the stash since we applied it
+            git stash drop
         else
-            print_warning "Failed to restore stashed changes automatically"
+            print_warning "Some changes couldn't be restored automatically"
             print_warning "Your changes are still in the stash - use 'git stash pop' to restore them manually"
+            print_warning "Note: buildSrc files have been restored from the release and should not be modified"
         fi
+        
+        # Clean up
+        rm -f .git/stash-patch.tmp
+    fi
+    
+    # Restore untracked files (except buildSrc files that might conflict)
+    if [ -d ".git/untracked-backup" ]; then
+        print_status "Restoring untracked files (excluding buildSrc)..."
+        find .git/untracked-backup -type f | while read -r backup_file; do
+            original_file="${backup_file#.git/untracked-backup/}"
+            if [[ "$original_file" != buildSrc/* ]]; then
+                mkdir -p "$(dirname "$original_file")"
+                mv "$backup_file" "$original_file"
+                print_status "Restored: $original_file"
+            else
+                print_status "Skipped buildSrc file: $original_file"
+            fi
+        done
+        
+        # Clean up backup directory
+        rm -rf .git/untracked-backup
+        print_success "Untracked files restored"
     fi
     
     print_status "Current branch: $(git branch --show-current)"

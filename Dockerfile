@@ -65,6 +65,13 @@ RUN if [ -d ".git" ]; then \
             LATEST_RELEASE=$(git ls-remote --tags upstream | grep "tutanota-release-" | grep -v "\^{}" | sort -V | tail -n 1 | sed 's/.*refs\/tags\///'); \
         fi && \
         echo "Using release: $LATEST_RELEASE" && \
+        echo "Handling untracked files before checkout..." && \
+        git ls-files --others --exclude-standard | while read -r file; do \
+            if [ -f "$file" ]; then \
+                mkdir -p ".git/untracked-backup/$(dirname "$file")" && \
+                mv "$file" ".git/untracked-backup/$file"; \
+            fi; \
+        done && \
         echo "Stashing local changes before checkout..." && \
         if ! git diff --quiet || ! git diff --cached --quiet; then \
             git stash push -m "Auto-stash before checkout $LATEST_RELEASE ($(date))" && \
@@ -108,8 +115,26 @@ RUN if [ -d ".git" ]; then \
         fi && \
         echo "Build setup complete on branch: $(git branch --show-current)" && \
         if [ "$STASH_CREATED" = true ]; then \
-            echo "Restoring stashed changes..." && \
-            git stash pop || echo "Warning: Failed to restore stashed changes - they remain in stash"; \
+            echo "Restoring stashed changes (excluding buildSrc files)..." && \
+            git stash show -p > .git/stash-patch.tmp && \
+            if git apply --index .git/stash-patch.tmp --exclude="buildSrc/*" 2>/dev/null; then \
+                echo "Non-buildSrc changes restored" && \
+                git stash drop; \
+            else \
+                echo "Warning: Some changes couldn't be restored - they remain in stash"; \
+            fi && \
+            rm -f .git/stash-patch.tmp; \
+        fi && \
+        if [ -d ".git/untracked-backup" ]; then \
+            echo "Restoring untracked files (excluding buildSrc)..." && \
+            find .git/untracked-backup -type f | while read -r backup_file; do \
+                original_file="${backup_file#.git/untracked-backup/}"; \
+                if [[ "$original_file" != buildSrc/* ]]; then \
+                    mkdir -p "$(dirname "$original_file")" && \
+                    mv "$backup_file" "$original_file"; \
+                fi; \
+            done && \
+            rm -rf .git/untracked-backup; \
         fi; \
     else \
         echo "Warning: Skipping git setup - not a git repository"; \
