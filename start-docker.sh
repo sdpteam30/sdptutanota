@@ -29,15 +29,21 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check if Docker is installed
+# Check if Docker Compose is installed
 check_docker() {
     if ! command -v docker &> /dev/null; then
         print_error "Docker is not installed. Please install Docker first."
         exit 1
     fi
     
-    if ! command -v docker-compose &> /dev/null; then
+    # Check for Docker Compose V2 (plugin)
+    if docker compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    else
         print_error "Docker Compose is not installed. Please install Docker Compose first."
+        print_error "Run: sudo apt-get install docker-compose-plugin"
         exit 1
     fi
 }
@@ -80,7 +86,7 @@ check_requirements() {
 # Function to clean up previous containers
 cleanup() {
     print_status "Cleaning up previous containers..."
-    docker-compose down --volumes --remove-orphans || true
+    $DOCKER_COMPOSE_CMD down --volumes --remove-orphans || true
     docker system prune -f || true
 }
 
@@ -90,7 +96,7 @@ start_services() {
     print_status "This may take 15-30 minutes for the first build..."
     
     # Start services
-    docker-compose up --build -d
+    $DOCKER_COMPOSE_CMD up --build -d
     
     # Wait for services to be ready
     print_status "Waiting for services to be ready..."
@@ -131,21 +137,41 @@ show_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "OPTIONS:"
-    echo "  --clean     Clean up previous containers before starting"
-    echo "  --logs      Show logs after starting"
-    echo "  --help      Show this help message"
+    echo "  --clean         Clean up previous containers before starting"
+    echo "  --logs          Show logs after starting"
+    echo "  --skip-setup    Skip repository setup (use if already set up)"
+    echo "  --help          Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                    # Start services normally"
-    echo "  $0 --clean           # Clean up and start services"
-    echo "  $0 --logs            # Start services and show logs"
-    echo "  $0 --clean --logs    # Clean up, start services, and show logs"
+    echo "  $0                        # Start services normally"
+    echo "  $0 --clean               # Clean up and start services"
+    echo "  $0 --logs                # Start services and show logs"
+    echo "  $0 --skip-setup          # Skip repo setup and start services"
+    echo "  $0 --clean --logs        # Clean up, start services, and show logs"
+}
+
+# Function to run repository setup
+run_repo_setup() {
+    print_status "Running repository setup..."
+    
+    if [ -f "setup-repo.sh" ]; then
+        chmod +x setup-repo.sh
+        if ./setup-repo.sh; then
+            print_success "Repository setup completed successfully"
+        else
+            print_error "Repository setup failed"
+            exit 1
+        fi
+    else
+        print_warning "setup-repo.sh not found, skipping repository setup"
+    fi
 }
 
 # Main function
 main() {
     local clean_flag=false
     local logs_flag=false
+    local skip_setup=false
     
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
@@ -156,6 +182,10 @@ main() {
                 ;;
             --logs)
                 logs_flag=true
+                shift
+                ;;
+            --skip-setup)
+                skip_setup=true
                 shift
                 ;;
             --help)
@@ -178,6 +208,11 @@ main() {
     check_docker_running
     check_requirements
     
+    # Run repository setup unless skipped
+    if [ "$skip_setup" != true ]; then
+        run_repo_setup
+    fi
+    
     # Clean up if requested
     if [ "$clean_flag" = true ]; then
         cleanup
@@ -196,10 +231,10 @@ main() {
     # Show logs if requested
     if [ "$logs_flag" = true ]; then
         print_status "Showing logs (Press Ctrl+C to stop)..."
-        docker-compose logs -f
+        $DOCKER_COMPOSE_CMD logs -f
     else
-        print_status "To view logs, run: docker-compose logs -f"
-        print_status "To stop services, run: docker-compose down"
+        print_status "To view logs, run: $DOCKER_COMPOSE_CMD logs -f"
+        print_status "To stop services, run: $DOCKER_COMPOSE_CMD down"
     fi
 }
 

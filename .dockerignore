@@ -33,9 +33,9 @@ Thumbs.db
 *.swo
 *~
 
-# Git
-.git/
-.gitignore
+# Git (commented out - build process needs .git)
+# .git/
+# .gitignore
 
 # Documentation
 *.md

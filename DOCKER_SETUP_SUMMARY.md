@@ -140,26 +140,26 @@ docker run -p 9000:9000 -p 3000:3000 -p 8080:8080 tutanota
 
 ## Key Features
 
-###  Multi-stage Builds
+### Multi-stage Builds
 - Builder stage with all build tools
 - Production stage with only runtime dependencies
 - Optimized image sizes
 
-###  Complete Build Environment
+### Complete Build Environment
 - All required tools (Emscripten, Rust, Node.js, etc.)
 - Automated dependency management
 - Submodule handling
 
-###  Service Communication
+### Service Communication
 - Custom Docker network for inter-service communication
 - Proper port mapping
 - Environment variable configuration
 
-###  Data Persistence
+### Data Persistence
 - Docker volumes for backend data
 - SQLite database persistence
 
-###  Development Features
+### Development Features
 - Hot reload capability
 - Log aggregation
 - Service health checks

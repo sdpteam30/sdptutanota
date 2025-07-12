@@ -46,5 +46,5 @@ app.use(
 )
 
 app.listen(PORT, () => {
-	console.log(`🚀 CORS Proxy running at http://localhost:${PORT}`)
+			console.log(`CORS Proxy running at http://localhost:${PORT}`)
 })

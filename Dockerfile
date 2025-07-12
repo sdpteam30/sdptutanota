@@ -36,20 +36,34 @@ ENV PATH="/opt/binaryen/bin:${PATH}"
 # Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
-COPY packages/ ./packages/
+# Copy the entire repository first (including .git and buildSrc)
+COPY . .
+
+# Initialize git configuration to avoid issues
+RUN git config --global user.email "docker@tutanota.com" && \
+    git config --global user.name "Docker Build" && \
+    git config --global --add safe.directory /app
+
+# Make sure we're on the correct branch/commit
+RUN if [ -d ".git" ]; then \
+        git remote -v && \
+        git branch -a && \
+        git status; \
+    else \
+        echo "Warning: Not in a git repository"; \
+    fi
+
+# Initialize and update submodules
+RUN if [ -d ".git" ]; then \
+        git submodule init && \
+        git submodule sync --recursive && \
+        git submodule update; \
+    else \
+        echo "Warning: Skipping submodule initialization - not a git repository"; \
+    fi
 
 # Install dependencies
 RUN npm ci
-
-# Copy source code
-COPY . .
-
-# Initialize and update submodules
-RUN git submodule init && \
-    git submodule sync --recursive && \
-    git submodule update
 
 # Build packages
 RUN npm run build-packages

@@ -20,18 +20,81 @@ The setup includes three main services:
 
 ### Option 1: Using Docker Compose (Recommended)
 
+**Important: Repository Setup Required**
+
+Before running Docker for the first time, you need to ensure your repository is properly set up:
+
 ```bash
-# Build and start all services
+# 1. First, run the repository setup (interactive)
+chmod +x setup-repo.sh
+./setup-repo.sh
+
+# 2. Then build and start all services
 docker-compose up --build
 
-# Or run in detached mode
-docker-compose up --build -d
+# Or use the automated startup script (includes setup)
+chmod +x start-docker.sh
+./start-docker.sh
 
+# Or run in detached mode
+./start-docker.sh --clean --logs
+
+# If you've already run setup before, you can skip it
+./start-docker.sh --skip-setup
+```
+
+### Repository Setup Details
+
+The `setup-repo.sh` script ensures:
+- You're in the correct repository (sdpteam30/sdptutanota)
+- Upstream remote is configured
+- You're on the correct branch for your work
+- Git submodules are initialized and updated
+- Required files are present
+- Previous builds are cleaned up (optional)
+
+### Manual Setup (Alternative)
+
+If you prefer to set up manually:
+
+```bash
+# 1. Ensure you're in the correct repository
+git remote -v
+# Should show: origin https://github.com/sdpteam30/sdptutanota.git
+
+# 2. Add upstream remote (if not already added)
+git remote add upstream https://github.com/tutao/tutanota.git
+git fetch upstream
+
+# 3. Make sure you're on the correct branch
+git branch --show-current
+# Switch if needed: git checkout your-branch-name
+
+# 4. Initialize submodules
+git submodule init
+git submodule sync --recursive
+git submodule update
+
+# 5. Clean previous builds (optional)
+rm -rf build/ dist/ node_modules/
+
+# 6. Now run Docker
+docker-compose up --build
+```
+
+### Manual Docker Commands
+
+```bash
 # View logs
 docker-compose logs -f
 
 # Stop all services
 docker-compose down
+
+# Clean rebuild
+docker-compose down --volumes
+docker-compose build --no-cache
+docker-compose up
 ```
 
 ### Option 2: Using Single Dockerfile
