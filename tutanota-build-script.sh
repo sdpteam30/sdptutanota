@@ -67,8 +67,8 @@ main() {
     git submodule update
     
     # Switch to development branch
-    info_message "Switching to my-testing-branch"
-    git checkout my-testing-branch
+    info_message "Switching to dockerized branch"
+    git checkout dockerized
     git pull
 
     # Check npm is installed
