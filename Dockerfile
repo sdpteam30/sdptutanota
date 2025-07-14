@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
 # Install Rust and Cargo
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup default 1.80.0
+RUN rustup default 1.84.0
 
 # Install Emscripten 3.1.59
 RUN cd /opt && \
@@ -44,104 +44,69 @@ RUN git config --global user.email "docker@tutanota.com" && \
     git config --global user.name "Docker Build" && \
     git config --global --add safe.directory /app
 
-# Set up upstream remote and fetch all branches/tags
+# Follow the official building steps from BUILDING.md
 RUN if [ -d ".git" ]; then \
-        echo "Setting up git repository for build..." && \
-        git remote -v && \
+        echo "=== Following official build steps from BUILDING.md ===" && \
+        echo "Current branch: $(git branch --show-current)" && \
+        echo "Step 3: Add upstream remote..." && \
         if ! git remote | grep -q "upstream"; then \
             git remote add upstream https://github.com/tutao/tutanota.git; \
         fi && \
+        echo "Step 4: Fetch upstream..." && \
         git fetch upstream --tags && \
-        git fetch origin --tags; \
+        echo "Step 5: Find and checkout latest release tag..." && \
+        echo "Stashing any local changes first..." && \
+        git stash push -m "Docker build stash - $(date)" || true && \
+        echo "Finding latest tutanota-release tag..." && \
+        LATEST_RELEASE=$(git ls-remote --tags upstream | grep "tutanota-release-" | grep -v "\^{}" | sed 's/.*refs\/tags\///' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1) && \
+        if [ -z "$LATEST_RELEASE" ]; then \
+            echo "Fallback: checking local tags..." && \
+            LATEST_RELEASE=$(git tag -l "tutanota-release-*" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1); \
+        fi && \
+        echo "Using release: $LATEST_RELEASE" && \
+        git checkout "$LATEST_RELEASE" && \
+        echo "Steps 6-8: Initialize and update submodules on release branch..." && \
+        git submodule init && \
+        git submodule sync --recursive && \
+        git submodule update && \
+        echo "Step 11: Switch to dockerized branch..." && \
+        if git show-ref --verify --quiet refs/heads/dockerized; then \
+            git switch dockerized; \
+        elif git show-ref --verify --quiet refs/remotes/origin/dockerized; then \
+            git switch -c dockerized origin/dockerized; \
+        else \
+            git switch -c dockerized; \
+        fi && \
+        echo "Final branch: $(git branch --show-current)" && \
+        echo "=== Build setup complete ==="; \
     else \
         echo "Warning: Not in a git repository"; \
     fi
 
-# Find latest tutanota-release, checkout, init submodules, then switch to dockerized branch
-RUN if [ -d ".git" ]; then \
-        echo "Finding latest tutanota-release..." && \
-        LATEST_RELEASE=$(git tag -l "tutanota-release-*" | sort -V | tail -n 1) && \
-        if [ -z "$LATEST_RELEASE" ]; then \
-            LATEST_RELEASE=$(git ls-remote --tags upstream | grep "tutanota-release-" | grep -v "\^{}" | sort -V | tail -n 1 | sed 's/.*refs\/tags\///'); \
-        fi && \
-        echo "Using release: $LATEST_RELEASE" && \
-        echo "Handling untracked files before checkout..." && \
-        git ls-files --others --exclude-standard | while read -r file; do \
-            if [ -f "$file" ]; then \
-                mkdir -p ".git/untracked-backup/$(dirname "$file")" && \
-                mv "$file" ".git/untracked-backup/$file"; \
-            fi; \
-        done && \
-        echo "Stashing local changes before checkout..." && \
-        if ! git diff --quiet || ! git diff --cached --quiet; then \
-            git stash push -m "Auto-stash before checkout $LATEST_RELEASE ($(date))" && \
-            STASH_CREATED=true; \
-        else \
-            STASH_CREATED=false; \
-        fi && \
-        git checkout "$LATEST_RELEASE" && \
-        if [ -f ".gitmodules" ]; then \
-            git submodule init && \
-            git submodule sync --recursive && \
-            git submodule update; \
-        fi && \
-        echo "Preserving buildSrc files from release..." && \
-        if [ -d "buildSrc" ]; then \
-            cp -r buildSrc buildSrc.release.backup; \
-        fi && \
-        echo "Switching to dockerized branch..." && \
-        if git show-ref --verify --quiet refs/heads/dockerized; then \
-            git checkout dockerized; \
-        elif git show-ref --verify --quiet refs/remotes/origin/dockerized; then \
-            git checkout -b dockerized origin/dockerized; \
-        else \
-            git checkout -b dockerized; \
-        fi && \
-        echo "Restoring buildSrc files from release if needed..." && \
-        if [ -d "buildSrc.release.backup" ]; then \
-            if [ -d "buildSrc" ]; then \
-                if ! diff -rq buildSrc buildSrc.release.backup > /dev/null 2>&1; then \
-                    echo "buildSrc files differ - restoring from release"; \
-                    rm -rf buildSrc; \
-                    mv buildSrc.release.backup buildSrc; \
-                else \
-                    echo "buildSrc files identical - no restoration needed"; \
-                    rm -rf buildSrc.release.backup; \
-                fi; \
-            else \
-                echo "buildSrc missing - restoring from release"; \
-                mv buildSrc.release.backup buildSrc; \
-            fi; \
-        fi && \
-        echo "Build setup complete on branch: $(git branch --show-current)" && \
-        if [ "$STASH_CREATED" = true ]; then \
-            echo "Restoring stashed changes (excluding buildSrc files)..." && \
-            git stash show -p > .git/stash-patch.tmp && \
-            if git apply --index .git/stash-patch.tmp --exclude="buildSrc/*" 2>/dev/null; then \
-                echo "Non-buildSrc changes restored" && \
-                git stash drop; \
-            else \
-                echo "Warning: Some changes couldn't be restored - they remain in stash"; \
-            fi && \
-            rm -f .git/stash-patch.tmp; \
-        fi && \
-        if [ -d ".git/untracked-backup" ]; then \
-            echo "Restoring untracked files (excluding buildSrc)..." && \
-            find .git/untracked-backup -type f | while read -r backup_file; do \
-                original_file="${backup_file#.git/untracked-backup/}"; \
-                if [[ "$original_file" != buildSrc/* ]]; then \
-                    mkdir -p "$(dirname "$original_file")" && \
-                    mv "$backup_file" "$original_file"; \
-                fi; \
-            done && \
-            rm -rf .git/untracked-backup; \
-        fi; \
-    else \
-        echo "Warning: Skipping git setup - not a git repository"; \
-    fi
+# Apply fixes to the env.js file after git checkout
+RUN echo "=== Applying env.js fixes ===" && \
+    sed -i '/if (networkDebugging == null) missing.push/d' buildSrc/env.js && \
+    sed -i 's/networkDebugging:/networkDebugging = false:/' buildSrc/env.js && \
+    sed -i 's/const { staticUrl, version, mode, dist, domainConfigs, networkDebugging, clientName }/const { staticUrl, version, mode, dist, domainConfigs, networkDebugging = false, clientName }/' buildSrc/env.js && \
+    echo "env.js fixes applied"
 
-# Install dependencies
-RUN npm ci
+# Verify buildSrc is properly set up before npm install
+RUN echo "=== Verifying buildSrc before npm install ===" && \
+    echo "Current branch: $(git branch --show-current 2>/dev/null || echo 'not in git repo')" && \
+    echo "buildSrc directory:" && \
+    ls -ld buildSrc && \
+    echo "buildSrc contents:" && \
+    ls -la buildSrc/ | head -10 && \
+    echo "Checking for postinstall.js:" && \
+    ls -la buildSrc/postinstall.js && \
+    echo "Content preview of postinstall.js:" && \
+    head -5 buildSrc/postinstall.js && \
+    echo "=== buildSrc verification complete ==="
+
+# Install dependencies (skip all postinstall scripts to avoid linkifyjs issue)
+RUN npm ci --ignore-scripts
+
+# Note: linkifyjs files already exist in libs/, no need for updateLibs
 
 # Build packages
 RUN npm run build-packages

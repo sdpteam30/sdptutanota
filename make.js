@@ -35,6 +35,7 @@ await program
 				serve,
 				desktop: startDesktop || desktopBuildOnly,
 				ignoreMigrations,
+				networkDebugging: false,
 				app,
 			})
 
