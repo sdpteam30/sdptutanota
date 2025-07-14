@@ -4,17 +4,31 @@ This directory contains Docker configuration for running Tutanota with your Moby
 
 ## Quick Start
 
-1. **Setup the repository:**
+1. (OPTIONAL - only use if switching branches) **Setup the repository:**
    ```bash
    ./setup-repo.sh
+   #if this doesn't run initially on Linux, try runnning 'chmod +x setup-repo.sh'.
    ```
+
 
 2. **Start with Docker Compose:**
    ```bash
-   ./start-docker.sh
-   # or manually:
+   ./start-docker.sh #if this doesn't run initially on Linux, try runnning 'chmod +x start-docker.sh'.
+	# or manually:
    docker-compose up --build
    ```
+   On Windows:
+   First, ensure that batch files can be run by running 'Get-ExecutionPolicy' in PowerShell with admin. privileges. Save this result then use 'Set-ExecutionPolicy Unrestricted -Scope CurrentUser' to bypass Windows restrictions against running unsigned scripts.
+
+   Next, run:
+   ```
+   ./start-docker.bat
+   # or manually:
+   docker compose up --build
+   ```
+   For safety, you should set your Execution Policy in Windows back to the initial result of 'Get-ExecutionPolicy' once
+   the Docker container is configured. This can be done by replacing 'Unrestricted' in the command with the result of
+   the first command (Get-ExecutionPolicy).
 
 ## Services
 
@@ -39,7 +53,7 @@ Runs only the frontend service on port 9001.
 ## Repository Workflow
 
 The setup automatically:
-1. Fetches latest `tutanota-release-296.250709.0` 
+1. Fetches latest `tutanota-release-296.250709.0`
 2. Initializes submodules from the release
 3. Switches to `dockerized` branch for your customizations
 4. Preserves correct buildSrc files from the release
@@ -77,4 +91,4 @@ If you encounter issues:
 1. Check that all required files exist by running `./setup-repo.sh`
 2. Ensure Docker and Docker Compose are installed
 3. Make sure ports 3000, 8080, and 9000 are available
-4. Check Docker logs: `docker-compose logs -f` 
+4. Check Docker logs: `docker-compose logs -f`
