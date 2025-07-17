@@ -131,7 +131,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 		this.viewModel = viewModel
 
 		if (this.viewModel !== oldViewModel) {
-			console.log(`💡 MailViewer got ViewModel → sender="${viewModel.getSender().address}", Confirmed? ${viewModel.isSenderConfirmed()}`)
+			console.log(`💡 MailViewer got ViewModel → sender="${viewModel.getSender().address}"`)
 			this.loadAllListener.end(true)
 			this.loadAllListener = this.viewModel.loadCompleteNotification.map(async () => {
 				// streams are pretty much synchronous, so we could be in the middle of a redraw here and mithril does not just schedule another redraw, it
@@ -423,7 +423,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 		this.shadowDomRoot.appendChild(wrapNode)
 
 		// LINK HANDLING: override clicks inside Shadow DOM
-		const isConfirmed = this.viewModel?.isSenderConfirmed?.() ?? false
+		const isConfirmed = true // Always allow links in vanilla mode
 
 		wrapNode.querySelectorAll("a").forEach((link) => {
 			const originalHref = link.getAttribute("data-original-href") || link.getAttribute("href") || ""
@@ -439,18 +439,8 @@ export class MailViewer implements Component<MailViewerAttrs> {
 					e.preventDefault()
 					e.stopPropagation()
 
-					if (!this.viewModel.isSenderConfirmed()) {
-						if (this.viewModel.isSenderTrusted()) {
-							const senderName = this.viewModel.getSender().name || this.viewModel.getSender().address
-							import("./MobyPhishReminderModal").then(({ MobyPhishReminderModal }) => {
-								const reminderModal = new MobyPhishReminderModal(senderName)
-								modal.display(reminderModal)
-								reminderModal.setModalHandle(reminderModal)
-							})
-						} else {
-							this.viewModel?.showPhishingModal?.()
-						}
-					}
+					// Standard mail expansion without mobyphish checks - just expand the mail
+					this.viewModel?.expandMail(Promise.resolve())
 				}
 
 				link.addEventListener("click", handleBlockedClick)

@@ -32,15 +32,6 @@ import { MailAddressAndName } from "../../../common/api/common/CommonMailUtils.j
 import { LabelsPopup } from "./LabelsPopup.js"
 import { Label } from "../../../common/gui/base/Label.js"
 import { px, size } from "../../../common/gui/size.js"
-import { MobyPhishModal } from "./MobyPhishModal"
-import { modal } from "../../../common/gui/base/Modal"
-import { MobyPhishDenyModal } from "./MobyPhishDenyModal.js"
-import { MobyPhishConfirmSenderModal } from "./MobyPhishConfirmSenderModal"
-import { TRUSTED_SENDERS_API_URL } from "./MailViewerViewModel.js"
-import { MobyPhishAlreadyTrustedModal } from "./MobyPhishAlreadyTrustedModal.js"
-import { MobyPhishNotTrustedModal } from "./MobyPhishNotTrustedModal.js"
-import { MobyPhishInfoModal } from "./MobyPhishInfoModal"
-import { MobyPhishReportModal } from "./MobyPhishReportModal.js"
 
 export type MailAddressDropdownCreator = (args: {
 	mailAddress: MailAddressAndName
@@ -61,7 +52,7 @@ export interface MailViewerHeaderAttrs {
 export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	oninit({ attrs }: Vnode<MailViewerHeaderAttrs>) {
 		//console.log("MailViewerHeader initialized");
-		console.log("MailViewerHeader initialized with trustedSenders:", attrs.viewModel.trustedSenders())
+		console.log("MailViewerHeader initialized")
 		;(window as any).currentMailViewModel = attrs.viewModel
 	}
 
@@ -293,7 +284,6 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 	private renderBanners(attrs: MailViewerHeaderAttrs): Children {
 		const { viewModel } = attrs
-		const trustedSendersArray = viewModel.trustedSenders() // Now gets Array<{name, address}>
 		if (viewModel.isCollapsed()) return null
 
 		// we don't wrap it in a single element because our container might depend on us being separate children for margins
@@ -305,16 +295,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					: this.renderHardAuthenticationFailWarning(viewModel) ?? this.renderSoftAuthenticationFailWarning(viewModel),
 			),
 			//m("." + responsiveCardHMargin(), this.renderExternalContentBanner(attrs)), // Original commented out
-			m("." + responsiveCardHMargin(), this.renderMobyPhishBanner(viewModel)), // Add Moby Phish Banner
 			//m("hr.hr.mt-xs." + responsiveCardHMargin()),
-			// m("div", { class: "trusted-senders-banner" }, [
-			//            m("strong", "Trusted Senders: "),
-			//            m("span", trustedSendersArray.length > 0
-			//                ? trustedSendersArray
-			//                    .map(sender => sender.name || sender.address) // Display name or fallback to address
-			//                    .join(", ")
-			//                : "None"),
-			//        ]),
 		].filter(Boolean)
 	}
 
@@ -746,131 +727,6 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			buttons: [showButton, ...maybeDropdownButtons],
 		})
 	}*/
-
-	private renderMobyPhishBanner(viewModel: MailViewerViewModel): Children | null {
-		const senderStatus = viewModel.senderStatus
-		const isTrusted = viewModel.isSenderTrusted()
-
-		// --- Button Actions ---
-		const confirmAction = async () => {
-			console.log(
-				`🔒 MOBYPHISH_LOG: Confirm button clicked for sender="${
-					viewModel.getSender().address
-				}", isTrusted=${isTrusted}, senderStatus="${senderStatus}"`,
-			)
-
-			if (isTrusted && !(senderStatus === "confirmed" || senderStatus === "trusted_once")) {
-				await viewModel.updateSenderStatus("confirmed")
-			} else if (!isTrusted) {
-				const modalInstance = new MobyPhishConfirmSenderModal(viewModel, viewModel.trustedSenders())
-				const handle = modal.display(modalInstance)
-				modalInstance.setModalHandle(handle)
-			}
-		}
-
-		const showInfoModal = () => {
-			console.log(`🔒 MOBYPHISH_LOG: Learn more button clicked`)
-
-			const modalInstance = new MobyPhishInfoModal()
-			const handle = modal.display(modalInstance)
-			modalInstance.setModalHandle?.(handle)
-		}
-
-		const reportAction = () => {
-			console.log(`🔒 MOBYPHISH_LOG: Report button clicked for sender="${viewModel.getSender().address}"`)
-
-			const modalInstance = new MobyPhishReportModal(viewModel)
-			const handle = modal.display(modalInstance)
-			modalInstance.setModalHandle(handle)
-		}
-
-		// --- Banner Buttons ---
-		const confirmButton: BannerButtonAttrs = {
-			label: "mobyPhish_confirm",
-			icon: m(Icon, { icon: Icons.Checkmark }),
-			click: confirmAction,
-		}
-
-		// --- Determine Message and Buttons Based on Screen Size ---
-		let messageKey: TranslationKey = "mobyPhish_is_trusted"
-		let bannerType: BannerType = BannerType.Warning
-		let bannerIcon: Icons = Icons.Warning
-		let buttons: BannerButtonAttrs[] = []
-
-		if (senderStatus === "trusted_once") {
-			messageKey = "mobyPhish_sender_trusted_once"
-			bannerType = BannerType.Info
-			bannerIcon = Icons.CircleCheckmark
-			buttons = [
-				{
-					label: "mobyPhish_untrust",
-					icon: m(Icon, { icon: Icons.Trash }),
-					click: async () => {
-						console.log(`🔒 MOBYPHISH_LOG: Untrust button clicked for sender="${viewModel.getSender().address}"`)
-						await viewModel.resetSenderStatusForCurrentEmail()
-					},
-				},
-			]
-		} else if (senderStatus === "confirmed" || senderStatus === "added_to_trusted" || (isTrusted && senderStatus === "")) {
-			messageKey = "mobyPhish_sender_confirmed"
-			bannerType = BannerType.Info
-			bannerIcon = Icons.CircleCheckmark
-			buttons = []
-		} else {
-			// Default case - show different buttons based on screen size
-			if (styles.isSingleColumnLayout()) {
-				// Mobile: Show only more button with dropdown containing all actions
-				const moreButton: BannerButtonAttrs = {
-					label: "more_label",
-					click: createAsyncDropdown({
-						width: 220,
-						lazyButtons: async () => [
-							{
-								label: "mobyPhish_confirm" as const,
-								icon: Icons.Checkmark,
-								click: confirmAction,
-							},
-
-							{
-								label: "reportPhishing_action",
-								icon: Icons.Warning,
-								click: reportAction,
-							},
-							{
-								label: "mobyPhish_learn_more" as const,
-								icon: Icons.QuestionMark,
-								click: showInfoModal,
-							},
-						],
-					}),
-				}
-				buttons = [moreButton]
-			} else {
-				// Desktop: Show all individual buttons (no dropdown)
-
-				const learnMoreButton: BannerButtonAttrs = {
-					label: "mobyPhish_learn_more",
-					icon: m(Icon, { icon: Icons.QuestionMark }),
-					click: showInfoModal,
-				}
-
-				const reportButton: BannerButtonAttrs = {
-					label: "reportPhishing_action",
-					icon: m(Icon, { icon: Icons.Warning }),
-					click: reportAction,
-				}
-
-				buttons = [confirmButton, reportButton, learnMoreButton]
-			}
-		}
-
-		return m(InfoBanner, {
-			message: messageKey,
-			icon: bannerIcon,
-			type: bannerType,
-			buttons: buttons,
-		})
-	}
 
 	private moreButton(attrs: MailViewerHeaderAttrs): Children {
 		return m(IconButton, {

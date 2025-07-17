@@ -218,10 +218,10 @@ function unsubscribe(viewModel: MailViewerViewModel): Promise<void> {
 
 function reportMail(viewModel: MailViewerViewModel) {
 	const sendReport = (reportType: MailReportType) => {
-		// Add logging for phishing reports from tutamail interface to match MobyPhishConfirmSenderModal pattern
+		// Add logging for phishing reports from tutamail interface
 		if (reportType === MailReportType.PHISHING) {
 			console.log(
-				`🔒 MOBYPHISH_LOG: Report phishing button clicked in tutamail dialog for sender="${viewModel.getSender().address}", mailId="${
+				`Report phishing button clicked in tutamail dialog for sender="${viewModel.getSender().address}", mailId="${
 					viewModel.mail._id[1]
 				}", userEmail="${viewModel.logins.getUserController().loginUsername}"`,
 			)
@@ -232,7 +232,7 @@ function reportMail(viewModel: MailViewerViewModel) {
 			.then(() => {
 				if (reportType === MailReportType.PHISHING) {
 					console.log(
-						`🔒 MOBYPHISH_LOG: Successfully reported phishing via tutamail dialog for sender="${viewModel.getSender().address}", mailId="${
+						`Successfully reported phishing via tutamail dialog for sender="${viewModel.getSender().address}", mailId="${
 							viewModel.mail._id[1]
 						}", userEmail="${viewModel.logins.getUserController().loginUsername}", interactionType="interacted"`,
 					)
@@ -242,7 +242,7 @@ function reportMail(viewModel: MailViewerViewModel) {
 			.catch((error) => {
 				if (reportType === MailReportType.PHISHING) {
 					console.error(
-						`🔒 MOBYPHISH_LOG: Failed to report phishing via tutamail dialog for sender="${viewModel.getSender().address}", mailId="${
+						`Failed to report phishing via tutamail dialog for sender="${viewModel.getSender().address}", mailId="${
 							viewModel.mail._id[1]
 						}", error:`,
 						error,
