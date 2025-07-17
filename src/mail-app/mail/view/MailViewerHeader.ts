@@ -759,24 +759,12 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 				}", isTrusted=${isTrusted}, senderStatus="${senderStatus}"`,
 			)
 
-			if (isTrusted && !(senderStatus === "confirmed" || senderStatus === "trusted_once")) {
+			if (isTrusted && senderStatus !== "confirmed") {
 				await viewModel.updateSenderStatus("confirmed")
 			} else if (!isTrusted) {
 				const modalInstance = new MobyPhishConfirmSenderModal(viewModel, viewModel.trustedSenders())
 				const handle = modal.display(modalInstance)
 				modalInstance.setModalHandle(handle)
-			}
-		}
-
-		const trustOnceAction = () => {
-			console.log(`🔒 MOBYPHISH_LOG: Trust once button clicked for sender="${viewModel.getSender().address}", isTrusted=${isTrusted}`)
-
-			if (isTrusted) {
-				const modalInstance = new MobyPhishAlreadyTrustedModal(viewModel)
-				const handle = modal.display(modalInstance)
-				modalInstance.setModalHandle?.(handle)
-			} else {
-				viewModel.updateSenderStatus("trusted_once")
 			}
 		}
 
@@ -809,21 +797,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		let bannerIcon: Icons = Icons.Warning
 		let buttons: BannerButtonAttrs[] = []
 
-		if (senderStatus === "trusted_once") {
-			messageKey = "mobyPhish_sender_trusted_once"
-			bannerType = BannerType.Info
-			bannerIcon = Icons.CircleCheckmark
-			buttons = [
-				{
-					label: "mobyPhish_untrust",
-					icon: m(Icon, { icon: Icons.Trash }),
-					click: async () => {
-						console.log(`🔒 MOBYPHISH_LOG: Untrust button clicked for sender="${viewModel.getSender().address}"`)
-						await viewModel.resetSenderStatusForCurrentEmail()
-					},
-				},
-			]
-		} else if (senderStatus === "confirmed" || senderStatus === "added_to_trusted" || (isTrusted && senderStatus === "")) {
+		if (senderStatus === "confirmed" || senderStatus === "added_to_trusted" || (isTrusted && senderStatus === "")) {
 			messageKey = "mobyPhish_sender_confirmed"
 			bannerType = BannerType.Info
 			bannerIcon = Icons.CircleCheckmark
@@ -843,11 +817,6 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 								click: confirmAction,
 							},
 							{
-								label: "mobyPhish_trusted_once" as const,
-								icon: Icons.Unlock,
-								click: trustOnceAction,
-							},
-							{
 								label: "reportPhishing_action",
 								icon: Icons.Warning,
 								click: reportAction,
@@ -863,12 +832,6 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 				buttons = [moreButton]
 			} else {
 				// Desktop: Show all individual buttons (no dropdown)
-				const trustOnceButton: BannerButtonAttrs = {
-					label: "mobyPhish_trusted_once",
-					icon: m(Icon, { icon: Icons.Unlock }),
-					click: trustOnceAction,
-				}
-
 				const learnMoreButton: BannerButtonAttrs = {
 					label: "mobyPhish_learn_more",
 					icon: m(Icon, { icon: Icons.QuestionMark }),
@@ -881,7 +844,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					click: reportAction,
 				}
 
-				buttons = [confirmButton, trustOnceButton, reportButton, learnMoreButton]
+				buttons = [confirmButton, reportButton, learnMoreButton]
 			}
 		}
 

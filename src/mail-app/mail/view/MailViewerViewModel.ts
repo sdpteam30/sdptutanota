@@ -212,7 +212,7 @@ export class MailViewerViewModel {
 			this.interactionType = statusData.interaction_type
 
 			// Update confirmation flag
-			const isConfirmed = currentStatus === "confirmed" || currentStatus === "trusted_once"
+			const isConfirmed = currentStatus === "confirmed"
 			this.setSenderConfirmed(isConfirmed)
 
 			console.log("Sender Data Fetched:", {
@@ -271,8 +271,8 @@ export class MailViewerViewModel {
 
 			await this.fetchSenderData()
 
-			if (status === "confirmed" || status === "trusted_once") {
-				console.log(`🔒 MOBYPHISH_LOG: Sender confirmed/trusted - loading content and expanding mail`)
+			if (status === "confirmed") {
+				console.log(`🔒 MOBYPHISH_LOG: Sender confirmed - loading content and expanding mail`)
 				this.setSenderConfirmed(true)
 				this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
 				this.sanitizeResult = null
@@ -883,8 +883,8 @@ export class MailViewerViewModel {
 			externalImageRule === ExternalImageRule.Allow && this.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED)
 
 		//
-		if (this.senderStatus === "trusted_once" || this.senderStatus === "confirmed") {
-			console.log("Sender is trusted (once or confirmed) — pre-setting to AlwaysShow BEFORE sanitizing")
+		if (this.senderStatus === "confirmed") {
+			console.log("Sender is confirmed — pre-setting to AlwaysShow BEFORE sanitizing")
 			this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
 		} else if (!this.isSenderTrusted() && !this.isSenderConfirmed()) {
 			console.log("Sender not trusted or confirmed — pre-setting to Block BEFORE sanitizing")
