@@ -57,7 +57,7 @@ RUN if [ -d ".git" ]; then \
         echo "Warning: Not in a git repository"; \
     fi
 
-# Find latest tutanota-release, checkout, init submodules, then switch to dockerized branch
+# Find latest tutanota-release, checkout, init submodules, then switch to no-mp branch
 RUN if [ -d ".git" ]; then \
         echo "Finding latest tutanota-release..." && \
         LATEST_RELEASE=$(git tag -l "tutanota-release-*" | sort -V | tail -n 1) && \
@@ -89,13 +89,13 @@ RUN if [ -d ".git" ]; then \
         if [ -d "buildSrc" ]; then \
             cp -r buildSrc buildSrc.release.backup; \
         fi && \
-        echo "Switching to dockerized branch..." && \
-        if git show-ref --verify --quiet refs/heads/dockerized; then \
-            git checkout dockerized; \
-        elif git show-ref --verify --quiet refs/remotes/origin/dockerized; then \
-            git checkout -b dockerized origin/dockerized; \
+        echo "Switching to no-mp branch..." && \
+        if git show-ref --verify --quiet refs/heads/no-mp; then \
+            git checkout no-mp; \
+        elif git show-ref --verify --quiet refs/remotes/origin/no-mp; then \
+            git checkout -b no-mp origin/no-mp; \
         else \
-            git checkout -b dockerized; \
+            git checkout -b no-mp; \
         fi && \
         echo "Restoring buildSrc files from release if needed..." && \
         if [ -d "buildSrc.release.backup" ]; then \
@@ -165,4 +165,4 @@ COPY --from=builder /app/build ./build
 EXPOSE 9000
 
 # Start frontend server
-CMD ["serve", "build", "-s", "-p", "9000"] 
+CMD ["serve", "build", "-s", "-p", "9000"]
