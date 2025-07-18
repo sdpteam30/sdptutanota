@@ -40,7 +40,7 @@ check_git_repo() {
 # Check if we're in the correct repository
 check_repo_origin() {
     local remote_url=$(git remote get-url origin 2>/dev/null || echo "")
-    
+
     if [[ "$remote_url" == *"sdpteam30/sdptutanota"* ]]; then
         print_success "Repository origin is correct: $remote_url"
     elif [[ "$remote_url" == *"tutao/tutanota"* ]]; then
@@ -74,35 +74,35 @@ setup_upstream() {
         git remote add upstream https://github.com/tutao/tutanota.git
         print_success "Added upstream remote"
     fi
-    
+
     print_status "Fetching all branches and tags from upstream..."
     git fetch upstream --tags
     git fetch origin --tags
 }
 
-# Find and checkout latest tutanota release, then switch to dockerized branch
+# Find and checkout latest tutanota release, then switch to no-mp branch
 setup_release_and_branch() {
     print_status "Finding latest tutanota-release version..."
-    
+
     # First try to find newer 296.x versions
     local latest_release=$(git tag -l "tutanota-release-296.*" | sort -V | tail -n 1)
-    
+
     # If no 296.x versions found, fall back to 3.x.x versions
     if [ -z "$latest_release" ]; then
         latest_release=$(git tag -l "tutanota-release-3.*" | sort -V | tail -n 1)
     fi
-    
+
     # If still no release found, try all tutanota-release tags (excluding old timestamp versions)
     if [ -z "$latest_release" ]; then
         # Exclude the old timestamp format (tutanota-release-1536579556293)
         latest_release=$(git tag -l "tutanota-release-*" | grep -v "tutanota-release-[0-9]\{13\}" | sort -V | tail -n 1)
     fi
-    
+
     if [ -z "$latest_release" ]; then
         print_error "No tutanota-release tags found. Checking remote tags..."
         # Try to get from upstream remote refs
         latest_release=$(git ls-remote --tags upstream | grep "tutanota-release-" | grep -v "\^{}" | grep -v "[0-9]\{13\}" | sort -V | tail -n 1 | sed 's/.*refs\/tags\///')
-        
+
         if [ -z "$latest_release" ]; then
             print_error "Could not find any tutanota-release tags"
             print_status "Available tags:"
@@ -110,16 +110,16 @@ setup_release_and_branch() {
             exit 1
         fi
     fi
-    
+
     print_success "Found latest release: $latest_release"
-    
+
     # Handle untracked files that might conflict with checkout
     print_status "Handling untracked files before checkout..."
     local untracked_files=()
     while IFS= read -r -d '' file; do
         untracked_files+=("$file")
     done < <(git ls-files --others --exclude-standard -z 2>/dev/null || true)
-    
+
     if [ ${#untracked_files[@]} -gt 0 ]; then
         print_status "Moving untracked files to temporary location..."
         mkdir -p .git/untracked-backup
@@ -134,7 +134,7 @@ setup_release_and_branch() {
     else
         print_success "No untracked files to handle"
     fi
-    
+
     # Stash any local changes before checkout
     print_status "Stashing local changes before checkout..."
     local stash_created=false
@@ -145,7 +145,7 @@ setup_release_and_branch() {
     else
         print_success "No local changes to stash"
     fi
-    
+
     # Checkout the latest release
     print_status "Checking out $latest_release..."
     if git checkout "$latest_release"; then
@@ -154,7 +154,7 @@ setup_release_and_branch() {
         print_error "Failed to checkout $latest_release"
         exit 1
     fi
-    
+
     # Initialize and update submodules from the release
     print_status "Initializing and updating submodules from release..."
     if [ -f ".gitmodules" ]; then
@@ -165,36 +165,36 @@ setup_release_and_branch() {
     else
         print_warning "No .gitmodules file found in release"
     fi
-    
+
     # Preserve critical files from release before switching branches
     print_status "Preserving buildSrc files from release..."
     if [ -d "buildSrc" ]; then
         cp -r buildSrc buildSrc.release.backup
         print_success "Backed up buildSrc files from release"
     fi
-    
-    # Now switch to dockerized branch
-    print_status "Switching to 'dockerized' branch..."
-    if git show-ref --verify --quiet refs/heads/dockerized; then
+
+    # Now switch to no-mp branch
+    print_status "Switching to 'no-mp' branch..."
+    if git show-ref --verify --quiet refs/heads/no-mp; then
         # Branch exists locally
-        git checkout dockerized
-        print_success "Switched to existing 'dockerized' branch"
-    elif git show-ref --verify --quiet refs/remotes/origin/dockerized; then
+        git checkout no-mp
+        print_success "Switched to existing 'no-mp' branch"
+    elif git show-ref --verify --quiet refs/remotes/origin/no-mp; then
         # Branch exists on remote
-        git checkout -b dockerized origin/dockerized
-        print_success "Checked out 'dockerized' branch from remote"
+        git checkout -b no-mp origin/no-mp
+        print_success "Checked out 'no-mp' branch from remote"
     else
         # Create new branch from current state (release + submodules)
-        git checkout -b dockerized
-        print_success "Created new 'dockerized' branch from $latest_release"
+        git checkout -b no-mp
+        print_success "Created new 'no-mp' branch from $latest_release"
     fi
-    
+
     # Restore buildSrc files from release if they were overwritten
     if [ -d "buildSrc.release.backup" ]; then
         if [ -d "buildSrc" ]; then
             # Check if buildSrc was modified by branch switch
             if ! diff -rq buildSrc buildSrc.release.backup > /dev/null 2>&1; then
-                print_warning "buildSrc files differ between release and dockerized branch"
+                print_warning "buildSrc files differ between release and no-mp branch"
                 print_status "Restoring buildSrc files from release..."
                 rm -rf buildSrc
                 mv buildSrc.release.backup buildSrc
@@ -209,13 +209,13 @@ setup_release_and_branch() {
             print_success "Restored buildSrc files from $latest_release"
         fi
     fi
-    
+
     # Restore stashed changes if any were stashed, but exclude buildSrc files
     if [ "$stash_created" = true ]; then
         print_status "Restoring stashed changes (excluding buildSrc files)..."
         # Create a temporary patch excluding buildSrc files
         git stash show -p > .git/stash-patch.tmp
-        
+
         # Apply the stash but don't pop it yet
         if git apply --index .git/stash-patch.tmp --exclude="buildSrc/*" 2>/dev/null; then
             print_success "Non-buildSrc changes restored"
@@ -226,11 +226,11 @@ setup_release_and_branch() {
             print_warning "Your changes are still in the stash - use 'git stash pop' to restore them manually"
             print_warning "Note: buildSrc files have been restored from the release and should not be modified"
         fi
-        
+
         # Clean up
         rm -f .git/stash-patch.tmp
     fi
-    
+
     # Restore untracked files (except buildSrc files that might conflict)
     if [ -d ".git/untracked-backup" ]; then
         print_status "Restoring untracked files (excluding buildSrc)..."
@@ -244,12 +244,12 @@ setup_release_and_branch() {
                 print_status "Skipped buildSrc file: $original_file"
             fi
         done
-        
+
         # Clean up backup directory
         rm -rf .git/untracked-backup
         print_success "Untracked files restored"
     fi
-    
+
     print_status "Current branch: $(git branch --show-current)"
     print_status "Based on release: $latest_release"
 }
@@ -257,7 +257,7 @@ setup_release_and_branch() {
 # Verify submodules are properly set up (called after branch setup)
 verify_submodules() {
     print_status "Verifying submodules are properly initialized..."
-    
+
     if [ -f ".gitmodules" ]; then
         # Check if submodules are initialized
         if git submodule status | grep -q "^-"; then
@@ -275,7 +275,7 @@ verify_submodules() {
 # Check for required files
 check_required_files() {
     print_status "Checking for required files..."
-    
+
     local required_files=(
         "package.json"
         "buildSrc/postinstall.js"
@@ -283,7 +283,7 @@ check_required_files() {
         "trusted-senders-backend/package.json"
         "cors-anywhere/package.json"
     )
-    
+
     for file in "${required_files[@]}"; do
         if [ -f "$file" ]; then
             print_success "Found: $file"
@@ -300,14 +300,14 @@ check_required_files() {
 main() {
     print_status "Setting up Tutanota repository for Docker build"
     print_status "================================================="
-    
+
     check_git_repo
     check_repo_origin
     setup_upstream
     setup_release_and_branch
     verify_submodules
     check_required_files
-    
+
     print_success "Repository setup completed!"
     print_success "================================================="
     print_success "You can now run Docker build:"
@@ -320,4 +320,4 @@ main() {
 }
 
 # Run main function
-main "$@" 
+main "$@"

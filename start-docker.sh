@@ -35,7 +35,7 @@ check_docker() {
         print_error "Docker is not installed. Please install Docker first."
         exit 1
     fi
-    
+
     # Check for Docker Compose V2 (plugin)
     if docker compose version &> /dev/null; then
         DOCKER_COMPOSE_CMD="docker compose"
@@ -59,7 +59,7 @@ check_docker_running() {
 # Function to check system requirements
 check_requirements() {
     print_status "Checking system requirements..."
-    
+
     # Check available RAM
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         available_ram=$(free -m | awk 'NR==2{printf "%.0f", $7}')
@@ -75,7 +75,7 @@ check_requirements() {
             print_warning "Available RAM might be less than 4GB. Build might fail."
         fi
     fi
-    
+
     # Check available disk space
     available_space=$(df -m . | awk 'NR==2{print $4}')
     if [ "$available_space" -lt 10240 ]; then
@@ -94,14 +94,14 @@ cleanup() {
 start_services() {
     print_status "Building and starting Tutanota services..."
     print_status "This may take 15-30 minutes for the first build..."
-    
+
     # Start services
     $DOCKER_COMPOSE_CMD up --build -d
-    
+
     # Wait for services to be ready
     print_status "Waiting for services to be ready..."
     sleep 30
-    
+
     # Check service health
     check_service_health
 }
@@ -109,21 +109,21 @@ start_services() {
 # Function to check service health
 check_service_health() {
     print_status "Checking service health..."
-    
+
     # Check frontend
     if curl -s http://localhost:9000 > /dev/null; then
         print_success "Frontend is running on http://localhost:9000"
     else
         print_error "Frontend is not responding on port 9000"
     fi
-    
+
     # Check backend
     if curl -s http://localhost:3000 > /dev/null; then
         print_success "Backend is running on http://localhost:3000"
     else
         print_error "Backend is not responding on port 3000"
     fi
-    
+
     # Check CORS proxy
     if curl -s http://localhost:8080 > /dev/null; then
         print_success "CORS proxy is running on http://localhost:8080"
@@ -153,7 +153,7 @@ show_usage() {
 # Function to run repository setup
 run_repo_setup() {
     print_status "Running repository setup..."
-    
+
     if [ -f "setup-repo.sh" ]; then
         chmod +x setup-repo.sh
         if ./setup-repo.sh; then
@@ -172,7 +172,7 @@ main() {
     local clean_flag=false
     local logs_flag=false
     local skip_setup=false
-    
+
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -199,35 +199,35 @@ main() {
                 ;;
         esac
     done
-    
+
     print_status "Starting Tutanota Docker Environment"
     print_status "======================================"
-    
+
     # Check prerequisites
     check_docker
     check_docker_running
     check_requirements
-    
+
     # Run repository setup unless skipped
     if [ "$skip_setup" != true ]; then
         run_repo_setup
     fi
-    
+
     # Clean up if requested
     if [ "$clean_flag" = true ]; then
         cleanup
     fi
-    
+
     # Start services
     start_services
-    
+
     print_success "Tutanota is now running!"
     print_success "======================================"
     print_success "Frontend: http://localhost:9000"
     print_success "Backend:  http://localhost:3000"
     print_success "CORS:     http://localhost:8080"
     print_success "======================================"
-    
+
     # Show logs if requested
     if [ "$logs_flag" = true ]; then
         print_status "Showing logs (Press Ctrl+C to stop)..."
@@ -239,4 +239,4 @@ main() {
 }
 
 # Run main function with all arguments
-main "$@" 
+main "$@"
