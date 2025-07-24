@@ -23,17 +23,17 @@ Instructions here will produce a *release* version of the client. For *debug* ve
 6. Initialize liboqs and argon2 submodules: `git submodule init`
 7. Synchronize submodules: `git submodule sync --recursive`
 8. Update submodules: `git submodule update`
-9. run `npm ci` to install dependencies.
+9. run `npm ci --ignore-scripts` to install dependencies.
 10. Build packages: `npm run build-packages`
 11. Switch to the branch of your choosing (ex. `git switch logging`)
 12. Pull the most recent changes to that branch with `git pull`
 12. Build the web part: `node make prod`
 
-#### MobyPhish Button Specific Steps: 
-12. Navigate to the backend directory with from `sdptutanota` with `cd trusted-senders-backend`. 
-13. Run `npm ci` to install dependencies and then `node index.js`. This will start the backend server on port 3000. 
+#### MobyPhish Button Specific Steps:
+12. Navigate to the backend directory with from `sdptutanota` with `cd trusted-senders-backend`.
+13. Run `npm ci` to install dependencies and then `node index.js`. This will start the backend server on port 3000.
 14. Now open a new terminal window in `sdptutanota` and navigate to the CORS Anywhere proxy directory with `cd cors-anywhere`
-15. Run `npm ci` once again for dependencies and then `node server.js` to start the CORS proxy on localhost:8080. 
+15. Run `npm ci` once again for dependencies and then `node server.js` to start the CORS proxy on localhost:8080.
 16. Finally in a third terminal window, switch into the build directory: `cd build`
 17. Run the local frontend server e.g. `npx serve build -s -p 9000` or `python3 -m HTTP.Server 9000`.
 18. Open `localhost:9000` with your favorite browser (tested: Firefox, Chrome/Chromium, Safari).
