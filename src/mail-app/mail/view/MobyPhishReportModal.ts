@@ -316,7 +316,7 @@ export class MobyPhishReportModal implements ModalComponent {
 
 		try {
 			await this.viewModel.updateSenderStatus("trusted_once")
-			console.log(`🔒 MOBYPHISH_LOG: Trust once applied for sender="${this.viewModel.getSender().address}"`)
+			console.log(`🔒 MOBYPHISH_LOG: Links enabled once for sender="${this.viewModel.getSender().address}"`)
 			this.closeModal()
 		} catch (error) {
 			console.error("Error applying trust once:", error)
@@ -341,7 +341,7 @@ export class MobyPhishReportModal implements ModalComponent {
 			})
 
 			if (response.ok) {
-				console.log(`🔒 MOBYPHISH_LOG: Added sender to trusted list: ${senderEmail}`)
+				console.log(`🔒 MOBYPHISH_LOG: Added sender to whitelist: ${senderEmail}`)
 				await this.viewModel.updateSenderStatus("added_to_trusted")
 				await this.viewModel.fetchSenderData()
 				this.closeModal()
