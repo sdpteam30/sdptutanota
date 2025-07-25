@@ -171,4 +171,4 @@ RUN chmod +x start.sh
 EXPOSE 3000 8080 9000
 
 # Start all services
-CMD ["./start.sh"]
+CMD ["./start.sh"] 

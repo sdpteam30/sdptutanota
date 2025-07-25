@@ -193,6 +193,23 @@ export class MobyPhishReportModal implements ModalComponent {
 				"button.mobyphish-trust-btn",
 				{
 					onclick: async () => {
+						await this.trustOnce()
+					},
+					disabled: this.isLoading,
+				},
+				[
+					m(Icon, {
+						icon: Icons.Unlock,
+						style: { fill: "white", marginRight: "8px", width: "16px", height: "16px" },
+					}),
+					"Trust Once",
+				],
+			),
+
+			m(
+				"button.mobyphish-trust-btn",
+				{
+					onclick: async () => {
 						await this.addToTrustedSenders()
 					},
 					disabled: this.isLoading,
@@ -291,6 +308,22 @@ export class MobyPhishReportModal implements ModalComponent {
 				"Back",
 			),
 		]
+	}
+
+	private async trustOnce(): Promise<void> {
+		this.isLoading = true
+		m.redraw()
+
+		try {
+			await this.viewModel.updateSenderStatus("trusted_once")
+			console.log(`🔒 MOBYPHISH_LOG: Trust once applied for sender="${this.viewModel.getSender().address}"`)
+			this.closeModal()
+		} catch (error) {
+			console.error("Error applying trust once:", error)
+		} finally {
+			this.isLoading = false
+			m.redraw()
+		}
 	}
 
 	private async addToTrustedSenders(): Promise<void> {
