@@ -1026,7 +1026,7 @@ export default {
 		"mobyPhish_deny": "Deny",
 		"mobyPhish_is_trusted": "Is this a sender you trust?",
 		"mobyPhish_learn_more": "Learn more...",
-		"mobyPhish_sender_confirmed": "Sender confirmed as trusted",
+		"mobyPhish_sender_confirmed": "Sender confirmed as whitelisted",
 		"mobyPhish_sender_denied": "Sender not confirmed",
 		"mobyPhish_sender_reported_phishing": "Sender reported as phishing",
 		"mobyPhish_sender_trusted_once": "Content loaded; we recommend proceeding with caution",

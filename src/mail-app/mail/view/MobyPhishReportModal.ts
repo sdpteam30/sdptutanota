@@ -202,7 +202,7 @@ export class MobyPhishReportModal implements ModalComponent {
 						icon: Icons.Unlock,
 						style: { fill: "white", marginRight: "8px", width: "16px", height: "16px" },
 					}),
-					"Trust Once",
+					"View Links Once",
 				],
 			),
 
@@ -219,7 +219,7 @@ export class MobyPhishReportModal implements ModalComponent {
 						icon: Icons.Add,
 						style: { fill: "white", marginRight: "8px", width: "16px", height: "16px" },
 					}),
-					"Add Trusted Sender",
+					"Add Sender to Whitelist",
 				],
 			),
 
