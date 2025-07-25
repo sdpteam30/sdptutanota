@@ -52,7 +52,30 @@ async function copyToLibs(dependencies) {
 	for (let { bundling, src, target, banner } of dependencies) {
 		switch (bundling) {
 			case "copy":
-				await fs.copy(path.join(__dirname, src), path.join(__dirname, "../libs/", target))
+				const srcPath = path.join(__dirname, src)
+				const targetPath = path.join(__dirname, "../libs/", target)
+
+				// Check if source file exists
+				if (!(await fs.pathExists(srcPath))) {
+					console.warn(`WARNING: Source file not found: ${srcPath}`)
+
+					// Try alternative extensions for linkifyjs
+					if (src.includes("linkifyjs") && src.endsWith(".mjs")) {
+						const altSrc = src.replace(".mjs", ".js")
+						const altSrcPath = path.join(__dirname, altSrc)
+						if (await fs.pathExists(altSrcPath)) {
+							console.log(`Using alternative file: ${altSrcPath}`)
+							await fs.copy(altSrcPath, targetPath)
+							break
+						}
+					}
+
+					console.error(`Skipping ${src} -> ${target} (file not found)`)
+					continue
+				}
+
+				await fs.copy(srcPath, targetPath)
+				console.log(`Copied: ${src} -> ${target}`)
 				break
 			case "rollupWeb":
 				await rollWebDep(src, target, banner)
