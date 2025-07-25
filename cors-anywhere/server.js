@@ -31,12 +31,14 @@ cors_proxy
 		httpProxyOptions: {
 			xfwd: false,
 		},
-		// Key Fix: Dynamically set CORS headers
+		// Key Fix: Dynamically set CORS headers and expose blocked headers
 		setHeaders: function (res, req) {
 			const origin = req.headers.origin
 			if (origin === "http://localhost:9000") {
 				res.setHeader("Access-Control-Allow-Origin", origin)
 				res.setHeader("Access-Control-Allow-Credentials", "true")
+				// Expose the headers that Tutanota needs
+				res.setHeader("Access-Control-Expose-Headers", "Date, Retry-After, Suspension-Time, Error-Id, Precondition, Content-Type, Content-Length")
 			}
 		},
 	})

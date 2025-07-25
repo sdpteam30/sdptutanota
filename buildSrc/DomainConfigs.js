@@ -97,7 +97,7 @@ export const domainConfigs = {
 	localhost: {
 		firstPartyDomain: true,
 		partneredDomainTransitionUrl: "http://localhost:9000",
-		apiUrl: "http://localhost:9000",
+		apiUrl: "http://localhost:8080/https://app.tuta.com",
 		paymentUrl: "http://localhost:9000/braintree.html",
 		webauthnUrl: "http://localhost:9000/webauthn",
 		legacyWebauthnUrl: "http://localhost:9000/webauthn",
