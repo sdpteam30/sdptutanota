@@ -272,7 +272,7 @@ export class MailViewerViewModel {
 			await this.fetchSenderData()
 
 			if (status === "confirmed" || status === "trusted_once") {
-				console.log(`🔒 MOBYPHISH_LOG: Sender confirmed or links enabled once - loading content and expanding mail`)
+				console.log(`🔒 MOBYPHISH_LOG: Sender confirmed as trusted - loading content and expanding mail`)
 				this.setSenderConfirmed(true)
 				this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
 				this.sanitizeResult = null
@@ -307,8 +307,8 @@ export class MailViewerViewModel {
 	async resetSenderStatusForCurrentEmail(): Promise<void> {
 		const userEmail = this.logins.getUserController().loginUsername
 		const emailId = this.mail._id[1]
-		console.log(`🔒 MOBYPHISH_LOG: Removing sender from whitelist for emailId=${emailId}, sender="${this.mail.sender.address}"`)
-
+		//console.log(`🔒 MOBYPHISH_LOG: Removing sender from whitelist for emailId=${emailId}, sender="${this.mail.sender.address}"`)
+		//remove sender functionality will be removed
 		try {
 			const response = await fetch(`${TRUSTED_SENDERS_API_URL}/reset-single-email-status`, {
 				method: "DELETE", // Use DELETE method
