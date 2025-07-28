@@ -37,28 +37,7 @@ if (!document.getElementById(styleId)) {
             opacity: 0.8;
         }
 
-        .mobyphish-trust-btn {
-            background: #28a745;
-            color: white;
-            border: none;
-            padding: 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            width: 100%;
-            font-size: 14px;
-            font-weight: bold;
-            text-align: center;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: opacity 0.2s ease;
-            margin-top: 10px;
-            opacity: 1;
-        }
 
-        .mobyphish-trust-btn:hover {
-            opacity: 0.8;
-        }
 
         .mobyphish-cancel-btn {
             background: transparent;
@@ -168,7 +147,7 @@ export class MobyPhishReportModal implements ModalComponent {
 						lineHeight: "1.4",
 					},
 				},
-				["What would you like to do with this email from ", m("strong", senderEmail), "?"],
+				["This email from ", m("strong", senderEmail), " appears to be suspicious. You can report it as phishing to help protect yourself and others."],
 			),
 
 			m(
@@ -186,40 +165,6 @@ export class MobyPhishReportModal implements ModalComponent {
 						style: { fill: "white", marginRight: "8px", width: "16px", height: "16px" },
 					}),
 					"Report as Phishing",
-				],
-			),
-
-			m(
-				"button.mobyphish-trust-btn",
-				{
-					onclick: async () => {
-						await this.trustOnce()
-					},
-					disabled: this.isLoading,
-				},
-				[
-					m(Icon, {
-						icon: Icons.Unlock,
-						style: { fill: "white", marginRight: "8px", width: "16px", height: "16px" },
-					}),
-					"View Links Once",
-				],
-			),
-
-			m(
-				"button.mobyphish-trust-btn",
-				{
-					onclick: async () => {
-						await this.addToTrustedSenders()
-					},
-					disabled: this.isLoading,
-				},
-				[
-					m(Icon, {
-						icon: Icons.Add,
-						style: { fill: "white", marginRight: "8px", width: "16px", height: "16px" },
-					}),
-					"Add Sender to Whitelist",
 				],
 			),
 
@@ -308,52 +253,6 @@ export class MobyPhishReportModal implements ModalComponent {
 				"Back",
 			),
 		]
-	}
-
-	private async trustOnce(): Promise<void> {
-		this.isLoading = true
-		m.redraw()
-
-		try {
-			await this.viewModel.updateSenderStatus("trusted_once")
-			console.log(`🔒 MOBYPHISH_LOG: Links enabled once for sender="${this.viewModel.getSender().address}"`)
-			this.closeModal()
-		} catch (error) {
-			console.error("Error applying trust once:", error)
-		} finally {
-			this.isLoading = false
-			m.redraw()
-		}
-	}
-
-	private async addToTrustedSenders(): Promise<void> {
-		this.isLoading = true
-		m.redraw()
-
-		const senderEmail = this.viewModel.getSender().address
-		const userEmail = this.viewModel.logins.getUserController().loginUsername
-
-		try {
-			const response = await fetch(`${TRUSTED_SENDERS_API_URL}/add-trusted`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ user_email: userEmail, trusted_email: senderEmail }),
-			})
-
-			if (response.ok) {
-				console.log(`🔒 MOBYPHISH_LOG: Added sender to whitelist: ${senderEmail}`)
-				await this.viewModel.updateSenderStatus("added_to_trusted")
-				await this.viewModel.fetchSenderData()
-				this.closeModal()
-			} else {
-				console.error(`Failed to add sender to trusted list: ${senderEmail}`)
-			}
-		} catch (error) {
-			console.error("Error adding trusted sender:", error)
-		} finally {
-			this.isLoading = false
-			m.redraw()
-		}
 	}
 
 	private async reportAsPhishing(): Promise<void> {

@@ -726,14 +726,18 @@ export class MailViewerViewModel {
 		}
 
 		try {
-			await this.mailModel.reportMails(reportType, [this.mail])
+			// Skip Tutanota API reporting for phishing to avoid misflagging during testing
+			if (reportType !== MailReportType.PHISHING) {
+				await this.mailModel.reportMails(reportType, [this.mail])
+			}
+
 			if (reportType === MailReportType.PHISHING) {
 				this.setPhishingStatus(MailPhishingStatus.SUSPICIOUS)
 				await this.entityClient.update(this.mail)
 				console.log(
-					`🔒 MOBYPHISH_LOG: Successfully reported phishing via three dots menu for sender="${this.getSender().address}", mailId="${
-						this.mail._id[1]
-					}", userEmail="${this.logins.getUserController().loginUsername}", interactionType="interacted"`,
+					`🔒 MOBYPHISH_LOG: Successfully reported phishing via three dots menu (Tutanota API skipped) for sender="${
+						this.getSender().address
+					}", mailId="${this.mail._id[1]}", userEmail="${this.logins.getUserController().loginUsername}", interactionType="interacted"`,
 				)
 			}
 			const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(this.mail)
