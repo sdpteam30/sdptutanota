@@ -36,26 +36,17 @@ if (!document.getElementById(styleId)) {
         .mobyphish-btn:hover {
             opacity: 0.7;
         }
-    `
-	document.head.appendChild(style)
-}
 
-// Inject outline button style only once
-const outlineStyleId = "moby-phish-outline-style"
-if (!document.getElementById(outlineStyleId)) {
-	const style = document.createElement("style")
-	style.id = outlineStyleId
-	style.textContent = `
-        .mobyphish-outline-btn {
-            background: transparent;
-            color: #850122;
-            border: 1px solid #850122;
+        .mobyphish-trusted-btn {
+            background: #28a745;
+            color: #ffffff;
+            border: none;
             padding: 12px;
             border-radius: 8px;
             cursor: pointer;
             width: 100%;
             font-size: 14px;
-            font-weight: normal;
+            font-weight: bold;
             text-align: center;
             display: flex;
             align-items: center;
@@ -65,7 +56,7 @@ if (!document.getElementById(outlineStyleId)) {
             opacity: 1;
         }
 
-        .mobyphish-outline-btn:hover {
+        .mobyphish-trusted-btn:hover {
             opacity: 0.7;
         }
     `
@@ -75,9 +66,9 @@ if (!document.getElementById(outlineStyleId)) {
 export class MobyPhishConfirmSenderModal implements ModalComponent {
 	private viewModel: MailViewerViewModel
 	private modalHandle?: ModalComponent
-	private selectedSenderEmail: string = ""
+
 	private trustedSenderObjects: TrustedSenderInfo[]
-	private modalState: "initial" | "warning" = "initial"
+	private modalState: "initial" | "warning" | "technical" = "initial"
 	private isLoading: boolean = false
 	private errorMessage: string | null = null
 	private skippedInitialView: boolean = false
@@ -88,7 +79,6 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 
 		if (this.trustedSenderObjects.length === 0) {
 			this.modalState = "warning"
-			this.selectedSenderEmail = this.viewModel.getSender().address || ""
 			this.skippedInitialView = true
 		}
 	}
@@ -105,42 +95,59 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 		return m(".modal-overlay", { onclick: (e: MouseEvent) => this.backgroundClick(e) }, [
 			m(".modal-content", { onclick: (e: MouseEvent) => e.stopPropagation() }, [
 				m(".dialog.elevated-bg.border-radius", { style: this.getModalStyle() }, [
-					this.modalState === "initial" ? this.renderInitialView() : this.renderWarningView(),
+					this.modalState === "initial"
+						? this.renderInitialView()
+						: this.modalState === "technical"
+						? this.renderTechnicalView()
+						: this.renderWarningView(),
 				]),
 			]),
 		])
 	}
 
 	private renderInitialView(): Children {
-		const isConfirmDisabled = !this.selectedSenderEmail.trim() || this.isLoading
-
 		return [
 			m(
 				"p",
 				{ style: { fontSize: "16px", fontWeight: "bold", textAlign: "center", marginBottom: "15px", color: "black" } },
-				"Who do you believe this email is from?",
+				"Are you sure this sender is trusted?",
 			),
-			m("input[type=text]", {
-				placeholder: "Search or type sender email or name...",
-				value: this.selectedSenderEmail,
-				oninput: (e: Event) => {
-					this.selectedSenderEmail = (e.target as HTMLInputElement).value
-					this.errorMessage = null
-				},
-				list: "trusted-senders-list",
-				style: {
-					padding: "10px",
-					width: "100%",
-					boxSizing: "border-box",
-					borderRadius: "8px",
-					border: "1px solid #ccc",
-					color: "black",
-				},
-				required: true,
-			}),
 			m(
-				"datalist#trusted-senders-list",
-				this.trustedSenderObjects.map((sender) => m("option", { value: sender.address }, this.formatSenderDisplay(sender.name, sender.address))),
+				"button.mobyphish-trusted-btn",
+				{
+					onclick: async () => {
+						if (this.isLoading) return
+
+						console.log(`🔒 MOBYPHISH_LOG: Trusted Sender button clicked, checking if sender is already trusted`)
+
+						this.isLoading = true
+						this.errorMessage = null
+						m.redraw()
+
+						try {
+							const currentSenderEmail = this.viewModel.getSender().address?.trim().toLowerCase()
+							const isSenderTrusted = this.trustedSenderObjects.some((sender) => sender.address.trim().toLowerCase() === currentSenderEmail)
+
+							if (isSenderTrusted) {
+								console.log(`🔒 MOBYPHISH_LOG: Sender is already trusted, confirming directly`)
+								await this.viewModel.updateSenderStatus("confirmed")
+								modal.remove(this.modalHandle!)
+							} else {
+								console.log(`🔒 MOBYPHISH_LOG: Sender not in trusted list, showing warning view`)
+								this.modalState = "warning"
+								this.isLoading = false
+								m.redraw()
+							}
+						} catch (err) {
+							console.error(err)
+							this.errorMessage = "Failed to check trusted sender status. Please try again."
+							this.isLoading = false
+							m.redraw()
+						}
+					},
+					disabled: this.isLoading,
+				},
+				"✓ Yes, this sender is trusted",
 			),
 			this.errorMessage
 				? m(
@@ -155,47 +162,6 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 			m(
 				"button",
 				{
-					onclick: async () => {
-						if (isConfirmDisabled) return
-						console.log(
-							`🔒 MOBYPHISH_LOG: Confirm button clicked in initial modal, selectedSender="${this.selectedSenderEmail}", actualSender="${
-								this.viewModel.getSender().address
-							}"`,
-						)
-
-						this.isLoading = true
-						this.errorMessage = null
-						m.redraw()
-
-						const enteredEmail = this.selectedSenderEmail.trim().toLowerCase()
-						const actualEmail = this.viewModel.getSender().address?.trim().toLowerCase()
-
-						if (enteredEmail === actualEmail) {
-							try {
-								await this.viewModel.updateSenderStatus("confirmed")
-								modal.remove(this.modalHandle!)
-							} catch (err) {
-								console.error(err)
-								this.errorMessage = "Failed to update status. Please try again."
-								this.isLoading = false
-								m.redraw()
-							}
-						} else {
-							console.log(`🔒 MOBYPHISH_LOG: Email mismatch detected, showing warning view`)
-							this.modalState = "warning"
-							this.isLoading = false
-							m.redraw()
-						}
-					},
-					disabled: isConfirmDisabled,
-					style: { ...this.getCancelButtonStyle(), color: "black" },
-				},
-				"Confirm",
-			),
-
-			m(
-				"button",
-				{
 					onclick: () => modal.remove(this.modalHandle!),
 					disabled: this.isLoading,
 					style: { ...this.getCancelButtonStyle(), color: "black" },
@@ -205,19 +171,100 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 		]
 	}
 
+	private renderTechnicalView(): Children {
+		return [
+			m(
+				"p",
+				{ style: { fontSize: "16px", fontWeight: "bold", textAlign: "center", marginBottom: "15px", color: "black" } },
+				"How Trusted Sender Detection Works",
+			),
+
+			m(
+				"div",
+				{
+					style: {
+						fontSize: "13px",
+						textAlign: "left",
+						marginBottom: "20px",
+						color: "#333",
+						lineHeight: "1.5",
+						maxHeight: "300px",
+						overflowY: "auto",
+						padding: "15px",
+						backgroundColor: "#f8f9fa",
+						borderRadius: "8px",
+						border: "1px solid #e9ecef",
+					},
+				},
+				[
+					m("p", { style: { marginBottom: "12px", fontWeight: "bold" } }, "Technical Process:"),
+
+					m(
+						"p",
+						{ style: { marginBottom: "8px" } },
+						"1. When an email is received, the system extracts the sender's email address from the message headers.",
+					),
+
+					m(
+						"p",
+						{ style: { marginBottom: "8px" } },
+						"2. A database query is performed against your personal trusted senders list using the exact email address match:",
+					),
+
+					m(
+						"code",
+						{
+							style: {
+								display: "block",
+								backgroundColor: "#e9ecef",
+								padding: "8px",
+								borderRadius: "4px",
+								fontFamily: "monospace",
+								fontSize: "12px",
+								margin: "8px 0",
+							},
+						},
+						"trustedSenderObjects.some(sender => sender.address.trim().toLowerCase() === currentSenderEmail)",
+					),
+
+					m("p", { style: { marginBottom: "8px" } }, "3. The comparison is case-insensitive and whitespace-trimmed to handle formatting variations."),
+
+					m(
+						"p",
+						{ style: { marginBottom: "8px" } },
+						"4. If no exact match is found in your trusted senders database, the email is flagged as potentially suspicious.",
+					),
+
+					m("p", { style: { marginBottom: "8px" } }, "5. The system then presents this security warning to prevent potential phishing attacks."),
+
+					m(
+						"p",
+						{ style: { marginTop: "12px", fontStyle: "italic" } },
+						"Note: This is a strict allowlist approach - only pre-approved email addresses can have links automatically enabled.",
+					),
+				],
+			),
+
+			m(
+				"button",
+				{
+					onclick: () => {
+						this.modalState = "warning"
+						m.redraw()
+					},
+					style: { ...this.getCancelButtonStyle(), color: "black" },
+				},
+				"Back to Warning",
+			),
+		]
+	}
+
 	private renderWarningView(): Children {
 		const actual = this.viewModel.getDisplayedSender()
 		const address = this.viewModel.getSender().address
 		const actualDisplay = this.formatSenderDisplay(actual?.name, address)
-		const canAddSender = !!address
 
-		let warningText = this.skippedInitialView ? "This sender is not on your trusted list:" : "You indicated this email might be from:"
-		const displaySender = this.skippedInitialView
-			? actualDisplay
-			: this.formatSenderDisplay(
-					this.trustedSenderObjects.find((s) => s.address.toLowerCase() === this.selectedSenderEmail.trim().toLowerCase())?.name,
-					this.selectedSenderEmail,
-			  )
+		const displaySender = actualDisplay
 
 		return [
 			m(
@@ -235,32 +282,38 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 			m(
 				"p",
 				{
-					style: { fontSize: "14px", textAlign: "center", marginBottom: "15px", color: "black" },
+					style: { fontSize: "14px", textAlign: "center", marginBottom: "10px", color: "black" },
 				},
-				[
-					warningText,
-					m("br"),
-					m("strong", displaySender),
-					!this.skippedInitialView ? m("br") : null,
-					!this.skippedInitialView ? `However, the actual sender is different or not already in your trusted senders list.` : null,
-				],
+				["This sender is not in your Trusted Senders List", m("br"), "and may be attempting phishing:", m("br"), m("strong", displaySender)],
 			),
 
-			!this.skippedInitialView
-				? m(
-						"p",
+			m(
+				"p",
+				{
+					style: { fontSize: "12px", textAlign: "center", marginBottom: "15px", color: "#666" },
+				},
+				[
+					"Links in this email have been disabled for your protection.",
+					m("br"),
+					m(
+						"a",
 						{
 							style: {
+								color: "#007acc",
+								textDecoration: "underline",
+								cursor: "pointer",
 								fontSize: "12px",
-								textAlign: "center",
-								marginBottom: "20px",
-								fontStyle: "italic",
-								color: "black",
+							},
+							onclick: (e: MouseEvent) => {
+								e.preventDefault()
+								this.modalState = "technical"
+								m.redraw()
 							},
 						},
-						`(Actual sender: ${actualDisplay})`,
-				  )
-				: null,
+						"How does this work?",
+					),
+				],
+			),
 
 			this.errorMessage
 				? m(
@@ -336,45 +389,6 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 					disabled: this.isLoading,
 				},
 				"Report as Phishing",
-			),
-
-			// Add to Trusted List (Outlined, NOT bold)
-			m(
-				"button.mobyphish-outline-btn",
-				{
-					onclick: async () => {
-						console.log(`🔒 MOBYPHISH_LOG: "Add to Trusted List" button clicked for sender="${this.viewModel.getSender().address}"`)
-
-						if (this.isLoading || !canAddSender) return
-						this.isLoading = true
-						this.errorMessage = null
-						m.redraw()
-
-						try {
-							const response = await fetch(`${TRUSTED_SENDERS_API_URL}/add-trusted`, {
-								method: "POST",
-								headers: { "Content-Type": "application/json" },
-								body: JSON.stringify({
-									user_email: this.viewModel.logins.getUserController().loginUsername,
-									trusted_email: address,
-									trusted_name: actual?.name || "",
-								}),
-							})
-							if (!response.ok) throw new Error("Failed to add sender.")
-
-							console.log(`🔒 MOBYPHISH_LOG: Successfully added sender="${address}" to trusted list`)
-							await this.viewModel.updateSenderStatus("confirmed")
-							modal.remove(this.modalHandle!)
-						} catch (err: any) {
-							console.error(`🔒 MOBYPHISH_LOG: Error adding sender to trusted list:`, err)
-							this.errorMessage = err.message || "Error occurred while adding."
-							this.isLoading = false
-							m.redraw()
-						}
-					},
-					disabled: this.isLoading || !canAddSender,
-				},
-				`Add ${this.viewModel.getSender().address} to Trusted List`,
 			),
 
 			// Cancel

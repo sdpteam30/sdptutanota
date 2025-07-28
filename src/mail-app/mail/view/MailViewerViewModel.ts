@@ -272,7 +272,7 @@ export class MailViewerViewModel {
 			await this.fetchSenderData()
 
 			if (status === "confirmed" || status === "trusted_once") {
-				console.log(`🔒 MOBYPHISH_LOG: Sender confirmed/trusted - loading content and expanding mail`)
+				console.log(`🔒 MOBYPHISH_LOG: Sender confirmed as trusted - loading content and expanding mail`)
 				this.setSenderConfirmed(true)
 				this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
 				this.sanitizeResult = null
@@ -307,8 +307,8 @@ export class MailViewerViewModel {
 	async resetSenderStatusForCurrentEmail(): Promise<void> {
 		const userEmail = this.logins.getUserController().loginUsername
 		const emailId = this.mail._id[1]
-		console.log(`🔒 MOBYPHISH_LOG: resetSenderStatusForCurrentEmail called for emailId=${emailId}, sender="${this.mail.sender.address}"`)
-
+		//console.log(`🔒 MOBYPHISH_LOG: Removing sender from whitelist for emailId=${emailId}, sender="${this.mail.sender.address}"`)
+		//remove sender functionality will be removed
 		try {
 			const response = await fetch(`${TRUSTED_SENDERS_API_URL}/reset-single-email-status`, {
 				method: "DELETE", // Use DELETE method
@@ -330,7 +330,7 @@ export class MailViewerViewModel {
 				throw new Error(errorData.message || `Failed to reset email status (${response.status})`)
 			}
 
-			console.log(`🔒 MOBYPHISH_LOG: Successfully reset status for emailId=${emailId}. Refetching data.`)
+			console.log(`🔒 MOBYPHISH_LOG: Successfully removed sender from whitelist for emailId=${emailId}. Refetching data.`)
 
 			// Reset internal state immediately for responsiveness
 			this.senderStatus = "" // Or null, matching fetchSenderData's default
@@ -351,7 +351,7 @@ export class MailViewerViewModel {
 			}
 			m.redraw()
 		} catch (error) {
-			console.error(`🔒 MOBYPHISH_LOG: Error resetting sender status for emailId=${emailId}:`, error)
+			console.error(`🔒 MOBYPHISH_LOG: Error removing sender from whitelist for emailId=${emailId}:`, error)
 			// Optionally show user error message here
 			// showUserError(new UserError("Failed to untrust sender. Please try again."));
 			// Refetch data even on error to ensure consistency
@@ -726,14 +726,18 @@ export class MailViewerViewModel {
 		}
 
 		try {
-			await this.mailModel.reportMails(reportType, [this.mail])
+			// Skip Tutanota API reporting for phishing to avoid misflagging during testing
+			if (reportType !== MailReportType.PHISHING) {
+				await this.mailModel.reportMails(reportType, [this.mail])
+			}
+
 			if (reportType === MailReportType.PHISHING) {
 				this.setPhishingStatus(MailPhishingStatus.SUSPICIOUS)
 				await this.entityClient.update(this.mail)
 				console.log(
-					`🔒 MOBYPHISH_LOG: Successfully reported phishing via three dots menu for sender="${this.getSender().address}", mailId="${
-						this.mail._id[1]
-					}", userEmail="${this.logins.getUserController().loginUsername}", interactionType="interacted"`,
+					`🔒 MOBYPHISH_LOG: Successfully reported phishing via three dots menu (Tutanota API skipped) for sender="${
+						this.getSender().address
+					}", mailId="${this.mail._id[1]}", userEmail="${this.logins.getUserController().loginUsername}", interactionType="interacted"`,
 				)
 			}
 			const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(this.mail)

@@ -5,7 +5,6 @@
 
 var httpProxy = require("http-proxy")
 var net = require("net")
-var url = require("url")
 var regexp_tld = require("./regexp-top-level-domain")
 var getProxyForUrl = require("proxy-from-env").getProxyForUrl
 
@@ -169,7 +168,7 @@ function onProxyResponse(proxy, proxyReq, proxyRes, req, res) {
 		var locationHeader = proxyRes.headers.location
 		var parsedLocation
 		if (locationHeader) {
-			locationHeader = url.resolve(requestState.location.href, locationHeader)
+			locationHeader = new URL(locationHeader, requestState.location.href).href
 			parsedLocation = parseURL(locationHeader)
 		}
 		if (parsedLocation) {
@@ -217,7 +216,7 @@ function onProxyResponse(proxy, proxyReq, proxyRes, req, res) {
 
 /**
  * @param req_url {string} The requested URL (scheme is optional).
- * @return {object} URL parsed using url.parse
+ * @return {object} URL parsed using WHATWG URL API
  */
 function parseURL(req_url) {
 	var match = req_url.match(/^(?:(https?:)?\/\/)?(([^\/?]+?)(?::(\d{0,5})(?=[\/?]|$))?)([\/?][\S\s]*|$)/i)
@@ -240,12 +239,24 @@ function parseURL(req_url) {
 		}
 		req_url = (match[4] === "443" ? "https:" : "http:") + req_url
 	}
-	var parsed = url.parse(req_url)
-	if (!parsed.hostname) {
-		// "http://:1/" and "http:/notenoughslashes" could end up here.
+	try {
+		var parsed = new URL(req_url)
+		// Convert WHATWG URL object to match the old url.parse() structure for compatibility
+		return {
+			protocol: parsed.protocol,
+			hostname: parsed.hostname,
+			host: parsed.host,
+			port: parsed.port,
+			path: parsed.pathname + parsed.search,
+			pathname: parsed.pathname,
+			search: parsed.search,
+			query: parsed.search.slice(1),
+			href: parsed.href,
+		}
+	} catch (e) {
+		// If URL parsing fails, return null
 		return null
 	}
-	return parsed
 }
 
 // Request handler factory

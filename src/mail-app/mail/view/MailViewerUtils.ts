@@ -232,9 +232,9 @@ function reportMail(viewModel: MailViewerViewModel) {
 			.then(() => {
 				if (reportType === MailReportType.PHISHING) {
 					console.log(
-						`🔒 MOBYPHISH_LOG: Successfully reported phishing via tutamail dialog for sender="${viewModel.getSender().address}", mailId="${
-							viewModel.mail._id[1]
-						}", userEmail="${viewModel.logins.getUserController().loginUsername}", interactionType="interacted"`,
+						`🔒 MOBYPHISH_LOG: Successfully reported phishing via tutamail dialog (Tutanota API skipped) for sender="${
+							viewModel.getSender().address
+						}", mailId="${viewModel.mail._id[1]}", userEmail="${viewModel.logins.getUserController().loginUsername}", interactionType="interacted"`,
 					)
 				}
 			})
