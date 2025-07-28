@@ -69,13 +69,13 @@ RUN if [ -d ".git" ]; then \
         git submodule init && \
         git submodule sync --recursive && \
         git submodule update && \
-        echo "Step 11: Switch to dockerized branch..." && \
-        if git show-ref --verify --quiet refs/heads/dockerized; then \
-            git switch dockerized; \
-        elif git show-ref --verify --quiet refs/remotes/origin/dockerized; then \
-            git switch -c dockerized origin/dockerized; \
+        echo "Step 11: Switch to sean-dev1 branch..." && \
+        if git show-ref --verify --quiet refs/heads/sean-dev1; then \
+            git switch sean-dev1; \
+        elif git show-ref --verify --quiet refs/remotes/origin/sean-dev1; then \
+            git switch -c sean-dev1 origin/sean-dev1; \
         else \
-            git switch -c dockerized; \
+            git switch -c sean-dev1; \
         fi && \
         echo "Final branch: $(git branch --show-current)" && \
         echo "=== Build setup complete ==="; \

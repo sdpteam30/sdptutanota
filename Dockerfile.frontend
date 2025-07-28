@@ -57,7 +57,7 @@ RUN if [ -d ".git" ]; then \
         echo "Warning: Not in a git repository"; \
     fi
 
-# Find latest tutanota-release, checkout, init submodules, then switch to dockerized branch
+# Find latest tutanota-release, checkout, init submodules, then switch to sean-dev1 branch
 RUN if [ -d ".git" ]; then \
         echo "Finding latest tutanota-release..." && \
         LATEST_RELEASE=$(git tag -l "tutanota-release-*" | sort -V | tail -n 1) && \
@@ -89,13 +89,13 @@ RUN if [ -d ".git" ]; then \
         if [ -d "buildSrc" ]; then \
             cp -r buildSrc buildSrc.release.backup; \
         fi && \
-        echo "Switching to dockerized branch..." && \
-        if git show-ref --verify --quiet refs/heads/dockerized; then \
-            git checkout dockerized; \
-        elif git show-ref --verify --quiet refs/remotes/origin/dockerized; then \
-            git checkout -b dockerized origin/dockerized; \
+        echo "Switching to sean-dev1 branch..." && \
+        if git show-ref --verify --quiet refs/heads/sean-dev1; then \
+            git checkout sean-dev1; \
+        elif git show-ref --verify --quiet refs/remotes/origin/sean-dev1; then \
+            git checkout -b sean-dev1 origin/sean-dev1; \
         else \
-            git checkout -b dockerized; \
+            git checkout -b sean-dev1; \
         fi && \
         echo "Restoring buildSrc files from release if needed..." && \
         if [ -d "buildSrc.release.backup" ]; then \

@@ -80,7 +80,7 @@ setup_upstream() {
     git fetch origin --tags
 }
 
-# Find and checkout latest tutanota release, then switch to dockerized branch
+# Find and checkout latest tutanota release, then switch to sean-dev1 branch
 setup_release_and_branch() {
     print_status "Finding latest tutanota-release version..."
     
@@ -173,20 +173,20 @@ setup_release_and_branch() {
         print_success "Backed up buildSrc files from release"
     fi
     
-    # Now switch to dockerized branch
-    print_status "Switching to 'dockerized' branch..."
-    if git show-ref --verify --quiet refs/heads/dockerized; then
+    # Now switch to sean-dev1 branch
+    print_status "Switching to 'sean-dev1' branch..."
+    if git show-ref --verify --quiet refs/heads/sean-dev1; then
         # Branch exists locally
-        git checkout dockerized
-        print_success "Switched to existing 'dockerized' branch"
-    elif git show-ref --verify --quiet refs/remotes/origin/dockerized; then
+        git checkout sean-dev1
+        print_success "Switched to existing 'sean-dev1' branch"
+    elif git show-ref --verify --quiet refs/remotes/origin/sean-dev1; then
         # Branch exists on remote
-        git checkout -b dockerized origin/dockerized
-        print_success "Checked out 'dockerized' branch from remote"
+        git checkout -b sean-dev1 origin/sean-dev1
+        print_success "Checked out 'sean-dev1' branch from remote"
     else
         # Create new branch from current state (release + submodules)
-        git checkout -b dockerized
-        print_success "Created new 'dockerized' branch from $latest_release"
+        git checkout -b sean-dev1
+        print_success "Created new 'sean-dev1' branch from $latest_release"
     fi
     
     # Restore buildSrc files from release if they were overwritten
@@ -194,7 +194,7 @@ setup_release_and_branch() {
         if [ -d "buildSrc" ]; then
             # Check if buildSrc was modified by branch switch
             if ! diff -rq buildSrc buildSrc.release.backup > /dev/null 2>&1; then
-                print_warning "buildSrc files differ between release and dockerized branch"
+                print_warning "buildSrc files differ between release and sean-dev1 branch"
                 print_status "Restoring buildSrc files from release..."
                 rm -rf buildSrc
                 mv buildSrc.release.backup buildSrc
