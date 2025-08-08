@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     wget \
     curl \
+	dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust and Cargo
@@ -142,30 +143,28 @@ RUN npm ci --only=production
 WORKDIR /app
 
 # Create startup script
-RUN cat > start.sh << 'EOF'
-#!/bin/sh
-set -e
+RUN echo '#!/bin/sh' > start.sh && \
+    echo 'set -e' >> start.sh && \
+    echo '' >> start.sh && \
+    echo '# Start trusted-senders-backend in background' >> start.sh && \
+    echo 'echo "Starting trusted-senders-backend on port 3000..."' >> start.sh && \
+    echo 'cd /app/trusted-senders-backend' >> start.sh && \
+    echo 'node index.js &' >> start.sh && \
+    echo '' >> start.sh && \
+    echo '# Start CORS proxy in background' >> start.sh && \
+    echo 'echo "Starting CORS proxy on port 8080..."' >> start.sh && \
+    echo 'cd /app/cors-anywhere' >> start.sh && \
+    echo 'node server.js &' >> start.sh && \
+    echo '' >> start.sh && \
+    echo '# Start frontend server' >> start.sh && \
+    echo 'echo "Starting frontend on port 9000..."' >> start.sh && \
+    echo 'cd /app/build' >> start.sh && \
+    echo 'serve . -s -p 9000 &' >> start.sh && \
+    echo '' >> start.sh && \
+    echo '# Wait for all background processes' >> start.sh && \
+    echo 'wait' >> start.sh
 
-# Start trusted-senders-backend in background
-echo "Starting trusted-senders-backend on port 3000..."
-cd /app/trusted-senders-backend
-node index.js &
-
-# Start CORS proxy in background
-echo "Starting CORS proxy on port 8080..."
-cd /app/cors-anywhere
-node server.js &
-
-# Start frontend server
-echo "Starting frontend on port 9000..."
-cd /app/build
-serve . -s -p 9000 &
-
-# Wait for all background processes
-wait
-EOF
-
-RUN chmod +x start.sh
+RUN dos2unix start.sh && chmod +x start.sh
 
 # Expose ports
 EXPOSE 3000 8080 9000
