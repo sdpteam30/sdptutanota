@@ -8,6 +8,7 @@ node_modules
 .gradle
 /.run
 test-ca
+**/.env
 **/.DS_STORE
 **/*.xcbkptlist
 **/*.xcuserstate
