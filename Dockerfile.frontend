@@ -1,0 +1,165 @@
+# Frontend Dockerfile for Tutanota
+FROM node:20-bullseye AS builder
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    python3 \
+    python3-pip \
+    build-essential \
+    cmake \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust and Cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup default 1.80.0
+
+# Install Emscripten 3.1.59
+RUN cd /opt && \
+    git clone https://github.com/emscripten-core/emsdk.git && \
+    cd emsdk && \
+    ./emsdk install 3.1.59 && \
+    ./emsdk activate 3.1.59
+ENV PATH="/opt/emsdk:/opt/emsdk/upstream/emscripten:${PATH}"
+ENV EMSDK="/opt/emsdk"
+
+# Install binaryen for WASM2JS
+RUN cd /opt && \
+    wget https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz && \
+    tar -xzf binaryen-version_116-x86_64-linux.tar.gz && \
+    mv binaryen-version_116 binaryen
+ENV PATH="/opt/binaryen/bin:${PATH}"
+
+# Set working directory
+WORKDIR /app
+
+# Copy the entire repository first (including .git and buildSrc)
+COPY . .
+
+# Initialize git configuration to avoid issues
+RUN git config --global user.email "docker@tutanota.com" && \
+    git config --global user.name "Docker Build" && \
+    git config --global --add safe.directory /app
+
+# Set up upstream remote and fetch all branches/tags
+RUN if [ -d ".git" ]; then \
+        echo "Setting up git repository for build..." && \
+        git remote -v && \
+        if ! git remote | grep -q "upstream"; then \
+            git remote add upstream https://github.com/tutao/tutanota.git; \
+        fi && \
+        git fetch upstream --tags && \
+        git fetch origin --tags; \
+    else \
+        echo "Warning: Not in a git repository"; \
+    fi
+
+# Find specific tutanota-release, checkout, init submodules, then switch to sean-dev1 branch
+RUN if [ -d ".git" ]; then \
+        echo "Using specific release: tutanota-release-301.250806.1" && \
+        LATEST_RELEASE="tutanota-release-301.250806.1" && \
+        echo "Using release: $LATEST_RELEASE" && \
+        echo "Handling untracked files before checkout..." && \
+        git ls-files --others --exclude-standard | while read -r file; do \
+            if [ -f "$file" ]; then \
+                mkdir -p ".git/untracked-backup/$(dirname "$file")" && \
+                mv "$file" ".git/untracked-backup/$file"; \
+            fi; \
+        done && \
+        echo "Stashing local changes before checkout..." && \
+        if ! git diff --quiet || ! git diff --cached --quiet; then \
+            git stash push -m "Auto-stash before checkout $LATEST_RELEASE ($(date))" && \
+            STASH_CREATED=true; \
+        else \
+            STASH_CREATED=false; \
+        fi && \
+        git checkout "$LATEST_RELEASE" && \
+        if [ -f ".gitmodules" ]; then \
+            git submodule init && \
+            git submodule sync --recursive && \
+            git submodule update; \
+        fi && \
+        echo "Preserving buildSrc files from release..." && \
+        if [ -d "buildSrc" ]; then \
+            cp -r buildSrc buildSrc.release.backup; \
+        fi && \
+        echo "Switching to sean-dev1 branch..." && \
+        if git show-ref --verify --quiet refs/heads/sean-dev1; then \
+            git checkout sean-dev1; \
+        elif git show-ref --verify --quiet refs/remotes/origin/sean-dev1; then \
+            git checkout -b sean-dev1 origin/sean-dev1; \
+        else \
+            git checkout -b sean-dev1; \
+        fi && \
+        echo "Restoring buildSrc files from release if needed..." && \
+        if [ -d "buildSrc.release.backup" ]; then \
+            if [ -d "buildSrc" ]; then \
+                if ! diff -rq buildSrc buildSrc.release.backup > /dev/null 2>&1; then \
+                    echo "buildSrc files differ - restoring from release"; \
+                    rm -rf buildSrc; \
+                    mv buildSrc.release.backup buildSrc; \
+                else \
+                    echo "buildSrc files identical - no restoration needed"; \
+                    rm -rf buildSrc.release.backup; \
+                fi; \
+            else \
+                echo "buildSrc missing - restoring from release"; \
+                mv buildSrc.release.backup buildSrc; \
+            fi; \
+        fi && \
+        echo "Build setup complete on branch: $(git branch --show-current)" && \
+        if [ "$STASH_CREATED" = true ]; then \
+            echo "Restoring stashed changes (excluding buildSrc files)..." && \
+            git stash show -p > .git/stash-patch.tmp && \
+            if git apply --index .git/stash-patch.tmp --exclude="buildSrc/*" 2>/dev/null; then \
+                echo "Non-buildSrc changes restored" && \
+                git stash drop; \
+            else \
+                echo "Warning: Some changes couldn't be restored - they remain in stash"; \
+            fi && \
+            rm -f .git/stash-patch.tmp; \
+        fi && \
+        if [ -d ".git/untracked-backup" ]; then \
+            echo "Restoring untracked files (excluding buildSrc)..." && \
+            find .git/untracked-backup -type f | while read -r backup_file; do \
+                original_file="${backup_file#.git/untracked-backup/}"; \
+                if [[ "$original_file" != buildSrc/* ]]; then \
+                    mkdir -p "$(dirname "$original_file")" && \
+                    mv "$backup_file" "$original_file"; \
+                fi; \
+            done && \
+            rm -rf .git/untracked-backup; \
+        fi; \
+    else \
+        echo "Warning: Skipping git setup - not a git repository"; \
+    fi
+
+# Install dependencies
+RUN npm ci
+
+# Build packages
+RUN npm run build-packages
+
+# Build the web application
+RUN node make prod
+
+# Production stage
+FROM node:20-alpine AS production
+
+# Install serve globally for serving the frontend
+RUN npm install -g serve
+
+# Set working directory
+WORKDIR /app
+
+# Copy built application from builder stage
+COPY --from=builder /app/build ./build
+
+# Expose port
+EXPOSE 9000
+
+# Start frontend server
+CMD ["serve", "build", "-s", "-p", "9000"] 

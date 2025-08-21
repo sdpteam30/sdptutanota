@@ -393,9 +393,8 @@ export class MailModel {
 		}
 	}
 
-	async reportMails(reportType: MailReportType, mails: () => Promise<ReadonlyArray<Mail>>): Promise<void> {
-		const mailsToReport = await mails()
-		for (const mail of mailsToReport) {
+	async reportMails(reportType: MailReportType, mails: ReadonlyArray<Mail>): Promise<void> {
+		for (const mail of mails) {
 			await this.mailFacade.reportMail(mail, reportType).catch(ofClass(NotFoundError, (e) => console.log("mail to be reported not found", e)))
 		}
 	}

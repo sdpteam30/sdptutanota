@@ -37,6 +37,7 @@ import { createResizeObserver } from "@tutao/tutanota-utils/dist/Utils"
 import { SearchToken } from "../../../common/api/common/utils/QueryTokenUtils"
 import { highlightTextInQueryAsChildren } from "../../../common/gui/TextHighlightViewUtils"
 import { MailViewModel } from "./MailViewModel"
+import { modal } from "../../../common/gui/base/Modal.js"
 
 assertMainOrNode()
 
@@ -423,6 +424,52 @@ export class MailViewer implements Component<MailViewerAttrs> {
 
 		this.shadowDomRoot.appendChild(styles.getStyleSheetElement("main"))
 		this.shadowDomRoot.appendChild(wrapNode)
+
+		// LINK HANDLING: override clicks inside Shadow DOM
+		const isConfirmed = this.viewModel?.isSenderConfirmed?.() ?? false
+		wrapNode.querySelectorAll("a").forEach((link) => {
+			const originalHref = link.getAttribute("data-original-href") || link.getAttribute("href") || ""
+
+			if (!isConfirmed) {
+				link.setAttribute("data-original-href", originalHref)
+				link.removeAttribute("href") // SAFARI FIX — don't allow "javascript:void(0)" or "#"
+				link.style.pointerEvents = "auto"
+				link.style.color = "gray"
+				link.style.textDecoration = "line-through"
+
+				const handleBlockedClick = (e: Event) => {
+					e.preventDefault()
+					e.stopPropagation()
+
+					if (!this.viewModel.isSenderConfirmed()) {
+						if (this.viewModel.isSenderTrusted()) {
+							const senderName = this.viewModel.getSender().name || this.viewModel.getSender().address
+							import("./MobyPhishReminderModal").then(({ MobyPhishReminderModal }) => {
+								const reminderModal = new MobyPhishReminderModal(senderName)
+								modal.display(reminderModal)
+								reminderModal.setModalHandle(reminderModal)
+							})
+						} else {
+							this.viewModel?.showPhishingModal?.()
+						}
+					}
+				}
+
+				link.addEventListener("click", handleBlockedClick)
+				link.addEventListener("pointerdown", handleBlockedClick, { passive: false })
+			} else {
+				// Allow normal navigation
+				link.setAttribute("href", originalHref)
+				link.style.color = ""
+				link.style.textDecoration = ""
+				link.style.pointerEvents = "auto"
+
+				link.addEventListener("click", (e) => {
+					e.preventDefault()
+					window.open(originalHref, "_blank")
+				})
+			}
+		})
 
 		if (client.isMobileDevice()) {
 			this.pinchZoomable = null

@@ -8,6 +8,7 @@ import { Dialog } from "../../../common/gui/base/Dialog"
 import type { MailboxDetail, MailboxModel } from "../../../common/mailFunctionality/MailboxModel.js"
 import { showSnackBar } from "../../../common/gui/base/SnackBar"
 import { MailModel } from "../model/MailModel.js"
+import { MailViewModel } from "./MailViewModel.js"
 
 import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
@@ -70,7 +71,7 @@ export async function reportMailsAutomatically(
 ): Promise<void> {
 	const shouldReportMails = await getReportConfirmation(mailReportType, mailboxModel, mailModel, mailboxDetails)
 	if (shouldReportMails) {
-		await mailModel.reportMails(mailReportType, mails)
+		await mailModel.reportMails(mailReportType, await mails())
 	}
 }
 

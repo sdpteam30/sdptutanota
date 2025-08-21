@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # All-in-one Tutanota service (frontend + backend + CORS proxy)
+  tutanota:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "9000:9000"  # Frontend
+      - "3000:3000"  # Backend (trusted-senders-backend)
+      - "8080:8080"  # CORS proxy
+    networks:
+      - tutanota-network
+    volumes:
+      - backend-data:/app/trusted-senders-backend/data
+    restart: unless-stopped
+
+  # Optional: Frontend-only service (alternative to all-in-one)
+  frontend-only:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "9001:9000"  # Different port to avoid conflict
+    networks:
+      - tutanota-network
+    restart: unless-stopped
+    profiles:
+      - frontend-only
+
+networks:
+  tutanota-network:
+    driver: bridge
+
+volumes:
+  backend-data:
+    driver: local 

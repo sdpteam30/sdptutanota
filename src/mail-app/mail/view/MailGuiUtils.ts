@@ -117,7 +117,7 @@ enum MoveMailSnackbarResult {
 async function showUndoMoveMailSnackbar(
 	targetFolder: MailFolder,
 	undoFolder: MailFolder,
-	resolveMails: () => Promise<readonly Mail[]>,
+	resolveMails: () => Promise<ReadonlyArray<Mail>>,
 	mailModel: MailModel,
 	mailViewModel: MailViewModel,
 	shouldReportMails: boolean,
@@ -230,7 +230,7 @@ export async function moveMails({
 			}
 		}
 		if (!undone && shouldReportMails) {
-			await mailModel.reportMails(MailReportType.SPAM, resolveMails)
+			await mailModel.reportMails(MailReportType.SPAM, await resolveMails())
 			return true
 		} else {
 			return false
