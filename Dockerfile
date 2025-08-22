@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Tutanota
-FROM node:20-bullseye AS builder
+FROM node:22-bullseye AS builder
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -112,7 +112,7 @@ RUN npm run build-packages
 RUN node make prod
 
 # Production stage
-FROM node:20-alpine AS production
+FROM node:22-alpine AS production
 
 # Install serve globally for serving the frontend
 RUN npm install -g serve
