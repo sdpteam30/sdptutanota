@@ -486,7 +486,7 @@ function requireCommon () {
 
 			const split = (typeof namespaces === 'string' ? namespaces : '')
 				.trim()
-				.replace(' ', ',')
+				.replace(/\s+/g, ',')
 				.split(',')
 				.filter(Boolean);
 
@@ -838,7 +838,7 @@ function requireBrowser () {
 		function load() {
 			let r;
 			try {
-				r = exports.storage.getItem('debug');
+				r = exports.storage.getItem('debug') || exports.storage.getItem('DEBUG') ;
 			} catch (error) {
 				// Swallow
 				// XXX (@Qix-) should we be logging these?
@@ -6557,16 +6557,16 @@ function writeFileSync (file, obj, options = {}) {
   return fs.writeFileSync(file, str, options)
 }
 
-const jsonfile$1 = {
+// NOTE: do not change this export format; required for ESM compat
+// see https://github.com/jprichardson/node-jsonfile/pull/162 for details
+var jsonfile$1 = {
   readFile,
   readFileSync,
   writeFile,
   writeFileSync
 };
 
-var jsonfile_1 = jsonfile$1;
-
-const jsonFile$1 = jsonfile_1;
+const jsonFile$1 = jsonfile$1;
 
 var jsonfile = {
   // jsonfile exports
@@ -10735,6 +10735,7 @@ const debug$1 = (
 var debug_1 = debug$1;
 
 (function (module, exports) {
+
 	const {
 	  MAX_SAFE_COMPONENT_LENGTH,
 	  MAX_SAFE_BUILD_LENGTH,
@@ -10747,6 +10748,7 @@ var debug_1 = debug$1;
 	const re = exports.re = [];
 	const safeRe = exports.safeRe = [];
 	const src = exports.src = [];
+	const safeSrc = exports.safeSrc = [];
 	const t = exports.t = {};
 	let R = 0;
 
@@ -10779,6 +10781,7 @@ var debug_1 = debug$1;
 	  debug(name, index, value);
 	  t[name] = index;
 	  src[index] = value;
+	  safeSrc[index] = safe;
 	  re[index] = new RegExp(value, isGlobal ? 'g' : undefined);
 	  safeRe[index] = new RegExp(safe, isGlobal ? 'g' : undefined);
 	};
@@ -10811,12 +10814,14 @@ var debug_1 = debug$1;
 
 	// ## Pre-release Version Identifier
 	// A numeric identifier, or a non-numeric identifier.
+	// Non-numberic identifiers include numberic identifiers but can be longer.
+	// Therefore non-numberic identifiers must go first.
 
-	createToken('PRERELEASEIDENTIFIER', `(?:${src[t.NUMERICIDENTIFIER]
-	}|${src[t.NONNUMERICIDENTIFIER]})`);
+	createToken('PRERELEASEIDENTIFIER', `(?:${src[t.NONNUMERICIDENTIFIER]
+	}|${src[t.NUMERICIDENTIFIER]})`);
 
-	createToken('PRERELEASEIDENTIFIERLOOSE', `(?:${src[t.NUMERICIDENTIFIERLOOSE]
-	}|${src[t.NONNUMERICIDENTIFIER]})`);
+	createToken('PRERELEASEIDENTIFIERLOOSE', `(?:${src[t.NONNUMERICIDENTIFIER]
+	}|${src[t.NUMERICIDENTIFIERLOOSE]})`);
 
 	// ## Pre-release Version
 	// Hyphen, followed by one or more dot-separated pre-release version
@@ -11008,7 +11013,7 @@ let SemVer$d = class SemVer {
 
     if (version instanceof SemVer) {
       if (version.loose === !!options.loose &&
-          version.includePrerelease === !!options.includePrerelease) {
+        version.includePrerelease === !!options.includePrerelease) {
         return version
       } else {
         version = version.version;
@@ -11174,6 +11179,19 @@ let SemVer$d = class SemVer {
   // preminor will bump the version up to the next minor release, and immediately
   // down to pre-release. premajor and prepatch work the same way.
   inc (release, identifier, identifierBase) {
+    if (release.startsWith('pre')) {
+      if (!identifier && identifierBase === false) {
+        throw new Error('invalid increment argument: identifier is empty')
+      }
+      // Avoid an invalid semver results
+      if (identifier) {
+        const match = `-${identifier}`.match(this.options.loose ? re$1[t$1.PRERELEASELOOSE] : re$1[t$1.PRERELEASE]);
+        if (!match || match[1] !== identifier) {
+          throw new Error(`invalid identifier: ${identifier}`)
+        }
+      }
+    }
+
     switch (release) {
       case 'premajor':
         this.prerelease.length = 0;
@@ -11203,6 +11221,12 @@ let SemVer$d = class SemVer {
           this.inc('patch', identifier, identifierBase);
         }
         this.inc('pre', identifier, identifierBase);
+        break
+      case 'release':
+        if (this.prerelease.length === 0) {
+          throw new Error(`version ${this.raw} is not a prerelease`)
+        }
+        this.prerelease.length = 0;
         break
 
       case 'major':
@@ -11246,10 +11270,6 @@ let SemVer$d = class SemVer {
       // 1.0.0 'pre' would become 1.0.0-0 which is the wrong direction.
       case 'pre': {
         const base = Number(identifierBase) ? 1 : 0;
-
-        if (!identifier && identifierBase === false) {
-          throw new Error('invalid increment argument: identifier is empty')
-        }
 
         if (this.prerelease.length === 0) {
           this.prerelease = [base];
@@ -11379,20 +11399,13 @@ const diff$1 = (version1, version2) => {
       return 'major'
     }
 
-    // Otherwise it can be determined by checking the high version
-
-    if (highVersion.patch) {
-      // anything higher than a patch bump would result in the wrong version
+    // If the main part has no difference
+    if (lowVersion.compareMain(highVersion) === 0) {
+      if (lowVersion.minor && !lowVersion.patch) {
+        return 'minor'
+      }
       return 'patch'
     }
-
-    if (highVersion.minor) {
-      // anything higher than a minor bump would result in the wrong version
-      return 'minor'
-    }
-
-    // bumping major/minor/patch all have same result
-    return 'major'
   }
 
   // add the `pre` prefix if we are going to a prerelease version
@@ -11609,6 +11622,7 @@ var hasRequiredLrucache;
 function requireLrucache () {
 	if (hasRequiredLrucache) return lrucache;
 	hasRequiredLrucache = 1;
+
 	class LRUCache {
 	  constructor () {
 	    this.max = 1000;
@@ -11658,6 +11672,7 @@ var hasRequiredRange;
 function requireRange () {
 	if (hasRequiredRange) return range;
 	hasRequiredRange = 1;
+
 	const SPACE_CHARACTERS = /\s+/g;
 
 	// hoisted class for cyclic dependency
@@ -12221,6 +12236,7 @@ var hasRequiredComparator;
 function requireComparator () {
 	if (hasRequiredComparator) return comparator;
 	hasRequiredComparator = 1;
+
 	const ANY = Symbol('SemVer ANY');
 	// hoisted class for cyclic dependency
 	class Comparator {
