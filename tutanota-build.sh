@@ -67,7 +67,7 @@ main() {
     git submodule update
 
     # Switch to development branch
-    info_message "Switching to my testing branch (sean-dev1""
+    info_message "Switching to my testing branch (sean-dev1)"
     git checkout sean-dev1
     git pull
 
