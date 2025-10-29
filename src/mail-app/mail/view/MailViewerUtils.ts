@@ -19,9 +19,11 @@ import { ifAllowedTutaLinks } from "../../../common/gui/base/GuiUtils.js"
 import { ExternalLink } from "../../../common/gui/base/ExternalLink.js"
 import { SourceCodeViewer } from "./SourceCodeViewer.js"
 import { getMailAddressDisplayText, hasValidEncryptionAuthForTeamOrSystemMail } from "../../../common/mailFunctionality/SharedMailUtils.js"
+import { getMailAddressDisplayTextWithDomainReplacement } from "./MailAddressDisplayUtils.js"
 import { mailLocator } from "../../mailLocator.js"
 import { ConversationEntry, ConversationEntryTypeRef, Mail, MailDetails, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { getDisplayedSender } from "../../../common/api/common/CommonMailUtils.js"
+import { getDisplayedSenderWithDomainReplacement } from "./MailAddressDisplayUtils.js"
 import { MailFacade } from "../../../common/api/worker/facades/lazy/MailFacade.js"
 
 import { ListFilter } from "../../../common/misc/ListModel.js"
@@ -485,7 +487,7 @@ export function getRecipientHeading(mail: Mail, preferNameOnly: boolean) {
 	let recipientCount = parseInt(mail.recipientCount)
 	if (recipientCount > 0) {
 		let recipient = neverNull(mail.firstRecipient)
-		return getMailAddressDisplayText(recipient.name, recipient.address, preferNameOnly) + (recipientCount > 1 ? ", ..." : "")
+		return getMailAddressDisplayTextWithDomainReplacement(recipient.name, recipient.address, preferNameOnly) + (recipientCount > 1 ? ", ..." : "")
 	} else {
 		return ""
 	}
@@ -495,8 +497,8 @@ export function getSenderOrRecipientHeading(mail: Mail, preferNameOnly: boolean)
 	if (isSystemNotification(mail)) {
 		return ""
 	} else if (mail.state === MailState.RECEIVED) {
-		const sender = getDisplayedSender(mail)
-		return getMailAddressDisplayText(sender.name, sender.address, preferNameOnly)
+		const sender = getDisplayedSenderWithDomainReplacement(mail)
+		return getMailAddressDisplayTextWithDomainReplacement(sender.name, sender.address, preferNameOnly)
 	} else {
 		return getRecipientHeading(mail, preferNameOnly)
 	}

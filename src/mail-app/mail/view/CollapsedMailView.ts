@@ -8,7 +8,7 @@ import { responsiveCardHPadding } from "../../../common/gui/cards.js"
 import { Keys, TabIndex } from "../../../common/api/common/TutanotaConstants.js"
 import { isKeyPressed } from "../../../common/misc/KeyManager.js"
 import { lang } from "../../../common/misc/LanguageViewModel.js"
-import { getMailAddressDisplayText } from "../../../common/mailFunctionality/SharedMailUtils.js"
+import { getMailAddressDisplayTextWithDomainReplacement } from "./MailAddressDisplayUtils.js"
 import { getConfidentialIcon, getFolderIconByType } from "./MailGuiUtils.js"
 
 export interface CollapsedMailViewAttrs {
@@ -57,7 +57,10 @@ export class CollapsedMailView implements Component<CollapsedMailViewAttrs> {
 
 	private renderSender(viewModel: MailViewerViewModel) {
 		const sender = viewModel.getDisplayedSender()
-		return m(this.getMailAddressDisplayClasses(viewModel), sender == null ? "" : getMailAddressDisplayText(sender.name, sender.address, true))
+		return m(
+			this.getMailAddressDisplayClasses(viewModel),
+			sender == null ? "" : getMailAddressDisplayTextWithDomainReplacement(sender.name, sender.address, true),
+		)
 	}
 
 	private getMailAddressDisplayClasses(viewModel: MailViewerViewModel): string {

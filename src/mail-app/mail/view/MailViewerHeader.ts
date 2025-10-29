@@ -26,6 +26,7 @@ import { isKeyPressed } from "../../../common/misc/KeyManager.js"
 import { AttachmentBubble, getAttachmentType } from "../../../common/gui/AttachmentBubble.js"
 import { responsiveCardHMargin, responsiveCardHPadding } from "../../../common/gui/cards.js"
 import { companyTeamLabel } from "../../../common/misc/ClientConstants.js"
+import { getMailAddressDisplayTextWithDomainReplacement, getDisplayedSenderWithDomainReplacement } from "./MailAddressDisplayUtils.js"
 import { getMailAddressDisplayText } from "../../../common/mailFunctionality/SharedMailUtils.js"
 import { MailAddressAndName } from "../../../common/api/common/CommonMailUtils.js"
 import { LabelsPopup } from "./LabelsPopup.js"
@@ -144,7 +145,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		const folderInfo = viewModel.getFolderInfo()
 		if (!folderInfo) return null
 
-		const displayedSender = viewModel.getDisplayedSender()
+		const displayedSender = getDisplayedSenderWithDomainReplacement(viewModel.mail)
 		return m(
 			".flex.mt-xs.click.col",
 			{
@@ -167,7 +168,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 				displayedSender == null
 					? null
 					: m(".small.flex.flex-wrap.items-start", [
-							m("span.text-break", this.renderAddress(attrs.viewModel, displayedSender.name, displayedSender.address)),
+							m("span.text-break", this.renderAddress(attrs.viewModel, displayedSender.name ?? "", displayedSender.address)),
 						]),
 				m(".flex", [
 					this.getRecipientEmailAddress(attrs),
@@ -208,7 +209,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	}
 
 	private renderAddress(mailViewerViewModel: MailViewerViewModel, name: string, address: string): Children {
-		const displayed = getMailAddressDisplayText(name, address, false)
+		const displayed = getMailAddressDisplayTextWithDomainReplacement(name, address, false)
 		return highlightTextInQueryAsChildren(displayed, mailViewerViewModel.getHighlightedStrings())
 	}
 
@@ -517,7 +518,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					: [
 							m(".small.b", lang.get("from_label")),
 							m(RecipientButton, {
-								label: getMailAddressDisplayText(displayedSender.name, displayedSender.address, false),
+								label: getMailAddressDisplayTextWithDomainReplacement(displayedSender.name, displayedSender.address, false),
 								click: createAsyncDropdown({
 									lazyButtons: () =>
 										createMailAddressContextButtons({
@@ -532,7 +533,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					? [
 							m(".small.b", lang.get("sender_label")),
 							m(RecipientButton, {
-								label: getMailAddressDisplayText("", envelopeSender, false),
+								label: getMailAddressDisplayTextWithDomainReplacement("", envelopeSender, false),
 								click: createAsyncDropdown({
 									lazyButtons: async () => {
 										const childElements = [
@@ -574,7 +575,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 									m(
 										".flex",
 										m(RecipientButton, {
-											label: getMailAddressDisplayText(recipient.name, recipient.address, false),
+											label: getMailAddressDisplayTextWithDomainReplacement(recipient.name, recipient.address, false),
 											click: createAsyncDropdown({
 												lazyButtons: () =>
 													createMailAddressContextButtons({
@@ -603,7 +604,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 								".flex-start.flex-wrap",
 								viewModel.getCcRecipients().map((recipient) =>
 									m(RecipientButton, {
-										label: getMailAddressDisplayText(recipient.name, recipient.address, false),
+										label: getMailAddressDisplayTextWithDomainReplacement(recipient.name, recipient.address, false),
 										click: createAsyncDropdown({
 											lazyButtons: () =>
 												createMailAddressContextButtons({
@@ -630,7 +631,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 								".flex-start.flex-wrap",
 								viewModel.getBccRecipients().map((recipient) =>
 									m(RecipientButton, {
-										label: getMailAddressDisplayText(recipient.name, recipient.address, false),
+										label: getMailAddressDisplayTextWithDomainReplacement(recipient.name, recipient.address, false),
 										click: createAsyncDropdown({
 											lazyButtons: () =>
 												createMailAddressContextButtons({
@@ -657,7 +658,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 								".flex-start.flex-wrap",
 								viewModel.getReplyTos().map((recipient) =>
 									m(RecipientButton, {
-										label: getMailAddressDisplayText(recipient.name, recipient.address, false),
+										label: getMailAddressDisplayTextWithDomainReplacement(recipient.name, recipient.address, false),
 										click: createAsyncDropdown({
 											lazyButtons: () =>
 												createMailAddressContextButtons({
