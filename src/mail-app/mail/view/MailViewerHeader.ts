@@ -323,7 +323,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		const confirmAction = async () => {
 			console.log(
 				`🔒 MOBYPHISH_LOG: Enable links confirm button clicked for sender="${
-					viewModel.getSender().address
+					getDisplayedSenderWithDomainReplacement(viewModel.mail).address
 				}", isTrusted=${isTrusted}, senderStatus="${senderStatus}"`,
 			)
 
@@ -345,7 +345,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		}
 
 		const reportAction = () => {
-			console.log(`🔒 MOBYPHISH_LOG: Report button clicked for sender="${viewModel.getSender().address}"`)
+			console.log(`🔒 MOBYPHISH_LOG: Report button clicked for sender="${getDisplayedSenderWithDomainReplacement(viewModel.mail).address}"`)
 
 			const modalInstance = new MobyPhishReportModal(viewModel)
 			const handle = modal.display(modalInstance)
@@ -374,7 +374,9 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					label: "mobyPhish_untrust",
 					icon: m(Icon, { icon: Icons.Trash }),
 					click: async () => {
-						console.log(`🔒 MOBYPHISH_LOG: Remove from whitelist button clicked for sender="${viewModel.getSender().address}"`)
+						console.log(
+							`🔒 MOBYPHISH_LOG: Remove from whitelist button clicked for sender="${getDisplayedSenderWithDomainReplacement(viewModel.mail).address}"`,
+						)
 						await viewModel.resetSenderStatusForCurrentEmail()
 					},
 				},

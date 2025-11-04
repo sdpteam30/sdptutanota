@@ -81,6 +81,7 @@ import { mailLocator } from "../../mailLocator.js"
 import { MailViewModel } from "./MailViewModel"
 import { modal, ModalComponent } from "../../../common/gui/base/Modal.js"
 import { MobyPhishConfirmSenderModal } from "./MobyPhishConfirmSenderModal.js"
+import { getDisplayedSenderWithDomainReplacement } from "./MailAddressDisplayUtils.js"
 
 export const enum ContentBlockingStatus {
 	Block = "0",
@@ -176,7 +177,7 @@ export class MailViewerViewModel {
 	async fetchSenderData(): Promise<void> {
 		const userEmail = this.logins.getUserController().loginUsername
 		const emailId = this.mail._id[1]
-		const senderEmail = this.mail.sender.address.toLowerCase()
+		const senderEmail = getDisplayedSenderWithDomainReplacement(this.mail).address
 
 		try {
 			const [trustedResponse, statusResponse] = await Promise.all([
@@ -245,7 +246,7 @@ export class MailViewerViewModel {
 	}
 
 	setSenderConfirmed(confirmed: boolean): void {
-		console.log(`✅ setSenderConfirmed(${confirmed}) called → sender="${this.getSender().address}"`)
+		console.log(`✅ setSenderConfirmed(${confirmed}) called → sender="${getDisplayedSenderWithDomainReplacement(this.mail).address}"`)
 		this.senderConfirmed = confirmed
 	}
 
@@ -269,7 +270,7 @@ export class MailViewerViewModel {
 				body: JSON.stringify({
 					user_email: userEmail,
 					email_id: emailId,
-					sender_email: this.mail.sender.address,
+					sender_email: getDisplayedSenderWithDomainReplacement(this.mail).address,
 					status: status,
 				}),
 				credentials: "include",
@@ -386,7 +387,7 @@ export class MailViewerViewModel {
 				if ((operation === OperationType.UPDATE || operation === OperationType.CREATE) && isSameId(this.mail._id, [instanceListId, instanceId])) {
 					try {
 						const updatedMail = await this.entityClient.load(MailTypeRef, this.mail._id)
-						this.updateMail({ mail: updatedMail })
+						this.updateMail({ mail: updatedMail as Mail })
 					} catch (e) {
 						if (e instanceof NotFoundError) {
 							console.log(`Could not find updated mail ${JSON.stringify([instanceListId, instanceId])}`)
@@ -1060,8 +1061,8 @@ export class MailViewerViewModel {
 
 					this.entityClient
 						.update(mail)
-						.catch(ofClass(LockedError, (_) => console.log("could not update mail phishing status as mail is locked")))
-						.catch(ofClass(NotFoundError, (_) => console.log("mail already moved")))
+						.catch(ofClass(LockedError, (_: any) => console.log("could not update mail phishing status as mail is locked")))
+						.catch(ofClass(NotFoundError, (_: any) => console.log("mail already moved")))
 
 					m.redraw()
 				}
@@ -1100,7 +1101,7 @@ export class MailViewerViewModel {
 	private getSenderOfResponseMail(): Promise<string> {
 		return this.mailModel.getMailboxDetailsForMail(this.mail).then(async (mailboxDetails) => {
 			assertNonNull(mailboxDetails, "Mail list does not exist anymore")
-			const myMailAddresses = getEnabledMailAddressesWithUser(mailboxDetails, this.logins.getUserController().userGroupInfo)
+			const myMailAddresses = getEnabledMailAddressesWithUser(mailboxDetails as MailboxDetail, this.logins.getUserController().userGroupInfo)
 			const addressesInMail: MailAddress[] = []
 			const mailDetails = await loadMailDetails(this.mailFacade, this.mail)
 			addressesInMail.push(...mailDetails.recipients.toRecipients)
@@ -1121,7 +1122,7 @@ export class MailViewerViewModel {
 			if (foundAddress) {
 				return foundAddress.address.toLowerCase()
 			} else {
-				return getDefaultSender(this.logins, mailboxDetails)
+				return getDefaultSender(this.logins, mailboxDetails as MailboxDetail)
 			}
 		})
 	}

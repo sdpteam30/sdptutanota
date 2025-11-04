@@ -8,6 +8,7 @@ import { Icons } from "../../../common/gui/base/icons/Icons.js"
 import { moveMails } from "./MailGuiUtils.js"
 import { assertSystemFolderOfType } from "../model/MailUtils.js"
 import { MoveMode } from "../model/MailModel.js"
+import { getDisplayedSenderWithDomainReplacement } from "./MailAddressDisplayUtils.js"
 
 // Inject CSS only once
 const styleId = "moby-phish-report-style"
@@ -241,8 +242,8 @@ export class MobyPhishReportModal implements ModalComponent {
 
 	/** Step 2: Confirmation for phishing report */
 	private renderSecondStep(): Children {
-		const senderEmail = this.viewModel.getSender().address
-		const senderName = this.viewModel.getSender().name
+		const senderEmail = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
+		const senderName = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).name
 		return [
 			m(
 				"div",
@@ -324,7 +325,7 @@ export class MobyPhishReportModal implements ModalComponent {
 		this.isLoading = true
 		m.redraw()
 
-		const senderEmail = this.viewModel.getSender().address
+		const senderEmail = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
 		const userEmail = this.viewModel.logins.getUserController().loginUsername
 
 		try {
@@ -384,8 +385,8 @@ export class MobyPhishReportModal implements ModalComponent {
 		this.isLoading = true
 		m.redraw()
 
-		const senderEmail = this.viewModel.getSender().address
-		const senderName = this.viewModel.getSender().name
+		const senderEmail = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
+		const senderName = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).name
 		const userEmail = this.viewModel.logins.getUserController().loginUsername
 
 		try {

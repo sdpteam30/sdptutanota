@@ -7,8 +7,8 @@ import type { Shortcut } from "../../../common/misc/KeyManager.js"
 import { MailViewerViewModel, TRUSTED_SENDERS_API_URL, TrustedSenderInfo } from "./MailViewerViewModel.js"
 import { moveMails } from "./MailGuiUtils.js"
 import { assertSystemFolderOfType } from "../model/MailUtils.js"
-import { MailViewModel } from "./MailViewModel"
-import { MailModel, MoveMode } from "../model/MailModel.js"
+import { MoveMode } from "../model/MailModel.js"
+import { getDisplayedSenderWithDomainReplacement } from "./MailAddressDisplayUtils.js"
 
 // Inject primary button style only once
 const styleId = "moby-phish-hover-style"
@@ -38,17 +38,26 @@ if (!document.getElementById(styleId)) {
         .mobyphish-btn:hover {
             opacity: 0.7;
         }
+    `
+	document.head.appendChild(style)
+}
 
-        .mobyphish-trusted-btn {
-            background: #28a745;
-            color: #ffffff;
-            border: none;
+// Inject outline button style only once
+const outlineStyleId = "moby-phish-outline-style"
+if (!document.getElementById(outlineStyleId)) {
+	const style = document.createElement("style")
+	style.id = outlineStyleId
+	style.textContent = `
+        .mobyphish-outline-btn {
+            background: transparent;
+            color: #850122;
+            border: 1px solid #850122;
             padding: 12px;
             border-radius: 8px;
             cursor: pointer;
             width: 100%;
             font-size: 14px;
-            font-weight: bold;
+            font-weight: normal;
             text-align: center;
             display: flex;
             align-items: center;
@@ -58,7 +67,7 @@ if (!document.getElementById(styleId)) {
             opacity: 1;
         }
 
-        .mobyphish-trusted-btn:hover {
+        .mobyphish-outline-btn:hover {
             opacity: 0.7;
         }
     `
@@ -68,9 +77,9 @@ if (!document.getElementById(styleId)) {
 export class MobyPhishConfirmSenderModal implements ModalComponent {
 	private viewModel: MailViewerViewModel
 	private modalHandle?: ModalComponent
-
+	private selectedSenderEmail: string = ""
 	private trustedSenderObjects: TrustedSenderInfo[]
-	private modalState: "initial" | "warning" | "technical" = "initial"
+	private modalState: "initial" | "warning" = "initial"
 	private isLoading: boolean = false
 	private errorMessage: string | null = null
 	private skippedInitialView: boolean = false
@@ -79,13 +88,10 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 		this.viewModel = viewModel
 		this.trustedSenderObjects = Array.isArray(trustedSenders) ? trustedSenders.filter((s) => s && typeof s.address === "string") : []
 
-		// Check if sender passes both authentication AND is in trust-list
-		const isSenderTrusted = this.viewModel.isSenderTrusted()
-
-		if (!isSenderTrusted) {
+		if (this.trustedSenderObjects.length === 0) {
 			this.modalState = "warning"
+			this.selectedSenderEmail = this.viewModel.getSender().address || ""
 			this.skippedInitialView = true
-			console.log(`🔒 MOBYPHISH_LOG: Sender failed authentication or not in trust-list, going directly to warning view`)
 		}
 	}
 
@@ -101,146 +107,119 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 		return m(".modal-overlay", { onclick: (e: MouseEvent) => this.backgroundClick(e) }, [
 			m(".modal-content", { onclick: (e: MouseEvent) => e.stopPropagation() }, [
 				m(".dialog.elevated-bg.border-radius", { style: this.getModalStyle() }, [
-					this.modalState === "initial"
-						? this.renderInitialView()
-						: this.modalState === "technical"
-							? this.renderTechnicalView()
-							: this.renderWarningView(),
+					this.modalState === "initial" ? this.renderInitialView() : this.renderWarningView(),
 				]),
 			]),
 		])
 	}
 
 	private renderInitialView(): Children {
-		// If we reach this view, sender is confirmed to be in trust-list
-		// Auto-enable links immediately
-		console.log(`🔒 MOBYPHISH_LOG: Sender confirmed in trust-list, enabling links automatically`)
-
-		// Auto-enable links and close modal
-		setTimeout(async () => {
-			try {
-				await this.viewModel.updateSenderStatus("confirmed")
-				modal.remove(this.modalHandle!)
-			} catch (err) {
-				console.error(`🔒 MOBYPHISH_LOG: Error auto-enabling links:`, err)
-			}
-		}, 100)
+		const isConfirmDisabled = !this.selectedSenderEmail.trim() || this.isLoading
 
 		return [
 			m(
 				"p",
 				{ style: { fontSize: "16px", fontWeight: "bold", textAlign: "center", marginBottom: "15px", color: "black" } },
-				"✓ Sender confirmed in trust-list",
+				"Who do you believe this email is from?",
 			),
-			m("p", { style: { fontSize: "14px", textAlign: "center", marginBottom: "15px", color: "#28a745" } }, "Links are being enabled automatically..."),
-		]
-	}
-
-	private renderTechnicalView(): Children {
-		return [
-			m(
-				"p",
-				{ style: { fontSize: "16px", fontWeight: "bold", textAlign: "center", marginBottom: "15px", color: "black" } },
-				"How MobyPhish Detects Email Fraud",
-			),
-
-			m(
-				"div",
-				{
-					style: {
-						fontSize: "13px",
-						textAlign: "left",
-						marginBottom: "20px",
-						color: "#333",
-						lineHeight: "1.5",
-						maxHeight: "350px",
-						overflowY: "auto",
-						padding: "15px",
-						backgroundColor: "#f8f9fa",
-						borderRadius: "8px",
-						border: "1px solid #e9ecef",
-					},
+			m("input[type=text]", {
+				placeholder: "Search or type sender email or name...",
+				value: this.selectedSenderEmail,
+				oninput: (e: Event) => {
+					this.selectedSenderEmail = (e.target as HTMLInputElement).value
+					this.errorMessage = null
 				},
-				[
-					m("p", { style: { marginBottom: "12px", fontWeight: "bold" } }, "MobyPhish detects phishing by verifying email server authentication:"),
-
-					m("p", { style: { marginBottom: "12px", fontWeight: "bold", color: "#dc3545" } }, "1. Email Server Authentication (Primary Protection)"),
-					m(
-						"p",
-						{ style: { marginBottom: "8px" } },
-						"• SPF (Sender Policy Framework): Verifies the sending server is authorized by the domain owner",
-					),
-					m(
-						"p",
-						{ style: { marginBottom: "8px" } },
-						"• DKIM (DomainKeys Identified Mail): Validates cryptographic signatures to prevent email tampering",
-					),
-					m("p", { style: { marginBottom: "8px" } }, "• DMARC: Ensures proper alignment between domain and authentication mechanisms"),
-					m("p", { style: { marginBottom: "12px" } }, "• Allows legitimate emails from the same domain (e.g., different corporate departments)"),
-
-					m(
-						"p",
-						{ style: { marginBottom: "8px", fontSize: "12px", color: "#666" } },
-						"Learn more: ",
-						m("a", { href: "https://tools.ietf.org/html/rfc7208", target: "_blank", style: { color: "#007acc" } }, "SPF RFC"),
-						" | ",
-						m("a", { href: "https://tools.ietf.org/html/rfc6376", target: "_blank", style: { color: "#007acc" } }, "DKIM RFC"),
-						" | ",
-						m("a", { href: "https://tools.ietf.org/html/rfc7489", target: "_blank", style: { color: "#007acc" } }, "DMARC RFC"),
-					),
-
-					m("p", { style: { marginBottom: "12px", fontWeight: "bold", color: "#dc3545" } }, "2. Trust-List Verification"),
-					m("p", { style: { marginBottom: "8px" } }, "• Your personal trust-list contains domains you've previously verified"),
-					m("p", { style: { marginBottom: "12px" } }, "• Combines with server authentication for additional security"),
-
-					m("p", { style: { marginBottom: "12px", fontWeight: "bold", color: "#dc3545" } }, "3. Additional Analysis"),
-					m("p", { style: { marginBottom: "8px" } }, "• Domain reputation and registration analysis"),
-					m("p", { style: { marginBottom: "8px" } }, "• Content analysis for common phishing patterns"),
-					m("p", { style: { marginBottom: "12px" } }, "• Link destination verification"),
-
-					m(
-						"p",
+				list: "trusted-senders-list",
+				style: {
+					padding: "10px",
+					width: "100%",
+					boxSizing: "border-box",
+					borderRadius: "8px",
+					border: "1px solid #ccc",
+					color: "black",
+				},
+				required: true,
+			}),
+			m(
+				"datalist#trusted-senders-list",
+				this.trustedSenderObjects.map((sender) => m("option", { value: sender.address }, this.formatSenderDisplay(sender.name, sender.address))),
+			),
+			this.errorMessage
+				? m(
+						".error-message",
 						{
-							style: {
-								marginTop: "12px",
-								fontStyle: "italic",
-								backgroundColor: "#fff3cd",
-								padding: "8px",
-								borderRadius: "4px",
-								border: "1px solid #ffeaa7",
-							},
+							style: { color: "red", fontSize: "12px", marginTop: "5px" },
 						},
-						"⚠️ Important: Email addresses are easily spoofed. MobyPhish focuses on server authentication rather than just the displayed sender address.",
-					),
+						this.errorMessage,
+					)
+				: null,
 
-					m(
-						"p",
-						{ style: { marginTop: "8px", fontStyle: "italic", backgroundColor: "#e7f3ff", padding: "8px", borderRadius: "4px" } },
-						"🛡️ Protection: Links remain disabled until proper server authentication is verified, regardless of the displayed sender address.",
-					),
-				],
+			m(
+				"button",
+				{
+					onclick: async () => {
+						if (isConfirmDisabled) return
+						console.log(
+							`🔒 MOBYPHISH_LOG: Confirm button clicked in initial modal, selectedSender="${this.selectedSenderEmail}", actualSender="${
+								getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
+							}"`,
+						)
+
+						this.isLoading = true
+						this.errorMessage = null
+						m.redraw()
+
+						const enteredEmail = this.selectedSenderEmail.trim().toLowerCase()
+						const actualEmail = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
+
+						if (enteredEmail === actualEmail) {
+							try {
+								await this.viewModel.updateSenderStatus("confirmed")
+								modal.remove(this.modalHandle!)
+							} catch (err) {
+								console.error(err)
+								this.errorMessage = "Failed to update status. Please try again."
+								this.isLoading = false
+								m.redraw()
+							}
+						} else {
+							console.log(`🔒 MOBYPHISH_LOG: Email mismatch detected, showing warning view`)
+							this.modalState = "warning"
+							this.isLoading = false
+							m.redraw()
+						}
+					},
+					disabled: isConfirmDisabled,
+					style: { ...this.getCancelButtonStyle(), color: "black" },
+				},
+				"Confirm",
 			),
 
 			m(
 				"button",
 				{
-					onclick: () => {
-						this.modalState = "warning"
-						m.redraw()
-					},
+					onclick: () => modal.remove(this.modalHandle!),
+					disabled: this.isLoading,
 					style: { ...this.getCancelButtonStyle(), color: "black" },
 				},
-				"Back",
+				"Cancel",
 			),
 		]
 	}
 
 	private renderWarningView(): Children {
 		const actual = this.viewModel.getDisplayedSender()
-		const address = this.viewModel.getSender().address
+		const address = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
 		const actualDisplay = this.formatSenderDisplay(actual?.name, address)
+		const canAddSender = !!address
 
-		//const displaySender = actualDisplay (used previously to display the sender name & email)
+		let warningText = this.skippedInitialView ? "This sender is not on your trusted list:" : "You indicated this email might be from:"
+		const displaySender = this.skippedInitialView
+			? actualDisplay
+			: this.formatSenderDisplay(
+					this.trustedSenderObjects.find((s) => s.address.toLowerCase() === this.selectedSenderEmail.trim().toLowerCase())?.name,
+					this.selectedSenderEmail,
+				)
 
 		return [
 			m(
@@ -252,69 +231,38 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 					icon: Icons.Warning,
 					style: { fill: "#FFA500", marginRight: "8px", verticalAlign: "middle" },
 				}),
-				"MobyPhish Warning: This appears to be phishing!",
+				"Potential Phishing Attempt",
 			),
 
 			m(
 				"p",
 				{
-					style: { fontSize: "14px", textAlign: "center", marginBottom: "10px", color: "black" },
-				},
-				["This sender of this email is not in your trust-list"],
-			),
-
-			// Display specific authentication failure reason if available
-			(() => {
-				const failureReason = this.viewModel.getAuthenticationFailureReason()
-				if (failureReason) {
-					return m(
-						"div",
-						{
-							style: {
-								fontSize: "13px",
-								textAlign: "left",
-								marginBottom: "15px",
-								padding: "12px",
-								backgroundColor: "#fff3cd",
-								border: "1px solid #ffeaa7",
-								borderRadius: "6px",
-								color: "#856404",
-							},
-						},
-						[
-							m("p", { style: { fontWeight: "bold", marginBottom: "6px", color: "#dc3545" } }, "🚫 Security Verification Failed:"),
-							m("p", { style: { margin: "0", lineHeight: "1.4" } }, failureReason),
-						],
-					)
-				}
-				return null
-			})(),
-
-			m(
-				"p",
-				{
-					style: { fontSize: "12px", textAlign: "center", marginBottom: "15px", color: "#666" },
+					style: { fontSize: "14px", textAlign: "center", marginBottom: "15px", color: "black" },
 				},
 				[
-					m(
-						"a",
-						{
-							style: {
-								color: "#007acc",
-								textDecoration: "underline",
-								cursor: "pointer",
-								fontSize: "12px",
-							},
-							onclick: (e: MouseEvent) => {
-								e.preventDefault()
-								this.modalState = "technical"
-								m.redraw()
-							},
-						},
-						"How does MobyPhish detect email fraud?",
-					),
+					warningText,
+					m("br"),
+					m("strong", displaySender),
+					!this.skippedInitialView ? m("br") : null,
+					!this.skippedInitialView ? `However, the actual sender is different or not already in your trusted senders list.` : null,
 				],
 			),
+
+			!this.skippedInitialView
+				? m(
+						"p",
+						{
+							style: {
+								fontSize: "12px",
+								textAlign: "center",
+								marginBottom: "20px",
+								fontStyle: "italic",
+								color: "black",
+							},
+						},
+						`(Actual sender: ${actualDisplay})`,
+					)
+				: null,
 
 			this.errorMessage
 				? m(
@@ -326,80 +274,16 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 					)
 				: null,
 
-			// Report Impersonation (Primary - Red)
-			// m(
-			// 	"button.mobyphish-btn",
-			// 	{
-			// 		onclick: async () => {
-			// 			console.log(`🔒 MOBYPHISH_LOG: "Report Impersonation" button clicked for sender="${this.viewModel.getSender().address}"`)
-
-			// 			const senderEmail = this.viewModel.getSender().address
-			// 			const userEmail = this.viewModel.logins.getUserController().loginUsername
-
-			// 			try {
-			// 				// Update MobyPhish API
-			// 				const response = await fetch(`${TRUSTED_SENDERS_API_URL}/update-email-status`, {
-			// 					method: "POST",
-			// 					headers: { "Content-Type": "application/json" },
-			// 					body: JSON.stringify({
-			// 						user_email: userEmail,
-			// 						email_id: this.viewModel.mail._id[1],
-			// 						sender_email: senderEmail,
-			// 						status: "reported_impersonation",
-			// 						interaction_type: "interacted",
-			// 					}),
-			// 				})
-
-			// 				if (response.ok) {
-			// 					console.log(`🔒 MOBYPHISH_LOG: Successfully updated MobyPhish API for sender="${senderEmail}"`)
-
-			// 					// Move email to spam folder (without reporting to Tutanota servers)
-			// 					try {
-			// 						const mailboxDetail = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
-			// 						if (mailboxDetail && mailboxDetail.mailbox.folders) {
-			// 							const folders = await this.viewModel.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.folders._id)
-			// 							const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
-
-			// 							await moveMails({
-			// 								mailboxModel: this.viewModel.mailboxModel,
-			// 								mailModel: this.viewModel.mailModel,
-			// 								mails: [this.viewModel.mail],
-			// 								targetMailFolder: spamFolder,
-			// 								isReportable: false,
-			// 							})
-			// 							console.log(`🔒 MOBYPHISH_LOG: Successfully moved email to spam folder for sender="${senderEmail}"`)
-			// 						}
-			// 					} catch (moveError) {
-			// 						console.error(`🔒 MOBYPHISH_LOG: Failed to move email to spam folder for sender="${senderEmail}":`, moveError)
-			// 					}
-
-			// 					await this.viewModel.fetchSenderData()
-			// 					if (this.modalHandle) {
-			// 						modal.remove(this.modalHandle)
-			// 					} else {
-			// 						console.warn("No modal handle set")
-			// 					}
-			// 					m.redraw()
-			// 				} else {
-			// 					console.error("🔒 MOBYPHISH_LOG: Failed to update MobyPhish API")
-			// 				}
-			// 			} catch (error) {
-			// 				console.error("🔒 MOBYPHISH_LOG: Error updating MobyPhish API:", error)
-			// 			}
-			// 		},
-			// 		disabled: this.isLoading,
-			// 	},
-			// 	"Report Impersonation",
-			// ), removed 7/31 to reduce scope-creep in the view links button
-
-			// Report Phishing (Secondary - Orange)
+			// Report as Phishing (Primary)
 			m(
-				"button",
+				"button.mobyphish-btn",
 				{
 					onclick: async () => {
-						console.log(`🔒 MOBYPHISH_LOG: "Report Phishing" button clicked for sender="${this.viewModel.getSender().address}"`)
+						console.log(
+							`🔒 MOBYPHISH_LOG: "Report as Phishing" button clicked for sender="${getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address}"`,
+						)
 
-						const senderEmail = this.viewModel.getSender().address
+						const senderEmail = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
 						const userEmail = this.viewModel.logins.getUserController().loginUsername
 
 						try {
@@ -456,26 +340,49 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 						}
 					},
 					disabled: this.isLoading,
-					style: {
-						background: "#DC3545",
-						color: "#ffffff",
-						border: "none",
-						padding: "12px",
-						borderRadius: "8px",
-						cursor: "pointer",
-						width: "100%",
-						fontSize: "14px",
-						fontWeight: "bold",
-						textAlign: "center",
-						display: "flex",
-						alignItems: "center",
-						justifyContent: "center",
-						transition: "opacity 0.2s ease",
-						marginTop: "10px",
-						opacity: this.isLoading ? 0.5 : 1,
-					},
 				},
-				"Report Phishing",
+				"Report as Phishing",
+			),
+
+			// Add to Trusted List (Outlined, NOT bold)
+			m(
+				"button.mobyphish-outline-btn",
+				{
+					onclick: async () => {
+						console.log(
+							`🔒 MOBYPHISH_LOG: "Add to Trusted List" button clicked for sender="${getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address}"`,
+						)
+
+						if (this.isLoading || !canAddSender) return
+						this.isLoading = true
+						this.errorMessage = null
+						m.redraw()
+
+						try {
+							const response = await fetch(`${TRUSTED_SENDERS_API_URL}/add-trusted`, {
+								method: "POST",
+								headers: { "Content-Type": "application/json" },
+								body: JSON.stringify({
+									user_email: this.viewModel.logins.getUserController().loginUsername,
+									trusted_email: address,
+									trusted_name: actual?.name || "",
+								}),
+							})
+							if (!response.ok) throw new Error("Failed to add sender.")
+
+							console.log(`🔒 MOBYPHISH_LOG: Successfully added sender="${address}" to trusted list`)
+							await this.viewModel.updateSenderStatus("confirmed")
+							modal.remove(this.modalHandle!)
+						} catch (err: any) {
+							console.error(`🔒 MOBYPHISH_LOG: Error adding sender to trusted list:`, err)
+							this.errorMessage = err.message || "Error occurred while adding."
+							this.isLoading = false
+							m.redraw()
+						}
+					},
+					disabled: this.isLoading || !canAddSender,
+				},
+				`Add ${getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address} to Trusted List`,
 			),
 
 			// Cancel
