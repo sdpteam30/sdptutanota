@@ -63,18 +63,7 @@ export class MobyPhishAlreadyTrustedModal implements ModalComponent {
 								color: "black",
 							},
 						},
-						[
-							"This sender is already on your trusted list.",
-							m("br"),
-							"Please use the ",
-							m("strong", { style: { color: "black" } }, "Confirm"),
-							" button (",
-							m(Icon, {
-								icon: Icons.Checkmark,
-								style: { fill: "green", verticalAlign: "middle", height: "1em" },
-							}),
-							") in the banner to proceed with this email.",
-						],
+						["Sender confirmed as known", m("br"), m("br"), "This sender's name is already in your known senders list and has been confirmed."],
 					),
 
 					// OK Button

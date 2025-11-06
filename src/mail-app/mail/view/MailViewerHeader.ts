@@ -317,23 +317,103 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		// MobyPhish now handles ALL authentication failures - no need to suppress based on Tutanota's native warnings
 
 		const senderStatus = viewModel.senderStatus
-		const isTrusted = viewModel.isSenderTrusted()
+		// Use name-based checking instead of email-based
+		const isTrusted = viewModel.isSenderNameTrusted()
 
 		// --- Button Actions ---
 		const confirmAction = async () => {
+			const displayedSender = getDisplayedSenderWithDomainReplacement(viewModel.mail)
+			const senderName = displayedSender?.name?.trim()
+
 			console.log(
-				`🔒 MOBYPHISH_LOG: Enable links confirm button clicked for sender="${
-					getDisplayedSenderWithDomainReplacement(viewModel.mail).address
-				}", isTrusted=${isTrusted}, senderStatus="${senderStatus}"`,
+				`🔒 MOBYPHISH_LOG: Known sender button clicked for sender="${displayedSender?.address}", name="${senderName}", isNameTrusted=${viewModel.isSenderNameTrusted()}, senderStatus="${senderStatus}"`,
 			)
 
-			if (isTrusted && !(senderStatus === "confirmed" || senderStatus === "trusted_once")) {
+			if (!senderName) {
+				// If no sender name, fall back to email-based checking
+				if (isTrusted && !(senderStatus === "confirmed" || senderStatus === "trusted_once")) {
+					// Sender is already in trusted database, just confirm
+					await viewModel.updateSenderStatus("confirmed")
+				} else if (!isTrusted) {
+					// Sender is not in trusted database - show modal to add them
+					const modalInstance = new MobyPhishConfirmSenderModal(viewModel, viewModel.trustedSenders())
+					modal.display(modalInstance)
+					modalInstance.setModalHandle(modalInstance)
+				}
+				return
+			}
+
+			// Check if sender name is in trusted list
+			const isNameTrusted = viewModel.isSenderNameTrusted()
+			const isConfirmed = senderStatus === "confirmed" || senderStatus === "trusted_once"
+
+			if (isNameTrusted && isConfirmed) {
+				// Sender name is trusted and already confirmed - show already trusted modal
+				const modalInstance = new MobyPhishAlreadyTrustedModal(viewModel)
+				modal.display(modalInstance)
+				modalInstance.setModalHandle(modalInstance)
+			} else if (isNameTrusted && !isConfirmed) {
+				// Sender name is trusted but not yet confirmed - ensure sender is in trusted database and confirm it
+				const senderEmail = displayedSender?.address
+
+				// Check if sender email is already in trusted senders database
+				const isSenderInTrustedList = viewModel.trustedSenders().some((sender) => sender.address.toLowerCase() === senderEmail?.toLowerCase())
+
+				// If not in trusted list, add to trusted senders database first
+				if (!isSenderInTrustedList && senderEmail) {
+					try {
+						const addResponse = await fetch(`${TRUSTED_SENDERS_API_URL}/add-trusted`, {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({
+								user_email: viewModel.logins.getUserController().loginUsername,
+								trusted_email: senderEmail,
+								trusted_name: senderName || "",
+							}),
+						})
+						if (!addResponse.ok) {
+							console.error("🔒 MOBYPHISH_LOG: Failed to add sender to trusted senders database")
+						} else {
+							console.log(`🔒 MOBYPHISH_LOG: Added sender="${senderEmail}" to trusted senders database`)
+							// Refresh trusted senders list
+							await viewModel.fetchSenderData()
+						}
+					} catch (error) {
+						console.error("🔒 MOBYPHISH_LOG: Error adding sender to trusted senders database:", error)
+					}
+				}
+
+				// Now update the email status to confirmed
 				await viewModel.updateSenderStatus("confirmed")
-			} else if (!isTrusted) {
+			} else {
+				// Sender name is not in trusted list - show confirm sender modal
 				const modalInstance = new MobyPhishConfirmSenderModal(viewModel, viewModel.trustedSenders())
 				modal.display(modalInstance)
 				modalInstance.setModalHandle(modalInstance)
 			}
+		}
+
+		// Show Blocked Content button action
+		const showBlockedContentAction = async () => {
+			console.log(`🔒 MOBYPHISH_LOG: Show Blocked Content button clicked`)
+
+			// Register as "trusted_once" in the database first
+			await viewModel.updateSenderStatus("trusted_once")
+
+			// Always unblock content regardless of sender status
+			// Force re-sanitization by temporarily changing status if needed
+			// This ensures the sanitization always happens, even if status was already Show
+			const currentStatus = viewModel.getContentBlockingStatus()
+			if (currentStatus === ContentBlockingStatus.Show || currentStatus === ContentBlockingStatus.AlwaysShow) {
+				// If already Show/AlwaysShow, temporarily set to Block to force re-sanitization
+				await viewModel.setContentBlockingStatus(ContentBlockingStatus.Block)
+			}
+			// Now set to Show - this will re-sanitize with blockExternalContent = false
+			// This unblocks all images and links regardless of sender authentication status
+			await viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
+
+			// Force a redraw to ensure the mail body re-renders with unblocked content
+			m.redraw()
 		}
 
 		const showInfoModal = () => {
@@ -381,7 +461,9 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					},
 				},
 			]
-		} else if (senderStatus === "confirmed" || senderStatus === "added_to_trusted" || (isTrusted && senderStatus === "")) {
+		} else if (senderStatus === "confirmed" || senderStatus === "added_to_trusted") {
+			// Only show confirmed message if status is explicitly "confirmed" or "added_to_trusted"
+			// Don't auto-confirm based on just being in trusted list without explicit status
 			messageKey = "mobyPhish_sender_confirmed"
 			bannerType = BannerType.Info
 			bannerIcon = Icons.CircleCheckmark
@@ -416,29 +498,55 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			}
 
 			// Default case - show different buttons based on screen size
+			// Check if content is blocked to show "Show Blocked Content" button
+			const isContentBlocked = viewModel.getContentBlockingStatus() === ContentBlockingStatus.Block
+
+			// Show Blocked Content button (if content is blocked)
+			const showBlockedContentButton: BannerButtonAttrs | null = isContentBlocked
+				? {
+						label: "showBlockedContent_action",
+						icon: m(Icon, {
+							icon: Icons.Picture,
+							style: { marginRight: px(size.hpad_small) },
+						}),
+						click: showBlockedContentAction,
+					}
+				: null
+
 			if (styles.isSingleColumnLayout()) {
 				// Mobile: Show only more button with dropdown containing all actions
 				const moreButton: BannerButtonAttrs = {
 					label: "more_label",
 					click: createAsyncDropdown({
 						width: 220,
-						lazyButtons: async () => [
-							{
-								label: "mobyPhish_confirm" as const,
-								icon: Icons.Checkmark,
-								click: confirmAction,
-							},
-							{
-								label: "reportPhishing_action",
-								icon: Icons.Warning,
-								click: reportAction,
-							},
-							{
-								label: "mobyPhish_learn_more" as const,
-								icon: Icons.QuestionMark,
-								click: showInfoModal,
-							},
-						],
+						lazyButtons: async () => {
+							const dropdownButtons: Array<DropdownButtonAttrs> = []
+							if (showBlockedContentButton) {
+								dropdownButtons.push({
+									label: "showBlockedContent_action",
+									icon: Icons.Picture,
+									click: showBlockedContentAction,
+								})
+							}
+							dropdownButtons.push(
+								{
+									label: "mobyPhish_confirm",
+									icon: Icons.Checkmark,
+									click: confirmAction,
+								},
+								{
+									label: "reportPhishing_action",
+									icon: Icons.Warning,
+									click: reportAction,
+								},
+								{
+									label: "mobyPhish_learn_more",
+									icon: Icons.QuestionMark,
+									click: showInfoModal,
+								},
+							)
+							return dropdownButtons
+						},
 					}),
 				}
 				buttons = [moreButton]
@@ -456,7 +564,8 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					click: reportAction,
 				}
 
-				buttons = [confirmButton, reportButton, learnMoreButton]
+				// Add buttons in order: Show Blocked Content (if applicable), Known Sender, Report Phishing, Learn More
+				buttons = [showBlockedContentButton, confirmButton, reportButton, learnMoreButton].filter(isNotNull)
 			}
 		}
 

@@ -204,14 +204,24 @@ export class MailViewerViewModel {
 			this.trustedSenders(trustedSendersList)
 			console.log("updated trustedSenders (objects):", this.trustedSenders())
 
-			// Check if sender is still in trusted list
-			const isTrusted = trustedSendersList.some((sender) => sender.address.toLowerCase() === senderEmail)
+			// Check if sender is still in trusted list (by email)
+			const isTrustedByEmail = trustedSendersList.some((sender) => sender.address.toLowerCase() === senderEmail)
 
-			let currentStatus = statusData.status
+			// Check if sender name is still in trusted list
+			const displayedSender = getDisplayedSenderWithDomainReplacement(this.mail)
+			const senderName = displayedSender?.name?.trim()
+			const isTrustedByName = senderName
+				? trustedSendersList.some((sender) => {
+						const trustedName = sender.name?.trim()
+						return trustedName && trustedName.toLowerCase() === senderName.toLowerCase()
+					})
+				: false
 
-			// FIX: If previously marked as trusted, but now not in the trusted list, override status
-			if (currentStatus === "added_to_trusted" && !isTrusted) {
-				console.log("Sender was removed from trusted list – overriding status.")
+			let currentStatus = statusData.status || ""
+
+			// FIX: If previously marked as trusted/confirmed, but now not in the trusted list, override status
+			if ((currentStatus === "added_to_trusted" || currentStatus === "confirmed") && !isTrustedByEmail && !isTrustedByName) {
+				console.log("🔒 MOBYPHISH_LOG: Sender was removed from trusted list – overriding status from '" + currentStatus + "' to empty.")
 				currentStatus = "" // Reset it so it behaves like a new/unconfirmed sender
 			}
 
@@ -241,8 +251,26 @@ export class MailViewerViewModel {
 		}
 
 		// Second check: Must be in trust-list
-		const senderEmail = this.getSender().address
+		const senderEmail = getDisplayedSenderWithDomainReplacement(this.mail).address
 		return this.trustedSenders().some((sender) => sender.address.toLowerCase() === senderEmail)
+	}
+
+	/**
+	 * Check if the sender's name (not email) is in the trusted senders list
+	 */
+	isSenderNameTrusted(): boolean {
+		const displayedSender = getDisplayedSenderWithDomainReplacement(this.mail)
+		const senderName = displayedSender?.name?.trim()
+
+		if (!senderName) {
+			return false
+		}
+
+		// Check if any trusted sender has the same name
+		return this.trustedSenders().some((sender) => {
+			const trustedName = sender.name?.trim()
+			return trustedName && trustedName.toLowerCase() === senderName.toLowerCase()
+		})
 	}
 
 	setSenderConfirmed(confirmed: boolean): void {
@@ -688,7 +716,7 @@ export class MailViewerViewModel {
 		}
 		this.authFailureLogged = true
 
-		const senderEmail = this.getSender().address
+		const senderEmail = getDisplayedSenderWithDomainReplacement(this.mail).address
 		const userEmail = this.logins.getUserController().loginUsername
 
 		try {

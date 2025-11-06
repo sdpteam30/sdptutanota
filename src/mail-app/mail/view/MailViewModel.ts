@@ -264,7 +264,7 @@ export class MailViewModel {
 
 		let mail: Mail | null
 		try {
-			mail = await this.entityClient.load(MailTypeRef, [listId, mailId], { cacheMode: CacheMode.WriteOnly })
+			mail = await this.entityClient.load<Mail>(MailTypeRef, [listId, mailId], { cacheMode: CacheMode.WriteOnly })
 		} catch (e) {
 			if (isOfflineError(e)) {
 				return
