@@ -852,19 +852,40 @@ export class MailViewerViewModel {
 		}
 
 		try {
-			// Skip Tutanota API reporting for phishing to avoid misflagging during testing
-			if (reportType !== MailReportType.PHISHING) {
-				await this.mailModel.reportMails(reportType, [this.mail])
-			}
-
+			// NO Tutanota API calls for any report type
+			// Only use our custom backend for phishing reports
 			if (reportType === MailReportType.PHISHING) {
-				this.setPhishingStatus(MailPhishingStatus.SUSPICIOUS)
-				await this.entityClient.update(this.mail)
-				console.log(
-					`🔒 MOBYPHISH_LOG: Successfully reported phishing via three dots menu (Tutanota API skipped) for sender="${
-						this.getSender().address
-					}", mailId="${this.mail._id[1]}", userEmail="${this.logins.getUserController().loginUsername}", interactionType="interacted"`,
-				)
+				// Update backend database with reported_phishing status
+				const senderEmail = this.getSender().address
+				const userEmail = this.logins.getUserController().loginUsername
+
+				try {
+					const response = await fetch(`${TRUSTED_SENDERS_API_URL}/update-email-status`, {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							user_email: userEmail,
+							email_id: this.mail._id[1],
+							sender_email: senderEmail,
+							status: "reported_phishing",
+							interaction_type: "interacted",
+						}),
+					})
+
+					if (response.ok) {
+						console.log(
+							`🔒 MOBYPHISH_LOG: Successfully reported phishing to backend database via three dots menu for sender="${senderEmail}", mailId="${this.mail._id[1]}", userEmail="${userEmail}"`,
+						)
+					} else {
+						console.error(
+							`🔒 MOBYPHISH_LOG: Failed to report phishing to backend database via three dots menu for sender="${senderEmail}", status=${response.status}`,
+						)
+					}
+				} catch (fetchError) {
+					console.error(`🔒 MOBYPHISH_LOG: Error calling backend API to report phishing for sender="${senderEmail}":`, fetchError)
+				}
+
+				// Removed: Tutanota API calls (setPhishingStatus, entityClient.update)
 			}
 			const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(this.mail)
 			if (mailboxDetail == null || mailboxDetail.mailbox.folders == null) {
@@ -899,27 +920,6 @@ export class MailViewerViewModel {
 			}
 		}
 	}
-
-	canExport(): boolean {
-		return !this.isAnnouncement() && !this.logins.isEnabled(FeatureType.DisableMailExport)
-	}
-
-	canPrint(): boolean {
-		return !this.logins.isEnabled(FeatureType.DisableMailExport)
-	}
-
-	canReport(): boolean {
-		return this.getPhishingStatus() === MailPhishingStatus.UNKNOWN && !this.isTutanotaTeamMail() && this.logins.isInternalUserLoggedIn()
-	}
-
-	canShowHeaders(): boolean {
-		return this.logins.isInternalUserLoggedIn()
-	}
-
-	canPersistBlockingStatus(): boolean {
-		return this.searchModel.indexingSupported
-	}
-
 	async exportMail(): Promise<void> {
 		await exportMails([this.mail], this.mailFacade, this.entityClient, this.fileController, this.cryptoFacade)
 	}
