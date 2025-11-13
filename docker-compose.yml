@@ -2,10 +2,14 @@ version: '3.8'
 
 services:
   # All-in-one Tutanota service (frontend + backend + CORS proxy)
+  # Use BUILD_BRANCH environment variable to switch branches (default: sean-dev1)
+  # Example: BUILD_BRANCH=no-antiphishing-header docker-compose up --build
   tutanota:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BUILD_BRANCH: ${BUILD_BRANCH:-sean-dev1}
     ports:
       - "9000:9000"  # Frontend
       - "3000:3000"  # Backend (trusted-senders-backend)

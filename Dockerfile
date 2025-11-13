@@ -1,6 +1,9 @@
 # Multi-stage Dockerfile for Tutanota
 FROM node:22-bullseye AS builder
 
+# Build argument to specify which branch to use (default: sean-dev1)
+ARG BUILD_BRANCH=sean-dev1
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
@@ -66,13 +69,13 @@ RUN if [ -d ".git" ]; then \
         git submodule init && \
         git submodule sync --recursive && \
         git submodule update && \
-        echo "Step 11: Switch to sean-dev1 branch..." && \
-        if git show-ref --verify --quiet refs/heads/sean-dev1; then \
-            git switch sean-dev1; \
-        elif git show-ref --verify --quiet refs/remotes/origin/sean-dev1; then \
-            git switch -c sean-dev1 origin/sean-dev1; \
+        echo "Step 11: Switch to ${BUILD_BRANCH} branch..." && \
+        if git show-ref --verify --quiet refs/heads/${BUILD_BRANCH}; then \
+            git switch ${BUILD_BRANCH}; \
+        elif git show-ref --verify --quiet refs/remotes/origin/${BUILD_BRANCH}; then \
+            git switch -c ${BUILD_BRANCH} origin/${BUILD_BRANCH}; \
         else \
-            git switch -c sean-dev1; \
+            git switch -c ${BUILD_BRANCH}; \
         fi && \
         echo "Final branch: $(git branch --show-current)" && \
         echo "=== Build setup complete ==="; \
