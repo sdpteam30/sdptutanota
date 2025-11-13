@@ -920,6 +920,27 @@ export class MailViewerViewModel {
 			}
 		}
 	}
+
+	canExport(): boolean {
+		return !this.isAnnouncement() && !this.logins.isEnabled(FeatureType.DisableMailExport)
+	}
+
+	canPrint(): boolean {
+		return !this.logins.isEnabled(FeatureType.DisableMailExport)
+	}
+
+	canReport(): boolean {
+		return this.getPhishingStatus() === MailPhishingStatus.UNKNOWN && !this.isTutanotaTeamMail() && this.logins.isInternalUserLoggedIn()
+	}
+
+	canShowHeaders(): boolean {
+		return this.logins.isInternalUserLoggedIn()
+	}
+
+	canPersistBlockingStatus(): boolean {
+		return this.searchModel.indexingSupported
+	}
+
 	async exportMail(): Promise<void> {
 		await exportMails([this.mail], this.mailFacade, this.entityClient, this.fileController, this.cryptoFacade)
 	}
@@ -1039,23 +1060,10 @@ export class MailViewerViewModel {
 		const isAllowedAndAuthenticatedExternalSender =
 			externalImageRule === ExternalImageRule.Allow && this.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED)
 
-		// Default to blocking content for non-confirmed senders, regardless of authentication status or tutamail address
-		// Users can still manually unblock content via the "Show Blocked Content" button
-		// If sender status is already trusted_once or confirmed, show images
-		if (this.senderStatus === "trusted_once" || this.senderStatus === "confirmed") {
-			console.log(`🔒 MOBYPHISH_LOG: Sender is trusted (${this.senderStatus}) — pre-setting to AlwaysShow BEFORE sanitizing`)
-			this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
-		} else if (!this.isSenderTrusted() && !this.isSenderConfirmed()) {
-			// Non-trusted, non-confirmed senders: block by default (user can unblock manually)
-			console.log("Sender not trusted or confirmed — pre-setting to Block BEFORE sanitizing (blocking ALL content including images by default)")
-			this.contentBlockingStatus = ContentBlockingStatus.Block
-		} else {
-			// For senders that are trusted but not yet confirmed, block by default
-			// This ensures ALL content (including images) is blocked by default until explicitly confirmed
-			// User can still manually unblock via "Show Blocked Content" button
-			console.log("Sender is trusted but not confirmed — pre-setting to Block BEFORE sanitizing (blocking ALL content including images by default)")
-			this.contentBlockingStatus = ContentBlockingStatus.Block
-		}
+		// No content blocking in no-antiphishing-header branch
+		// Always show images for all senders
+		console.log(`🔒 MOBYPHISH_LOG: No-antiphishing-header branch — always showing images for all senders`)
+		this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
 
 		// Wait to render heavy mail content
 		await delayBodyRenderingUntil
