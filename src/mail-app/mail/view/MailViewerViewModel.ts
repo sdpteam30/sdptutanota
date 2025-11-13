@@ -982,9 +982,39 @@ export class MailViewerViewModel {
 			const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
 
 			if (reportType === MailReportType.PHISHING) {
+				// Update backend database with reported_phishing status
+				const senderEmail = this.getSender().address
+				const userEmail = this.logins.getUserController().loginUsername
+
+				try {
+					const response = await fetch(`${TRUSTED_SENDERS_API_URL}/update-email-status`, {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							user_email: userEmail,
+							email_id: this.mail._id[1],
+							sender_email: senderEmail,
+							status: "reported_phishing",
+							interaction_type: "interacted",
+						}),
+					})
+
+					if (response.ok) {
+						console.log(
+							`🔒 MOBYPHISH_LOG: Successfully reported phishing to backend database via three dots menu for sender="${senderEmail}", mailId="${this.mail._id[1]}", userEmail="${userEmail}"`,
+						)
+					} else {
+						console.error(
+							`🔒 MOBYPHISH_LOG: Failed to report phishing to backend database via three dots menu for sender="${senderEmail}", status=${response.status}`,
+						)
+					}
+				} catch (fetchError) {
+					console.error(`🔒 MOBYPHISH_LOG: Error calling backend API to report phishing for sender="${senderEmail}":`, fetchError)
+				}
+
+				// Mark as phishing and move to spam
 				await this.markAsPhishing()
 				await this.mailModel.moveMails([this.mail._id], spamFolder, MoveMode.Mails)
-				await this.mailModel.reportMails(MailReportType.PHISHING, [this.mail])
 			} else {
 				await moveMails({
 					mailboxModel: this.mailboxModel,

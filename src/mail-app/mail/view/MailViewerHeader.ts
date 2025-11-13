@@ -305,19 +305,12 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		const { viewModel } = attrs
 		if (viewModel.isCollapsed()) return null
 
-		// MobyPhish banner handles everything: security warnings, content blocking, sender trust
-		const mobyPhishBanner = this.renderMobyPhishBanner(viewModel)
-
-		const banners: ChildArray = []
-
-		if (mobyPhishBanner) {
-			banners.push(m("." + responsiveCardHMargin(), mobyPhishBanner))
-		}
-
-		const hasEventInvitation = viewModel.getCalendarEventAttachment()
-		return isEmpty(banners) && !hasEventInvitation ? [m("hr.hr.mt-4." + responsiveCardHMargin())] : [...banners]
+		// Anti-phishing banner removed for no-antiphishing-header branch
+		// Phishing reporting still available via three-dots menu
+		return null
 	}
 
+	// Keep renderFailureBanner for TypeScript compatibility (not called in this branch)
 	private renderFailureBanner(viewModel: MailViewerViewModel): Children | null {
 		switch (viewModel.mustRenderFailureBanner()) {
 			case FailureBannerType.Phishing:
@@ -333,6 +326,8 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 				return null
 		}
 	}
+
+	// Keep renderMobyPhishBanner for TypeScript compatibility (not called in this branch)
 	private renderMobyPhishBanner(viewModel: MailViewerViewModel): Children | null {
 		// MobyPhish now handles ALL authentication failures - no need to suppress based on Tutanota's native warnings
 
