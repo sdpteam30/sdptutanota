@@ -132,11 +132,11 @@ COPY --from=builder /app/cors-anywhere ./cors-anywhere
 
 # Install backend dependencies
 WORKDIR /app/trusted-senders-backend
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Install CORS proxy dependencies
 WORKDIR /app/cors-anywhere
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Back to app root
 WORKDIR /app
