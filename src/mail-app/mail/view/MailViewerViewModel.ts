@@ -225,6 +225,16 @@ export class MailViewerViewModel {
 				currentStatus = "" // Reset it so it behaves like a new/unconfirmed sender
 			}
 
+			// Don't overwrite trusted_once or confirmed status if it was just set (unless explicitly removed from trusted list)
+			// This prevents fetchSenderData from resetting the status immediately after user action
+			if (this.senderStatus === "trusted_once" || this.senderStatus === "confirmed") {
+				if (currentStatus === "" && (isTrustedByEmail || isTrustedByName)) {
+					// Keep the current status if it's trusted_once/confirmed and sender is still in trusted list
+					currentStatus = this.senderStatus
+					console.log(`🔒 MOBYPHISH_LOG: Preserving sender status "${this.senderStatus}" - sender still in trusted list`)
+				}
+			}
+
 			this.senderStatus = currentStatus
 			this.interactionType = statusData.interaction_type
 
@@ -313,12 +323,10 @@ export class MailViewerViewModel {
 			await this.fetchSenderData()
 
 			if (status === "confirmed" || status === "trusted_once") {
-				console.log(`🔒 MOBYPHISH_LOG: Sender confirmed as trusted - loading content and expanding mail`)
+				console.log(`🔒 MOBYPHISH_LOG: Sender confirmed as trusted - re-sanitizing to show images`)
 				this.setSenderConfirmed(true)
-				this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
-				this.sanitizeResult = null
-				this.renderedMail = null
-				await this.loadAll(Promise.resolve(), { notify: true })
+				// Update content blocking status and re-sanitize to unblock images
+				await this.setContentBlockingStatus(ContentBlockingStatus.AlwaysShow)
 				this.expandMail(Promise.resolve())
 				m.redraw()
 			} else {
@@ -813,6 +821,12 @@ export class MailViewerViewModel {
 		this.sanitizeResult = await this.sanitizeMailBody(this.mail, status === ContentBlockingStatus.Block || status === ContentBlockingStatus.AlwaysBlock)
 		//follow-up actions resulting from a changed blocking status must start after sanitization finished
 		this.contentBlockingStatus = status
+		// Force re-render by clearing renderedMail so the mail body is re-rendered with unblocked content
+		if (status === ContentBlockingStatus.Show || status === ContentBlockingStatus.AlwaysShow) {
+			console.log(`🔒 MOBYPHISH_LOG: Content unblocked - forcing mail body re-render to show images`)
+			this.renderedMail = null
+		}
+		m.redraw()
 	}
 
 	async markAsNotPhishing(): Promise<void> {
@@ -977,16 +991,31 @@ export class MailViewerViewModel {
 
 	/** @return list of inline referenced cid */
 	private async loadAndProcessAdditionalMailInfo(mail: Mail, delayBodyRenderingUntil: Promise<unknown>): Promise<string[]> {
+		console.log(
+			`🔒 MOBYPHISH_LOG: loadAndProcessAdditionalMailInfo called - mailId="${mail._id[1]}", confidential=${mail.confidential}, isTutanotaTeamMail=${isTutanotaTeamMail(mail)}, senderStatus="${this.senderStatus}"`,
+		)
 		// If the mail is a non-draft and we have loaded it before, we don't need to reload it because it cannot have been edited, so we return early
 		// drafts however can be edited, and we want to receive the changes, so for drafts we will always reload
+		// BUT: if sender status changed to confirmed/trusted_once, we need to re-sanitize to show images
 		let isDraft = mail.state === MailState.DRAFT
-		if (this.renderedMail != null && haveSameId(mail, this.renderedMail) && !isDraft && this.sanitizeResult != null) {
+		const shouldShowImages = this.senderStatus === "trusted_once" || this.senderStatus === "confirmed"
+		const currentlyBlocking = this.contentBlockingStatus === ContentBlockingStatus.Block || this.contentBlockingStatus === ContentBlockingStatus.AlwaysBlock
+		const needsReSanitization = shouldShowImages && currentlyBlocking
+
+		if (this.renderedMail != null && haveSameId(mail, this.renderedMail) && !isDraft && this.sanitizeResult != null && !needsReSanitization) {
+			console.log(`🔒 MOBYPHISH_LOG: Early return in loadAndProcessAdditionalMailInfo - mail already rendered, returning cached inlineImageCids`)
 			return this.sanitizeResult.inlineImageCids
 		}
 
+		if (needsReSanitization) {
+			console.log(`🔒 MOBYPHISH_LOG: Sender status changed to "${this.senderStatus}" - re-sanitizing to show images`)
+		}
+
 		try {
+			console.log(`🔒 MOBYPHISH_LOG: Loading mail details...`)
 			this.mailDetails = await loadMailDetails(this.mailFacade, this.mail)
 			this.errorOccurredWhileLoadingMailDetails = false
+			console.log(`🔒 MOBYPHISH_LOG: Mail details loaded successfully`)
 		} catch (e) {
 			if (e instanceof NotFoundError) {
 				console.log("could load mail body as it has been moved/deleted already", e)
@@ -1010,26 +1039,36 @@ export class MailViewerViewModel {
 		const isAllowedAndAuthenticatedExternalSender =
 			externalImageRule === ExternalImageRule.Allow && this.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED)
 
+		// Default to blocking content for non-confirmed senders, regardless of authentication status or tutamail address
+		// Users can still manually unblock content via the "Show Blocked Content" button
+		// If sender status is already trusted_once or confirmed, show images
 		if (this.senderStatus === "trusted_once" || this.senderStatus === "confirmed") {
-			console.log("Sender is trusted (once or confirmed) — pre-setting to AlwaysShow BEFORE sanitizing")
+			console.log(`🔒 MOBYPHISH_LOG: Sender is trusted (${this.senderStatus}) — pre-setting to AlwaysShow BEFORE sanitizing`)
 			this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
 		} else if (!this.isSenderTrusted() && !this.isSenderConfirmed()) {
-			console.log("Sender not trusted or confirmed — pre-setting to Block BEFORE sanitizing")
+			// Non-trusted, non-confirmed senders: block by default (user can unblock manually)
+			console.log("Sender not trusted or confirmed — pre-setting to Block BEFORE sanitizing (blocking ALL content including images by default)")
 			this.contentBlockingStatus = ContentBlockingStatus.Block
 		} else {
-			this.contentBlockingStatus =
-				externalImageRule === ExternalImageRule.Block
-					? ContentBlockingStatus.AlwaysBlock
-					: isAllowedAndAuthenticatedExternalSender
-						? ContentBlockingStatus.AlwaysShow
-						: ContentBlockingStatus.NoExternalContent
+			// For senders that are trusted but not yet confirmed, block by default
+			// This ensures ALL content (including images) is blocked by default until explicitly confirmed
+			// User can still manually unblock via "Show Blocked Content" button
+			console.log("Sender is trusted but not confirmed — pre-setting to Block BEFORE sanitizing (blocking ALL content including images by default)")
+			this.contentBlockingStatus = ContentBlockingStatus.Block
 		}
 
 		// Wait to render heavy mail content
 		await delayBodyRenderingUntil
 		this.renderIsDelayed = false
 
-		this.sanitizeResult = await this.sanitizeMailBody(mail, this.isBlockingExternalImages())
+		const shouldBlockImages = this.isBlockingExternalImages()
+		const senderEmail = getDisplayedSenderWithDomainReplacement(mail).address
+		const isTutanotaMail = isTutanotaTeamMail(mail)
+		console.log(
+			`🔒 MOBYPHISH_LOG: About to sanitize mail body - sender="${senderEmail}", isTutanotaMail=${isTutanotaMail}, senderStatus="${this.senderStatus}", contentBlockingStatus="${this.contentBlockingStatus}", shouldBlockImages=${shouldBlockImages}`,
+		)
+
+		this.sanitizeResult = await this.sanitizeMailBody(mail, shouldBlockImages)
 
 		if (!isDraft) {
 			this.checkMailForPhishing(mail, this.sanitizeResult.links)
@@ -1334,12 +1373,19 @@ export class MailViewerViewModel {
 		// 	console.warn("Failed to urlify mail body!", e)
 		// 	return rawBody
 		// })
+		const isTutanotaMail = isTutanotaTeamMail(mail)
+		console.log(
+			`🔒 MOBYPHISH_LOG: sanitizeMailBody called - blockExternalContent=${blockExternalContent}, isTutanotaMail=${isTutanotaMail}, sender="${getDisplayedSenderWithDomainReplacement(mail).address}"`,
+		)
 		const sanitizeResult = htmlSanitizer.sanitizeFragment(rawBody, {
 			blockExternalContent,
-			allowRelativeLinks: isTutanotaTeamMail(mail),
+			allowRelativeLinks: isTutanotaMail,
 			highlightedStrings: this.highlightedStrings,
 		})
 		const { fragment, inlineImageCids, links, blockedExternalContent } = sanitizeResult
+		console.log(
+			`🔒 MOBYPHISH_LOG: Sanitization complete - blockedExternalContent=${blockedExternalContent}, inlineImageCids=${inlineImageCids.length}, links=${links.length}`,
+		)
 
 		/**
 		 * Check if we need to improve contrast for dark theme. We apply the contrast fix if any of the following is contained in

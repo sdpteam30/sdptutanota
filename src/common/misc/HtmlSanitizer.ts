@@ -329,8 +329,9 @@ export class HtmlSanitizer {
 			let attribute = htmlNode.attributes.getNamedItem(attrName)
 
 			if (attribute) {
-				if (config.usePlaceholderForInlineImages && attribute.value.startsWith("cid:")) {
+				if (config.usePlaceholderForInlineImages && attribute.value.startsWith("cid:") && !config.blockExternalContent) {
 					// replace embedded image with local image until the embedded image is loaded and ready to be shown.
+					// Only allow inline images if we're NOT blocking external content
 					const cid = attribute.value.substring(4)
 
 					this.inlineImageCids.push(cid)
@@ -338,6 +339,16 @@ export class HtmlSanitizer {
 					attribute.value = PREVENT_EXTERNAL_IMAGE_LOADING_ICON
 					htmlNode.setAttribute("cid", cid)
 					htmlNode.classList.add("tutanota-placeholder")
+				} else if (config.blockExternalContent && attribute.value.startsWith("cid:")) {
+					// Block inline images (cid:) when blocking external content for non-confirmed senders
+					this.externalContent++
+					console.log(
+						`🔒 MOBYPHISH_LOG: Blocking inline image (cid:) - nodeName="${nodeName}", attrName="${attribute.name}", cid="${attribute.value}"`,
+					)
+					htmlNode.setAttribute("draft-" + attribute.name, attribute.value)
+					attribute.value = PREVENT_EXTERNAL_IMAGE_LOADING_ICON
+					htmlNode.attributes.setNamedItem(attribute)
+					htmlNode.style.maxWidth = "100px"
 				} else if (config.blockExternalContent && attribute.name === "srcset") {
 					this.externalContent++
 
@@ -358,6 +369,9 @@ export class HtmlSanitizer {
 					// Since we are blocking href now we need to check if the attr isn't
 					// being used by a valid tag (a, area, base, link)
 					this.externalContent++
+					console.log(
+						`🔒 MOBYPHISH_LOG: Blocking external content - nodeName="${nodeName}", attrName="${attribute.name}", value="${attribute.value.substring(0, 100)}"`,
+					)
 
 					htmlNode.setAttribute("draft-" + attribute.name, attribute.value)
 					attribute.value = PREVENT_EXTERNAL_IMAGE_LOADING_ICON
@@ -365,8 +379,18 @@ export class HtmlSanitizer {
 					htmlNode.style.maxWidth = "100px"
 				} else if (!config.blockExternalContent && DRAFT_ATTRIBUTES.includes(attribute.name)) {
 					if (attribute.name === "draft-src") {
+						// Restore the src attribute - could be external URL or cid: for inline images
 						htmlNode.setAttribute("src", attribute.value)
 						htmlNode.removeAttribute(attribute.name)
+						// If it's a cid: image, also set up for inline image loading
+						if (attribute.value.startsWith("cid:")) {
+							const cid = attribute.value.substring(4)
+							this.inlineImageCids.push(cid)
+							htmlNode.setAttribute("cid", cid)
+							htmlNode.classList.add("tutanota-placeholder")
+							// Keep the placeholder icon until the inline image is loaded
+							htmlNode.setAttribute("src", PREVENT_EXTERNAL_IMAGE_LOADING_ICON)
+						}
 					} else if (attribute.name === "draft-href" || attribute.name === "draft-xlink:href") {
 						const hrefTag = attribute.name === "draft-href" ? "href" : "xlink:href"
 						htmlNode.setAttribute(hrefTag, attribute.value)

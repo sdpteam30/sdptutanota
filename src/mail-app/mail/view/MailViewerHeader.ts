@@ -37,11 +37,9 @@ import { highlightTextInQueryAsChildren } from "../../../common/gui/TextHighligh
 import { EventBanner, EventBannerAttrs } from "./EventBanner"
 import { getGroupColors } from "../../../common/misc/GroupColors"
 import { modal } from "../../../common/gui/base/Modal"
-import { MobyPhishDenyModal } from "./MobyPhishDenyModal.js"
 import { MobyPhishConfirmSenderModal } from "./MobyPhishConfirmSenderModal"
 import { TRUSTED_SENDERS_API_URL } from "./MailViewerViewModel.js"
 import { MobyPhishAlreadyTrustedModal } from "./MobyPhishAlreadyTrustedModal.js"
-import { MobyPhishNotTrustedModal } from "./MobyPhishNotTrustedModal.js"
 import { MobyPhishInfoModal } from "./MobyPhishInfoModal"
 import { MobyPhishReportModal } from "./MobyPhishReportModal.js"
 
