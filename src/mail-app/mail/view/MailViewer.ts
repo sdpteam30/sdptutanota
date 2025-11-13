@@ -438,73 +438,23 @@ export class MailViewer implements Component<MailViewerAttrs> {
 		this.shadowDomRoot.appendChild(styles.getStyleSheetElement("main"))
 		this.shadowDomRoot.appendChild(wrapNode)
 
-		// LINK HANDLING: override clicks inside Shadow DOM
-		const isConfirmed = this.viewModel?.isSenderConfirmed?.() ?? false
-		const senderStatus = this.viewModel?.senderStatus ?? ""
-		const isTrustedOnce = senderStatus === "trusted_once"
-
+		// LINK HANDLING: No content blocking in no-antiphishing-header branch
+		// All links work normally without any restrictions
 		wrapNode.querySelectorAll("a").forEach((link) => {
 			const originalHref = link.getAttribute("data-original-href") || link.getAttribute("href") || ""
 
-			// If not confirmed AND not trusted_once, block links
-			if (!isConfirmed && !isTrustedOnce) {
-				link.setAttribute("data-original-href", originalHref)
-				link.removeAttribute("href") // SAFARI FIX — don't allow "javascript:void(0)" or "#"
-				link.style.pointerEvents = "auto"
-				link.style.color = "gray"
-				link.style.textDecoration = "line-through"
+			// Simply enable all links without blocking or prompts
+			link.setAttribute("href", originalHref)
+			link.style.color = ""
+			link.style.textDecoration = ""
+			link.style.pointerEvents = "auto"
 
-				const handleBlockedClick = (e: Event) => {
-					e.preventDefault()
-					e.stopPropagation()
-
-					if (!this.viewModel.isSenderConfirmed()) {
-						// Use name-based checking instead of email-based
-						if (this.viewModel.isSenderNameTrusted()) {
-							const senderName = this.viewModel.getSender().name || this.viewModel.getSender().address
-							import("./MobyPhishReminderModal").then(({ MobyPhishReminderModal }) => {
-								const reminderModal = new MobyPhishReminderModal(senderName)
-								modal.display(reminderModal)
-								reminderModal.setModalHandle(reminderModal)
-							})
-						} else {
-							this.viewModel?.showPhishingModal?.()
-						}
-					}
-				}
-
-				link.addEventListener("click", handleBlockedClick)
-				link.addEventListener("pointerdown", handleBlockedClick, { passive: false })
-			} else {
-				// For confirmed senders OR trusted_once (unblocked content), show links but prompt on click
-				link.setAttribute("href", originalHref)
-				link.style.color = ""
-				link.style.textDecoration = ""
-				link.style.pointerEvents = "auto"
-
-				link.addEventListener("click", (e) => {
-					e.preventDefault()
-					e.stopPropagation()
-
-					// If trusted_once, always show confirm sender modal before opening link
-					// This ensures users confirm the sender before clicking links
-					if (isTrustedOnce) {
-						import("./MobyPhishConfirmSenderModal").then(({ MobyPhishConfirmSenderModal }) => {
-							const confirmModal = new MobyPhishConfirmSenderModal(this.viewModel, this.viewModel.trustedSenders())
-							modal.display(confirmModal)
-							confirmModal.setModalHandle(confirmModal)
-
-							// Store the link to open after confirmation
-							confirmModal.onConfirm = () => {
-								window.open(originalHref, "_blank")
-							}
-						})
-					} else {
-						// Confirmed senders can open links directly
-						window.open(originalHref, "_blank")
-					}
-				})
-			}
+			link.addEventListener("click", (e) => {
+				e.preventDefault()
+				e.stopPropagation()
+				// Open link directly without any confirmation
+				window.open(originalHref, "_blank")
+			})
 		})
 
 		if (client.isMobileDevice()) {

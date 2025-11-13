@@ -950,37 +950,8 @@ export class MailViewerViewModel {
 		}
 
 		try {
-			// YOUR custom backend API call for phishing
-			if (reportType === MailReportType.PHISHING) {
-				const senderEmail = this.getSender().address
-				const userEmail = this.logins.getUserController().loginUsername
-				try {
-					const response = await fetch(`${TRUSTED_SENDERS_API_URL}/update-email-status`, {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							user_email: userEmail,
-							email_id: this.mail._id[1],
-							sender_email: senderEmail,
-							status: "reported_phishing",
-							interaction_type: "interacted",
-						}),
-					})
-					if (response.ok) {
-						console.log(`🔒 MOBYPHISH_LOG: Successfully reported phishing to backend`)
-					}
-				} catch (fetchError) {
-					console.error(`🔒 MOBYPHISH_LOG: Error calling backend API:`, fetchError)
-				}
-			}
-
-			// UPSTREAM's folder moving logic
-			const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(this.mail)
-			if (mailboxDetail == null) return
-
-			const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
-			const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
-
+			// NO Tutanota API calls for any report type in no-antiphishing-header branch
+			// Only use our custom backend for phishing reports
 			if (reportType === MailReportType.PHISHING) {
 				// Update backend database with reported_phishing status
 				const senderEmail = this.getSender().address
@@ -1011,19 +982,7 @@ export class MailViewerViewModel {
 				} catch (fetchError) {
 					console.error(`🔒 MOBYPHISH_LOG: Error calling backend API to report phishing for sender="${senderEmail}":`, fetchError)
 				}
-
-				// Mark as phishing and move to spam
-				await this.markAsPhishing()
-				await this.mailModel.moveMails([this.mail._id], spamFolder, MoveMode.Mails)
-			} else {
-				await moveMails({
-					mailboxModel: this.mailboxModel,
-					mailModel: this.mailModel,
-					mailIds: [this.mail._id],
-					targetFolder: spamFolder,
-					moveMode: MoveMode.Mails,
-					undoModel: this.undoModel,
-				})
+				// Removed: Tutanota API calls (markAsPhishing, moveMails, reportMails)
 			}
 		} catch (e) {
 			if (e instanceof NotFoundError) {
@@ -1265,23 +1224,10 @@ export class MailViewerViewModel {
 		const isAllowedAndAuthenticatedExternalSender =
 			externalImageRule === ExternalImageRule.Allow && this.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED)
 
-		// Default to blocking content for non-confirmed senders, regardless of authentication status or tutamail address
-		// Users can still manually unblock content via the "Show Blocked Content" button
-		// If sender status is already trusted_once or confirmed, show images
-		if (this.senderStatus === "trusted_once" || this.senderStatus === "confirmed") {
-			console.log(`🔒 MOBYPHISH_LOG: Sender is trusted (${this.senderStatus}) — pre-setting to AlwaysShow BEFORE sanitizing`)
-			this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
-		} else if (!this.isSenderTrusted() && !this.isSenderConfirmed()) {
-			// Non-trusted, non-confirmed senders: block by default (user can unblock manually)
-			console.log("Sender not trusted or confirmed — pre-setting to Block BEFORE sanitizing (blocking ALL content including images by default)")
-			this.contentBlockingStatus = ContentBlockingStatus.Block
-		} else {
-			// For senders that are trusted but not yet confirmed, block by default
-			// This ensures ALL content (including images) is blocked by default until explicitly confirmed
-			// User can still manually unblock via "Show Blocked Content" button
-			console.log("Sender is trusted but not confirmed — pre-setting to Block BEFORE sanitizing (blocking ALL content including images by default)")
-			this.contentBlockingStatus = ContentBlockingStatus.Block
-		}
+		// No content blocking in no-antiphishing-header branch
+		// Always show images for all senders
+		console.log(`🔒 MOBYPHISH_LOG: No-antiphishing-header branch — always showing images for all senders`)
+		this.contentBlockingStatus = ContentBlockingStatus.AlwaysShow
 
 		// Wait to render heavy mail content
 		await delayBodyRenderingUntil
