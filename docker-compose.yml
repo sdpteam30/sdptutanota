@@ -18,6 +18,7 @@ services:
       - tutanota-network
     volumes:
       - backend-data:/app/trusted-senders-backend/data
+      - ./trusted-senders-backend/.env:/app/trusted-senders-backend/.env
     restart: unless-stopped
 
   # Optional: Frontend-only service (alternative to all-in-one)
