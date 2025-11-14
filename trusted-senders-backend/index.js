@@ -23,20 +23,23 @@ const TABLES = {
 }
 
 // --- CORS Setup ---
-const allowedOrigins = ["http://localhost:9000"]
+// Allow both direct access and CORS proxy access
+const allowedOrigins = ["http://localhost:9000", "http://localhost:8080"]
 
 const corsOptions = {
 	origin: function (origin, callback) {
+		// Allow requests with no origin (like mobile apps or curl requests)
 		if (!origin) return callback(null, true)
 		if (allowedOrigins.includes(origin)) {
 			callback(null, true)
 		} else {
+			console.log("❌ CORS rejected origin:", origin)
 			callback(new Error("Not allowed by CORS"))
 		}
 	},
 	credentials: true,
 	methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-	allowedHeaders: ["Content-Type", "Accept", "Authorization"],
+	allowedHeaders: ["Content-Type", "Accept", "Authorization", "X-Requested-With"],
 	exposedHeaders: ["Content-Type", "Authorization"],
 }
 

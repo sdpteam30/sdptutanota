@@ -1,16 +1,16 @@
 import {
+	ConversationEntryTypeRef,
 	createMailAddress,
 	EncryptedMailAddress,
 	File as TutanotaFile,
 	Mail,
 	MailAddress,
 	MailDetails,
-	MailSet,
+	MailFolder,
 	MailTypeRef,
 } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import {
 	ConversationType,
-	EncryptionAuthStatus,
 	ExternalImageRule,
 	FeatureType,
 	MailAuthenticationStatus,
@@ -29,15 +29,12 @@ import stream from "mithril/stream"
 import {
 	addAll,
 	assertNonNull,
-	assertNotNull,
 	contains,
 	downcast,
 	filterInt,
 	first,
-	isEmpty,
 	lazyAsync,
 	noOp,
-	Nullable,
 	ofClass,
 	startsWith,
 	utf8Uint8ArrayToString,
@@ -47,7 +44,7 @@ import { LoginController } from "../../../common/api/main/LoginController"
 import m from "mithril"
 import { LockedError, NotAuthorizedError, NotFoundError } from "../../../common/api/common/error/RestError"
 import { haveSameId, isSameId } from "../../../common/api/common/utils/EntityUtils"
-import { getReferencedAttachments, isTutanotaTeamMail, loadInlineImages, moveMails } from "./MailGuiUtils"
+import { getReferencedAttachments, isMailContrastFixNeeded, isTutanotaTeamMail, loadInlineImages, moveMails } from "./MailGuiUtils"
 import { SanitizedFragment } from "../../../common/misc/HtmlSanitizer"
 import { CALENDAR_MIME_TYPE, FileController } from "../../../common/file/FileController"
 import { exportMails } from "../export/Exporter.js"
@@ -60,7 +57,7 @@ import { UserError } from "../../../common/api/main/UserError"
 import { showUserError } from "../../../common/misc/ErrorHandlerImpl"
 import { LoadingStateTracker } from "../../../common/offline/LoadingState"
 import { ProgrammingError } from "../../../common/api/common/error/ProgrammingError"
-import { InitAsResponseArgs } from "../../../common/mailFunctionality/SendMailModel.js"
+import { InitAsResponseArgs, SendMailModel } from "../../../common/mailFunctionality/SendMailModel.js"
 import { EventController } from "../../../common/api/main/EventController.js"
 import { WorkerFacade } from "../../../common/api/worker/facades/WorkerFacade.js"
 import { SearchModel } from "../../search/model/SearchModel.js"
@@ -81,11 +78,11 @@ import { isDraft } from "../model/MailChecks"
 import type { SearchToken } from "../../../common/api/common/utils/QueryTokenUtils"
 import { CalendarEventsRepository } from "../../../common/calendar/date/CalendarEventsRepository.js"
 import { mailLocator } from "../../mailLocator.js"
-import { UndoModel } from "../../UndoModel"
-import { isBrowser } from "../../../common/api/common/Env"
-import { CommonSystemFacade } from "../../../common/native/common/generatedipc/CommonSystemFacade"
+import { MailViewModel } from "./MailViewModel"
 import { trustedSendersService } from "../model/TrustedSendersService.js"
 import { getElementId } from "../../../common/api/common/utils/EntityUtils.js"
+import { replaceDomain } from "../model/DomainReplacementUtils.js"
+import { initializeDomainReplacements } from "../model/DomainReplacementConfig.js"
 
 export const enum ContentBlockingStatus {
 	Block = "0",
@@ -95,29 +92,8 @@ export const enum ContentBlockingStatus {
 	AlwaysBlock = "4",
 }
 
-export type UnsubscribeAction = {
-	type: UnsubscribeType
-	requestUrl: string
-}
-
-export const enum UnsubscribeType {
-	HTTP_POST_UNSUBSCRIBE = "HTTP_POST_UNSUBSCRIBE",
-	HTTP_GET_UNSUBSCRIBE = "HTTP_GET_UNSUBSCRIBE",
-	MAILTO_UNSUBSCRIBE = "MAILTO_UNSUBSCRIBE",
-}
-
-export const enum FailureBannerType {
-	None,
-	Phishing,
-	MailAuthenticationHardFail,
-	MailAuthenticationSoftFail,
-	DeprecatedPublicKey,
-}
-
-export const LIST_UNSUBSCRIBE_POST_PAYLOAD = "List-Unsubscribe=One-Click"
-
 export class MailViewerViewModel {
-	private forceLightMode: boolean = false
+	private contrastFixNeeded: boolean = false
 	// always sanitized in this.sanitizeMailBody
 
 	private sanitizeResult: SanitizedFragment | null = null
@@ -163,11 +139,11 @@ export class MailViewerViewModel {
 		readonly entityClient: EntityClient,
 		public readonly mailboxModel: MailboxModel,
 		public readonly mailModel: MailModel,
-		public readonly commonSystemFacade: Nullable<CommonSystemFacade>,
 		readonly contactModel: ContactModel,
 		private readonly configFacade: ConfigurationDatabase,
 		private readonly fileController: FileController,
 		readonly logins: LoginController,
+		private sendMailModelFactory: (mailboxDetails: MailboxDetail) => Promise<SendMailModel>,
 		private readonly eventController: EventController,
 		private readonly workerFacade: WorkerFacade,
 		private readonly searchModel: SearchModel,
@@ -176,8 +152,11 @@ export class MailViewerViewModel {
 		private readonly contactImporter: lazyAsync<ContactImporter>,
 		private readonly highlightedStrings: readonly SearchToken[],
 		readonly eventsRepository: CalendarEventsRepository,
-		private readonly undoModel: UndoModel,
+		readonly mailViewModel: lazyAsync<MailViewModel>,
 	) {
+		// Initialize domain replacement rules for the study
+		initializeDomainReplacements()
+
 		this.folderMailboxText = null
 		if (showFolder) {
 			this.showFolder()
@@ -189,13 +168,20 @@ export class MailViewerViewModel {
 		for (const update of events) {
 			if (isUpdateForTypeRef(MailTypeRef, update)) {
 				const { instanceListId, instanceId, operation } = update
-				if (operation === OperationType.UPDATE && isSameId(this.mail._id, [instanceListId, instanceId])) {
+				// we need to process create events here because update and create events are optimized into a single create event during processing
+				// when opening a mail from a notification while offline the view otherwise would not be updated when going online again,
+				// and we would keep displaying an outdated view of the mail instance. timeline:
+				// CREATE > Loaded and cached > Opened offline > Online > UPDATE (e.g. ownerEncSessionKey) > entity event processing starts
+				// CREATE and UPDATE are merged into single CREATE event > CREATE event is processed here
+				// and would be ignored even though the update is from after we loaded the mail.
+				// This is critical as it also concerns encryptionAuthStatus
+				if ((operation === OperationType.UPDATE || operation === OperationType.CREATE) && isSameId(this.mail._id, [instanceListId, instanceId])) {
 					try {
 						const updatedMail = await this.entityClient.load(MailTypeRef, this.mail._id)
 						this.updateMail({ mail: updatedMail })
 					} catch (e) {
 						if (e instanceof NotFoundError) {
-							console.log(`could not find updated mail ${JSON.stringify([instanceListId, instanceId])}`)
+							console.log(`Could not find updated mail ${JSON.stringify([instanceListId, instanceId])}`)
 						} else {
 							throw e
 						}
@@ -206,7 +192,7 @@ export class MailViewerViewModel {
 	}
 
 	private async determineRelevantRecipient() {
-		// The idea is that if there are multiple recipients, then we should display the one which belongs to one of our mailboxes and then fall back to any
+		// The idea is that if there are multiple recipients then we should display the one which belongs to one of our mailboxes and then fall back to any
 		// other one
 		const mailboxDetails = await this.mailModel.getMailboxDetailsForMail(this.mail)
 		if (mailboxDetails == null) {
@@ -233,10 +219,10 @@ export class MailViewerViewModel {
 
 		if (folder) {
 			this.mailModel.getMailboxDetailsForMail(this.mail).then(async (mailboxDetails) => {
-				if (mailboxDetails == null) {
+				if (mailboxDetails == null || mailboxDetails.mailbox.folders == null) {
 					return
 				}
-				const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetails.mailbox.mailSets._id)
+				const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetails.mailbox.folders._id)
 				const name = getPathToFolderString(folders, folder)
 				this.folderMailboxText = `${getMailboxName(this.logins, mailboxDetails)} / ${name}`
 				m.redraw()
@@ -309,12 +295,8 @@ export class MailViewerViewModel {
 		return this.loadedInlineImages ?? new Map()
 	}
 
-	setForceLightMode(forceLightMode: boolean) {
-		this.forceLightMode = forceLightMode
-	}
-
-	getForceLightMode(): boolean {
-		return this.forceLightMode
+	isContrastFixNeeded(): boolean {
+		return this.contrastFixNeeded
 	}
 
 	isDraftMail() {
@@ -352,34 +334,8 @@ export class MailViewerViewModel {
 		return this.mail.confidential
 	}
 
-	private isMailSuspicious(): boolean {
+	isMailSuspicious(): boolean {
 		return this.mail.phishingStatus === MailPhishingStatus.SUSPICIOUS
-	}
-
-	private isHardMailAuthenticationFailure(): boolean {
-		return (
-			(this.mailDetails != null &&
-				!this.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED) &&
-				!this.checkMailAuthenticationStatus(MailAuthenticationStatus.SOFT_FAIL)) ||
-			this.mail.encryptionAuthStatus === EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED
-		)
-	}
-
-	mustRenderFailureBanner(): FailureBannerType {
-		if (this.isMailSuspicious()) {
-			return FailureBannerType.Phishing
-		} else if (!this.isWarningDismissed()) {
-			if (this.isHardMailAuthenticationFailure()) {
-				return FailureBannerType.MailAuthenticationHardFail
-			} else {
-				if (this.mail.encryptionAuthStatus === EncryptionAuthStatus.RSA_DESPITE_TUTACRYPT) {
-					return FailureBannerType.DeprecatedPublicKey
-				} else if (this.checkMailAuthenticationStatus(MailAuthenticationStatus.SOFT_FAIL)) {
-					return FailureBannerType.MailAuthenticationSoftFail
-				}
-			}
-		}
-		return FailureBannerType.None
 	}
 
 	getMailId(): IdTuple {
@@ -444,13 +400,27 @@ export class MailViewerViewModel {
 	}
 
 	/**
+	 * Get sender with domain replacement applied (for study purposes)
+	 */
+	getSenderWithReplacedDomain(): MailAddress {
+		const sender = this.getSender()
+		return {
+			...sender,
+			address: replaceDomain(sender.address),
+		}
+	}
+
+	/**
 	 * Can be {@code null} if sender should not be displayed e.g. for system notifications.
+	 * Applies domain replacement for study purposes.
 	 */
 	getDisplayedSender(): MailAddressAndName | null {
 		if (isSystemNotification(this.mail)) {
 			return null
 		} else {
-			return getDisplayedSender(this.mail)
+			const sender = getDisplayedSender(this.mail)
+			// Apply domain replacement
+			return sender ? { ...sender, address: replaceDomain(sender.address) } : null
 		}
 	}
 
@@ -462,8 +432,14 @@ export class MailViewerViewModel {
 		this.mail.phishingStatus = status
 	}
 
+	isMailAuthenticationStatusLoaded(): boolean {
+		return this.mail.authStatus != null || this.mailDetails != null
+	}
+
 	checkMailAuthenticationStatus(status: MailAuthenticationStatus): boolean {
-		if (this.mailDetails != null) {
+		if (this.mail.authStatus != null) {
+			return this.mail.authStatus === status
+		} else if (this.mailDetails) {
 			return this.mailDetails.authStatus === status
 		} else {
 			// mailDetails not loaded yet
@@ -507,7 +483,7 @@ export class MailViewerViewModel {
 		return this.contentBlockingStatus
 	}
 
-	private isWarningDismissed() {
+	isWarningDismissed() {
 		return this.warningDismissed
 	}
 
@@ -516,19 +492,18 @@ export class MailViewerViewModel {
 	}
 
 	async setContentBlockingStatus(status: ContentBlockingStatus): Promise<void> {
-		// We can only be set to NoExternalContent when initially loading the mailbody (_loadMailBody)
-		// so we ignore it here, and don't do anything if we were already set to NoExternalContent
-		if (
-			status === ContentBlockingStatus.NoExternalContent ||
-			this.contentBlockingStatus === ContentBlockingStatus.NoExternalContent ||
-			this.contentBlockingStatus === status
-		) {
-			return
-		}
+		console.log("🚀 FUNCTION CALLED - setContentBlockingStatus", {
+			newStatus: status,
+			currentStatus: this.contentBlockingStatus,
+			isNoExternal: status === ContentBlockingStatus.NoExternalContent,
+			currentIsNoExternal: this.contentBlockingStatus === ContentBlockingStatus.NoExternalContent,
+			isSameStatus: this.contentBlockingStatus === status,
+		})
 
 		const userEmail = this.logins.getUserController().userGroupInfo.mailAddress || ""
-		const senderEmail = this.getSender().address || ""
-		const senderName = this.getSender().name || ""
+		const senderWithReplacement = this.getSenderWithReplacedDomain()
+		const senderEmail = senderWithReplacement.address || ""
+		const senderName = senderWithReplacement.name || ""
 		const emailId = getElementId(this.mail)
 
 		console.log("🔍 setContentBlockingStatus called:", {
@@ -539,32 +514,53 @@ export class MailViewerViewModel {
 			emailId,
 		})
 
-		// Skip backend calls if userEmail is not available
-		if (!userEmail) {
-			console.warn("❌ Cannot update sender status: user email not available")
-		} else if (status === ContentBlockingStatus.AlwaysShow) {
+		// ALWAYS process "Always trust sender" and "Always block" actions, even if no external content
+		if (status === ContentBlockingStatus.AlwaysShow) {
 			// Add sender to trusted_senders table via backend
 			console.log("✅ Calling addTrustedSender for AlwaysShow...")
-			try {
-				await trustedSendersService.addTrustedSender(userEmail, senderEmail, senderName)
-				await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "added_to_trusted")
-				console.log("✅ Successfully added trusted sender")
-			} catch (error) {
-				console.error("❌ Failed to add trusted sender:", error)
-				// Optionally show user error, but don't block the operation
+			if (userEmail) {
+				try {
+					await trustedSendersService.addTrustedSender(userEmail, senderEmail, senderName)
+					await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "added_to_trusted")
+					console.log("✅ Successfully added trusted sender")
+				} catch (error) {
+					console.error("❌ Failed to add trusted sender:", error)
+				}
 			}
-		} else if (status === ContentBlockingStatus.Show) {
-			// Log as trusted_once in email_sender_status table
-			console.log("✅ Calling updateEmailStatus for Show (trusted_once)...")
-			try {
-				await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "trusted_once")
-				console.log("✅ Successfully logged trusted_once")
-			} catch (error) {
-				console.error("❌ Failed to log trusted_once status:", error)
+			// Also update Tutanota's config if external content exists
+			if (this.contentBlockingStatus !== ContentBlockingStatus.NoExternalContent) {
+				this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.Allow).catch(ofClass(IndexingNotSupportedError, noOp))
 			}
 		} else if (status === ContentBlockingStatus.AlwaysBlock) {
 			// Keep original Tutanota behavior for AlwaysBlock
-			this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.Block).catch(ofClass(IndexingNotSupportedError, noOp))
+			if (this.contentBlockingStatus !== ContentBlockingStatus.NoExternalContent) {
+				this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.Block).catch(ofClass(IndexingNotSupportedError, noOp))
+			}
+		}
+
+		// For content display changes (Show/Block), check if we can actually change content
+		if (
+			status === ContentBlockingStatus.NoExternalContent ||
+			this.contentBlockingStatus === ContentBlockingStatus.NoExternalContent ||
+			this.contentBlockingStatus === status
+		) {
+			console.log("⏩ No content blocking changes needed (NoExternalContent or same status)")
+			return
+		}
+
+		// Process Show button (temporary trust)
+		if (status === ContentBlockingStatus.Show) {
+			console.log("✅ Calling updateEmailStatus for Show (trusted_once)...")
+			if (userEmail) {
+				try {
+					await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "trusted_once")
+					console.log("✅ Successfully logged trusted_once")
+				} catch (error) {
+					console.error("❌ Failed to log trusted_once status:", error)
+				}
+			}
+		} else if (status === ContentBlockingStatus.Block) {
+			// Just blocking, no backend logging needed
 		} else {
 			// we are going from allow or block to something else it means we're resetting to the default rule for the given sender
 			this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.None).catch(ofClass(IndexingNotSupportedError, noOp))
@@ -576,32 +572,32 @@ export class MailViewerViewModel {
 		this.contentBlockingStatus = status
 	}
 
-	async updateMailPhishingStatus(newStatus: MailPhishingStatus): Promise<void> {
+	async markAsNotPhishing(): Promise<void> {
 		const oldStatus = this.getPhishingStatus()
 
-		if (oldStatus === newStatus) {
+		if (oldStatus === MailPhishingStatus.WHITELISTED) {
 			return
 		}
 
-		this.setPhishingStatus(newStatus)
+		this.setPhishingStatus(MailPhishingStatus.WHITELISTED)
 
 		await this.entityClient.update(this.mail).catch(() => this.setPhishingStatus(oldStatus))
 	}
 
-	async markAsNotPhishing(): Promise<void> {
-		await this.updateMailPhishingStatus(MailPhishingStatus.WHITELISTED)
-	}
-
-	async markAsPhishing(): Promise<void> {
-		await this.updateMailPhishingStatus(MailPhishingStatus.SUSPICIOUS)
-	}
-
 	async reportMail(reportType: MailReportType): Promise<void> {
 		try {
-			// Custom backend reporting only - no Tutanota API calls
+			// REMOVED Tutanota API calls - using custom backend only
+			// await this.mailModel.reportMails(reportType, async () => [this.mail])
+			// if (reportType === MailReportType.PHISHING) {
+			// 	this.setPhishingStatus(MailPhishingStatus.SUSPICIOUS)
+			// 	await this.entityClient.update(this.mail)
+			// }
+
+			// Log to our custom backend (with domain replacement)
 			const userEmail = this.logins.getUserController().userGroupInfo.mailAddress || ""
-			const senderEmail = this.getSender().address || ""
-			const senderName = this.getSender().name || ""
+			const senderWithReplacement = this.getSenderWithReplacedDomain()
+			const senderEmail = senderWithReplacement.address || ""
+			const senderName = senderWithReplacement.name || ""
 			const emailId = getElementId(this.mail)
 
 			if (userEmail) {
@@ -610,15 +606,22 @@ export class MailViewerViewModel {
 				await trustedSendersService.reportSpam(userEmail, senderEmail, reportTypeString, senderName, emailId)
 				console.log(`✅ Successfully reported ${reportTypeString}`)
 			}
-
-			// Move to spam folder (no Tutanota API reporting)
 			const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(this.mail)
-			if (mailboxDetail == null) {
+			if (mailboxDetail == null || mailboxDetail.mailbox.folders == null) {
 				return
 			}
-			const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
+			const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.folders._id)
 			const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
-			await this.mailModel.moveMails([this.mail._id], spamFolder, MoveMode.Mails)
+			// do not report moved mails again
+			await moveMails({
+				mailboxModel: this.mailboxModel,
+				mailModel: this.mailModel,
+				mailIds: [this.mail._id],
+				targetFolder: spamFolder,
+				moveMode: MoveMode.Mails,
+				isReportable: false,
+				mailViewModel: await this.mailViewModel(),
+			})
 		} catch (e) {
 			if (e instanceof NotFoundError) {
 				console.log("mail already moved")
@@ -637,7 +640,9 @@ export class MailViewerViewModel {
 	}
 
 	canReport(): boolean {
-		return this.getPhishingStatus() === MailPhishingStatus.UNKNOWN && !this.isTutanotaTeamMail() && this.logins.isInternalUserLoggedIn()
+		// Allow reporting for study purposes, including emails from own aliases
+		// Removed isTutanotaTeamMail() check to allow reporting own alias emails
+		return this.getPhishingStatus() === MailPhishingStatus.UNKNOWN && this.logins.isInternalUserLoggedIn()
 	}
 
 	canShowHeaders(): boolean {
@@ -673,6 +678,10 @@ export class MailViewerViewModel {
 		}
 	}
 
+	isListUnsubscribe(): boolean {
+		return this.mail.listUnsubscribe
+	}
+
 	isAnnouncement(): boolean {
 		const replyTos = this.mailDetails?.replyTos
 		return (
@@ -682,122 +691,26 @@ export class MailViewerViewModel {
 		)
 	}
 
-	isListUnsubscribe(): boolean {
-		return this.mail.listUnsubscribe
-	}
-
-	hasListUnsubscribeHeader(): boolean {
-		if (this.mailDetails == null) {
-			return false
-		}
-		const mailHeaders = loadMailHeaders(this.mailDetails)
-		if (mailHeaders == null) {
-			return false
-		}
-		const listUnsubscribeHeaders = mailHeaders
-			.replaceAll(/\r\n/g, "\n") // replace all CR LF with LF
-			.replaceAll(/\n[ \t]/g, "") // join multiline headers to a single line
-			.split("\n") // split headers
-			.filter((headerLine) => headerLine.toLowerCase().startsWith("list-unsubscribe:"))
-		return !isEmpty(listUnsubscribeHeaders)
-	}
-
-	private decodeMimeHeader(value: string): string {
-		return value.replace(/=\?([^?]+)\?([QB])\?([^?]+)\?=/gi, (_, _charset, encoding, encodedText) => {
-			if (encoding.toUpperCase() === "Q") {
-				return encodedText.replace(/_/g, " ").replace(/=([A-Fa-f0-9]{2})/g, (_: string, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-			} else if (encoding.toUpperCase() === "B") {
-				try {
-					return Buffer.from(encodedText, "base64").toString("utf-8")
-				} catch {
-					return encodedText
-				}
-			}
-			return encodedText
-		})
-	}
-
-	async determineUnsubscribeOrder(): Promise<Array<UnsubscribeAction>> {
-		const mailHeaders = await this.getHeaders()
-		const unsubscribeActions: Array<UnsubscribeAction> = []
-		if (!mailHeaders) {
-			return unsubscribeActions
-		}
-
-		const normalizedHeaders = mailHeaders
-			.replaceAll(/\r\n/g, "\n")
-			.replaceAll(/\n[ \t]/g, "")
-			.split("\n")
-			.map((h) => this.decodeMimeHeader(h.trim()))
-
-		const listUnsubscribeHeaders = normalizedHeaders.filter((headerLine) => headerLine.toLowerCase().startsWith("list-unsubscribe:"))
-
-		if (isEmpty(listUnsubscribeHeaders)) {
-			return unsubscribeActions
-		}
-
-		const unsubPostHeader = normalizedHeaders.find((h) => h.toLowerCase().startsWith("list-unsubscribe-post"))
-
-		const [_, ...value] = listUnsubscribeHeaders[0].split(":")
-		const headerValue = value.join(":")
-		const links = headerValue.split(/,(?![^<>]*>)/)
-
-		for (const link of links) {
-			const trimmedLink = link.trim()
-			if (trimmedLink.startsWith("<http") && trimmedLink.endsWith(">")) {
-				unsubscribeActions.push({
-					type: unsubPostHeader != null ? UnsubscribeType.HTTP_POST_UNSUBSCRIBE : UnsubscribeType.HTTP_GET_UNSUBSCRIBE,
-					requestUrl: trimmedLink.slice(1, -1),
-				})
-			} else if (trimmedLink.startsWith("<mailto:") && trimmedLink.endsWith(">")) {
-				unsubscribeActions.push({
-					type: UnsubscribeType.MAILTO_UNSUBSCRIBE,
-					requestUrl: trimmedLink.slice(1, -1),
-				})
-			}
-		}
-
-		// http links have priority over mailto links
-		const sortedActions: UnsubscribeAction[] = []
-
-		const httpAction = unsubscribeActions.find(
-			(action) => action.type === UnsubscribeType.HTTP_POST_UNSUBSCRIBE || action.type === UnsubscribeType.HTTP_GET_UNSUBSCRIBE,
-		)
-		if (httpAction) {
-			sortedActions.push(httpAction)
-		}
-
-		const mailToAction = unsubscribeActions.find((action) => action.type === UnsubscribeType.MAILTO_UNSUBSCRIBE)
-		if (mailToAction) {
-			sortedActions.push(mailToAction)
-		}
-
-		return sortedActions
-	}
-
-	async unsubscribePost(unsubscribeAction: UnsubscribeAction): Promise<boolean> {
+	async unsubscribe(): Promise<boolean> {
 		if (!this.isListUnsubscribe()) {
 			return false
 		}
 
-		if (unsubscribeAction.type !== UnsubscribeType.HTTP_POST_UNSUBSCRIBE) {
+		const mailHeaders = await this.getHeaders()
+		if (!mailHeaders) {
 			return false
 		}
-
-		const unsubscribePostUrl = assertNotNull(unsubscribeAction.requestUrl)
-		if (isBrowser()) {
-			// In case we are on the webApp we can not execute the POST request directly
-			// from the client. However, the user is informed that the list unsubscribe url will
-			// be sent to our server in this case.
-			await this.mailModel.serverUnsubscribe(this.mail, unsubscribePostUrl)
+		const unsubHeaders = mailHeaders
+			.replaceAll(/\r\n/g, "\n") // replace all CR LF with LF
+			.replaceAll(/\n[ \t]/g, "") // join multiline headers to a single line
+			.split("\n") // split headers
+			.filter((headerLine) => headerLine.toLowerCase().startsWith("list-unsubscribe"))
+		if (unsubHeaders.length > 0) {
+			const recipient = await this.getSenderOfResponseMail()
+			await this.mailModel.unsubscribe(this.mail, recipient, unsubHeaders)
 			return true
 		} else {
-			const isPostRequestSuccessful = await assertNotNull(this.commonSystemFacade).executePostRequest(unsubscribePostUrl, LIST_UNSUBSCRIBE_POST_PAYLOAD)
-			if (isPostRequestSuccessful) {
-				this.mail.listUnsubscribe = false
-				await this.entityClient.update(this.mail)
-			}
-			return isPostRequestSuccessful
+			return false
 		}
 	}
 
@@ -805,7 +718,7 @@ export class MailViewerViewModel {
 		return this.highlightedStrings
 	}
 
-	getMailboxDetails(): Promise<MailboxDetail | null> {
+	private getMailboxDetails(): Promise<MailboxDetail | null> {
 		return this.mailModel.getMailboxDetailsForMail(this.mail)
 	}
 
@@ -997,7 +910,7 @@ export class MailViewerViewModel {
 				await this.loadAll(Promise.resolve(), { notify: true })
 			}
 			const editor = await newMailEditorAsResponse(args, this.isBlockingExternalImages(), this.getLoadedInlineImages(), mailboxDetails)
-			editor?.show()
+			editor.show()
 		}
 	}
 
@@ -1034,7 +947,7 @@ export class MailViewerViewModel {
 
 		const mailSubject = this.getSubject() || ""
 		infoLine += lang.get("subject_label") + ": " + urlEncodeHtmlTags(mailSubject)
-		const body = infoLine + '<br><br><blockquote class="tutanota_quote">' + this.getMailBody() + "</blockquote>"
+		let body = infoLine + '<br><br><blockquote class="tutanota_quote">' + this.getMailBody() + "</blockquote>"
 		const { prependEmailSignature } = await import("../signature/Signature")
 		const senderMailAddress = await this.getSenderOfResponseMail()
 		return {
@@ -1070,14 +983,14 @@ export class MailViewerViewModel {
 				address: mailAddressAndName.address,
 				contact: null,
 			})
-			const prefix = "Re: "
+			let prefix = "Re: "
 			const mailSubject = this.getSubject()
-			const subject = mailSubject ? (startsWith(mailSubject.toUpperCase(), prefix.toUpperCase()) ? mailSubject : prefix + mailSubject) : ""
-			const infoLine = formatDateTime(this.getDate()) + " " + lang.get("by_label") + " " + sender.address + ":"
-			const body = infoLine + '<br><blockquote class="tutanota_quote">' + this.getMailBody() + "</blockquote>"
-			const toRecipients: MailAddress[] = []
-			const ccRecipients: MailAddress[] = []
-			const bccRecipients: MailAddress[] = []
+			let subject = mailSubject ? (startsWith(mailSubject.toUpperCase(), prefix.toUpperCase()) ? mailSubject : prefix + mailSubject) : ""
+			let infoLine = formatDateTime(this.getDate()) + " " + lang.get("by_label") + " " + sender.address + ":"
+			let body = infoLine + '<br><blockquote class="tutanota_quote">' + this.getMailBody() + "</blockquote>"
+			let toRecipients: MailAddress[] = []
+			let ccRecipients: MailAddress[] = []
+			let bccRecipients: MailAddress[] = []
 
 			if (!this.logins.getUserController().isInternalUser() && this.isReceivedMail()) {
 				toRecipients.push(sender)
@@ -1142,7 +1055,7 @@ export class MailViewerViewModel {
 					this.getLoadedInlineImages(),
 					mailboxDetails,
 				)
-				editor?.show()
+				editor.show()
 			} catch (e) {
 				if (e instanceof UserError) {
 					showUserError(e)
@@ -1154,18 +1067,27 @@ export class MailViewerViewModel {
 	}
 
 	private async sanitizeMailBody(mail: Mail, blockExternalContent: boolean): Promise<SanitizedFragment> {
-		const { getHtmlSanitizer } = await import("../../../common/misc/HtmlSanitizer")
+		const { htmlSanitizer } = await import("../../../common/misc/HtmlSanitizer")
 		const rawBody = this.getMailBody()
 		const urlified = await this.workerFacade.urlify(rawBody).catch((e) => {
 			console.warn("Failed to urlify mail body!", e)
 			return rawBody
 		})
-		const sanitizeResult = getHtmlSanitizer().sanitizeFragment(urlified, {
+		const sanitizeResult = htmlSanitizer.sanitizeFragment(urlified, {
 			blockExternalContent,
 			allowRelativeLinks: isTutanotaTeamMail(mail),
 			highlightedStrings: this.highlightedStrings,
 		})
 		const { fragment, inlineImageCids, links, blockedExternalContent } = sanitizeResult
+
+		/**
+		 * Check if we need to improve contrast for dark theme. We apply the contrast fix if any of the following is contained in
+		 * the html body of the mail
+		 *  * any tag with a style attribute that has the color property set (besides "inherit")
+		 *  * any tag with a style attribute that has the background-color set (besides "inherit")
+		 *  * any font tag with the color attribute set
+		 */
+		this.contrastFixNeeded = isMailContrastFixNeeded(fragment)
 
 		m.redraw()
 		return {
@@ -1303,7 +1225,7 @@ export class MailViewerViewModel {
 		this.collapsed = true
 	}
 
-	getLabels(): readonly MailSet[] {
+	getLabels(): readonly MailFolder[] {
 		return this.mailModel.getLabelsForMail(this.mail).sort((labelA, labelB) => labelA.name.localeCompare(labelB.name))
 	}
 
@@ -1324,9 +1246,5 @@ export class MailViewerViewModel {
 		this.determineRelevantRecipient()
 
 		this.loadAll(Promise.resolve(), { notify: true })
-	}
-
-	isExternalUser() {
-		return !this.logins.isInternalUserLoggedIn()
 	}
 }
