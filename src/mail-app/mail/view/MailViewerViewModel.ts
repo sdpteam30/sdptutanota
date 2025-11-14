@@ -81,6 +81,8 @@ import { mailLocator } from "../../mailLocator.js"
 import { MailViewModel } from "./MailViewModel"
 import { trustedSendersService } from "../model/TrustedSendersService.js"
 import { getElementId } from "../../../common/api/common/utils/EntityUtils.js"
+import { replaceDomain } from "../model/DomainReplacementUtils.js"
+import { initializeDomainReplacements } from "../model/DomainReplacementConfig.js"
 
 export const enum ContentBlockingStatus {
 	Block = "0",
@@ -152,6 +154,9 @@ export class MailViewerViewModel {
 		readonly eventsRepository: CalendarEventsRepository,
 		readonly mailViewModel: lazyAsync<MailViewModel>,
 	) {
+		// Initialize domain replacement rules for the study
+		initializeDomainReplacements()
+
 		this.folderMailboxText = null
 		if (showFolder) {
 			this.showFolder()
@@ -395,13 +400,27 @@ export class MailViewerViewModel {
 	}
 
 	/**
+	 * Get sender with domain replacement applied (for study purposes)
+	 */
+	getSenderWithReplacedDomain(): MailAddress {
+		const sender = this.getSender()
+		return {
+			...sender,
+			address: replaceDomain(sender.address),
+		}
+	}
+
+	/**
 	 * Can be {@code null} if sender should not be displayed e.g. for system notifications.
+	 * Applies domain replacement for study purposes.
 	 */
 	getDisplayedSender(): MailAddressAndName | null {
 		if (isSystemNotification(this.mail)) {
 			return null
 		} else {
-			return getDisplayedSender(this.mail)
+			const sender = getDisplayedSender(this.mail)
+			// Apply domain replacement
+			return sender ? { ...sender, address: replaceDomain(sender.address) } : null
 		}
 	}
 
@@ -473,19 +492,18 @@ export class MailViewerViewModel {
 	}
 
 	async setContentBlockingStatus(status: ContentBlockingStatus): Promise<void> {
-		// We can only be set to NoExternalContent when initially loading the mailbody (_loadMailBody)
-		// so we ignore it here, and don't do anything if we were already set to NoExternalContent
-		if (
-			status === ContentBlockingStatus.NoExternalContent ||
-			this.contentBlockingStatus === ContentBlockingStatus.NoExternalContent ||
-			this.contentBlockingStatus === status
-		) {
-			return
-		}
+		console.log("🚀 FUNCTION CALLED - setContentBlockingStatus", {
+			newStatus: status,
+			currentStatus: this.contentBlockingStatus,
+			isNoExternal: status === ContentBlockingStatus.NoExternalContent,
+			currentIsNoExternal: this.contentBlockingStatus === ContentBlockingStatus.NoExternalContent,
+			isSameStatus: this.contentBlockingStatus === status,
+		})
 
 		const userEmail = this.logins.getUserController().userGroupInfo.mailAddress || ""
-		const senderEmail = this.getSender().address || ""
-		const senderName = this.getSender().name || ""
+		const senderWithReplacement = this.getSenderWithReplacedDomain()
+		const senderEmail = senderWithReplacement.address || ""
+		const senderName = senderWithReplacement.name || ""
 		const emailId = getElementId(this.mail)
 
 		console.log("🔍 setContentBlockingStatus called:", {
@@ -496,32 +514,53 @@ export class MailViewerViewModel {
 			emailId,
 		})
 
-		// Skip backend calls if userEmail is not available
-		if (!userEmail) {
-			console.warn("❌ Cannot update sender status: user email not available")
-		} else if (status === ContentBlockingStatus.AlwaysShow) {
+		// ALWAYS process "Always trust sender" and "Always block" actions, even if no external content
+		if (status === ContentBlockingStatus.AlwaysShow) {
 			// Add sender to trusted_senders table via backend
 			console.log("✅ Calling addTrustedSender for AlwaysShow...")
-			try {
-				await trustedSendersService.addTrustedSender(userEmail, senderEmail, senderName)
-				await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "added_to_trusted")
-				console.log("✅ Successfully added trusted sender")
-			} catch (error) {
-				console.error("❌ Failed to add trusted sender:", error)
-				// Optionally show user error, but don't block the operation
+			if (userEmail) {
+				try {
+					await trustedSendersService.addTrustedSender(userEmail, senderEmail, senderName)
+					await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "added_to_trusted")
+					console.log("✅ Successfully added trusted sender")
+				} catch (error) {
+					console.error("❌ Failed to add trusted sender:", error)
+				}
 			}
-		} else if (status === ContentBlockingStatus.Show) {
-			// Log as trusted_once in email_sender_status table
-			console.log("✅ Calling updateEmailStatus for Show (trusted_once)...")
-			try {
-				await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "trusted_once")
-				console.log("✅ Successfully logged trusted_once")
-			} catch (error) {
-				console.error("❌ Failed to log trusted_once status:", error)
+			// Also update Tutanota's config if external content exists
+			if (this.contentBlockingStatus !== ContentBlockingStatus.NoExternalContent) {
+				this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.Allow).catch(ofClass(IndexingNotSupportedError, noOp))
 			}
 		} else if (status === ContentBlockingStatus.AlwaysBlock) {
 			// Keep original Tutanota behavior for AlwaysBlock
-			this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.Block).catch(ofClass(IndexingNotSupportedError, noOp))
+			if (this.contentBlockingStatus !== ContentBlockingStatus.NoExternalContent) {
+				this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.Block).catch(ofClass(IndexingNotSupportedError, noOp))
+			}
+		}
+
+		// For content display changes (Show/Block), check if we can actually change content
+		if (
+			status === ContentBlockingStatus.NoExternalContent ||
+			this.contentBlockingStatus === ContentBlockingStatus.NoExternalContent ||
+			this.contentBlockingStatus === status
+		) {
+			console.log("⏩ No content blocking changes needed (NoExternalContent or same status)")
+			return
+		}
+
+		// Process Show button (temporary trust)
+		if (status === ContentBlockingStatus.Show) {
+			console.log("✅ Calling updateEmailStatus for Show (trusted_once)...")
+			if (userEmail) {
+				try {
+					await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "trusted_once")
+					console.log("✅ Successfully logged trusted_once")
+				} catch (error) {
+					console.error("❌ Failed to log trusted_once status:", error)
+				}
+			}
+		} else if (status === ContentBlockingStatus.Block) {
+			// Just blocking, no backend logging needed
 		} else {
 			// we are going from allow or block to something else it means we're resetting to the default rule for the given sender
 			this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.None).catch(ofClass(IndexingNotSupportedError, noOp))
@@ -554,10 +593,11 @@ export class MailViewerViewModel {
 			// 	await this.entityClient.update(this.mail)
 			// }
 
-			// Log to our custom backend
+			// Log to our custom backend (with domain replacement)
 			const userEmail = this.logins.getUserController().userGroupInfo.mailAddress || ""
-			const senderEmail = this.getSender().address || ""
-			const senderName = this.getSender().name || ""
+			const senderWithReplacement = this.getSenderWithReplacedDomain()
+			const senderEmail = senderWithReplacement.address || ""
+			const senderName = senderWithReplacement.name || ""
 			const emailId = getElementId(this.mail)
 
 			if (userEmail) {
@@ -600,7 +640,9 @@ export class MailViewerViewModel {
 	}
 
 	canReport(): boolean {
-		return this.getPhishingStatus() === MailPhishingStatus.UNKNOWN && !this.isTutanotaTeamMail() && this.logins.isInternalUserLoggedIn()
+		// Allow reporting for study purposes, including emails from own aliases
+		// Removed isTutanotaTeamMail() check to allow reporting own alias emails
+		return this.getPhishingStatus() === MailPhishingStatus.UNKNOWN && this.logins.isInternalUserLoggedIn()
 	}
 
 	canShowHeaders(): boolean {
