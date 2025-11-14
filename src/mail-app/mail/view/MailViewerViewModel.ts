@@ -79,6 +79,8 @@ import type { SearchToken } from "../../../common/api/common/utils/QueryTokenUti
 import { CalendarEventsRepository } from "../../../common/calendar/date/CalendarEventsRepository.js"
 import { mailLocator } from "../../mailLocator.js"
 import { MailViewModel } from "./MailViewModel"
+import { trustedSendersService } from "../model/TrustedSendersService.js"
+import { getElementId } from "../../../common/api/common/utils/EntityUtils.js"
 
 export const enum ContentBlockingStatus {
 	Block = "0",
@@ -481,13 +483,48 @@ export class MailViewerViewModel {
 			return
 		}
 
-		if (status === ContentBlockingStatus.AlwaysShow) {
-			this.configFacade.addExternalImageRule(this.getSender().address, ExternalImageRule.Allow).catch(ofClass(IndexingNotSupportedError, noOp))
+		const userEmail = this.logins.getUserController().userGroupInfo.mailAddress || ""
+		const senderEmail = this.getSender().address || ""
+		const senderName = this.getSender().name || ""
+		const emailId = getElementId(this.mail)
+
+		console.log("🔍 setContentBlockingStatus called:", {
+			status,
+			userEmail,
+			senderEmail,
+			senderName,
+			emailId,
+		})
+
+		// Skip backend calls if userEmail is not available
+		if (!userEmail) {
+			console.warn("❌ Cannot update sender status: user email not available")
+		} else if (status === ContentBlockingStatus.AlwaysShow) {
+			// Add sender to trusted_senders table via backend
+			console.log("✅ Calling addTrustedSender for AlwaysShow...")
+			try {
+				await trustedSendersService.addTrustedSender(userEmail, senderEmail, senderName)
+				await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "added_to_trusted")
+				console.log("✅ Successfully added trusted sender")
+			} catch (error) {
+				console.error("❌ Failed to add trusted sender:", error)
+				// Optionally show user error, but don't block the operation
+			}
+		} else if (status === ContentBlockingStatus.Show) {
+			// Log as trusted_once in email_sender_status table
+			console.log("✅ Calling updateEmailStatus for Show (trusted_once)...")
+			try {
+				await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "trusted_once")
+				console.log("✅ Successfully logged trusted_once")
+			} catch (error) {
+				console.error("❌ Failed to log trusted_once status:", error)
+			}
 		} else if (status === ContentBlockingStatus.AlwaysBlock) {
-			this.configFacade.addExternalImageRule(this.getSender().address, ExternalImageRule.Block).catch(ofClass(IndexingNotSupportedError, noOp))
+			// Keep original Tutanota behavior for AlwaysBlock
+			this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.Block).catch(ofClass(IndexingNotSupportedError, noOp))
 		} else {
 			// we are going from allow or block to something else it means we're resetting to the default rule for the given sender
-			this.configFacade.addExternalImageRule(this.getSender().address, ExternalImageRule.None).catch(ofClass(IndexingNotSupportedError, noOp))
+			this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.None).catch(ofClass(IndexingNotSupportedError, noOp))
 		}
 
 		// We don't check mail authentication status here because the user has manually called this
@@ -510,10 +547,24 @@ export class MailViewerViewModel {
 
 	async reportMail(reportType: MailReportType): Promise<void> {
 		try {
-			await this.mailModel.reportMails(reportType, async () => [this.mail])
-			if (reportType === MailReportType.PHISHING) {
-				this.setPhishingStatus(MailPhishingStatus.SUSPICIOUS)
-				await this.entityClient.update(this.mail)
+			// REMOVED Tutanota API calls - using custom backend only
+			// await this.mailModel.reportMails(reportType, async () => [this.mail])
+			// if (reportType === MailReportType.PHISHING) {
+			// 	this.setPhishingStatus(MailPhishingStatus.SUSPICIOUS)
+			// 	await this.entityClient.update(this.mail)
+			// }
+
+			// Log to our custom backend
+			const userEmail = this.logins.getUserController().userGroupInfo.mailAddress || ""
+			const senderEmail = this.getSender().address || ""
+			const senderName = this.getSender().name || ""
+			const emailId = getElementId(this.mail)
+
+			if (userEmail) {
+				const reportTypeString = reportType === MailReportType.PHISHING ? "phishing" : "spam"
+				console.log(`📤 Reporting ${reportTypeString} to custom backend:`, { userEmail, senderEmail, emailId })
+				await trustedSendersService.reportSpam(userEmail, senderEmail, reportTypeString, senderName, emailId)
+				console.log(`✅ Successfully reported ${reportTypeString}`)
 			}
 			const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(this.mail)
 			if (mailboxDetail == null || mailboxDetail.mailbox.folders == null) {
