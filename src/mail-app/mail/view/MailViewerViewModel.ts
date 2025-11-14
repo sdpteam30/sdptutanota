@@ -84,6 +84,8 @@ import { mailLocator } from "../../mailLocator.js"
 import { UndoModel } from "../../UndoModel"
 import { isBrowser } from "../../../common/api/common/Env"
 import { CommonSystemFacade } from "../../../common/native/common/generatedipc/CommonSystemFacade"
+import { trustedSendersService } from "../model/TrustedSendersService.js"
+import { getElementId } from "../../../common/api/common/utils/EntityUtils.js"
 
 export const enum ContentBlockingStatus {
 	Block = "0",
@@ -524,13 +526,48 @@ export class MailViewerViewModel {
 			return
 		}
 
-		if (status === ContentBlockingStatus.AlwaysShow) {
-			this.configFacade.addExternalImageRule(this.getSender().address, ExternalImageRule.Allow).catch(ofClass(IndexingNotSupportedError, noOp))
+		const userEmail = this.logins.getUserController().userGroupInfo.mailAddress || ""
+		const senderEmail = this.getSender().address || ""
+		const senderName = this.getSender().name || ""
+		const emailId = getElementId(this.mail)
+
+		console.log("🔍 setContentBlockingStatus called:", {
+			status,
+			userEmail,
+			senderEmail,
+			senderName,
+			emailId,
+		})
+
+		// Skip backend calls if userEmail is not available
+		if (!userEmail) {
+			console.warn("❌ Cannot update sender status: user email not available")
+		} else if (status === ContentBlockingStatus.AlwaysShow) {
+			// Add sender to trusted_senders table via backend
+			console.log("✅ Calling addTrustedSender for AlwaysShow...")
+			try {
+				await trustedSendersService.addTrustedSender(userEmail, senderEmail, senderName)
+				await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "added_to_trusted")
+				console.log("✅ Successfully added trusted sender")
+			} catch (error) {
+				console.error("❌ Failed to add trusted sender:", error)
+				// Optionally show user error, but don't block the operation
+			}
+		} else if (status === ContentBlockingStatus.Show) {
+			// Log as trusted_once in email_sender_status table
+			console.log("✅ Calling updateEmailStatus for Show (trusted_once)...")
+			try {
+				await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "trusted_once")
+				console.log("✅ Successfully logged trusted_once")
+			} catch (error) {
+				console.error("❌ Failed to log trusted_once status:", error)
+			}
 		} else if (status === ContentBlockingStatus.AlwaysBlock) {
-			this.configFacade.addExternalImageRule(this.getSender().address, ExternalImageRule.Block).catch(ofClass(IndexingNotSupportedError, noOp))
+			// Keep original Tutanota behavior for AlwaysBlock
+			this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.Block).catch(ofClass(IndexingNotSupportedError, noOp))
 		} else {
 			// we are going from allow or block to something else it means we're resetting to the default rule for the given sender
-			this.configFacade.addExternalImageRule(this.getSender().address, ExternalImageRule.None).catch(ofClass(IndexingNotSupportedError, noOp))
+			this.configFacade.addExternalImageRule(senderEmail, ExternalImageRule.None).catch(ofClass(IndexingNotSupportedError, noOp))
 		}
 
 		// We don't check mail authentication status here because the user has manually called this
@@ -561,30 +598,27 @@ export class MailViewerViewModel {
 
 	async reportMail(reportType: MailReportType): Promise<void> {
 		try {
+			// Custom backend reporting only - no Tutanota API calls
+			const userEmail = this.logins.getUserController().userGroupInfo.mailAddress || ""
+			const senderEmail = this.getSender().address || ""
+			const senderName = this.getSender().name || ""
+			const emailId = getElementId(this.mail)
+
+			if (userEmail) {
+				const reportTypeString = reportType === MailReportType.PHISHING ? "phishing" : "spam"
+				console.log(`📤 Reporting ${reportTypeString} to custom backend:`, { userEmail, senderEmail, emailId })
+				await trustedSendersService.reportSpam(userEmail, senderEmail, reportTypeString, senderName, emailId)
+				console.log(`✅ Successfully reported ${reportTypeString}`)
+			}
+
+			// Move to spam folder (no Tutanota API reporting)
 			const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(this.mail)
-			// We should always have a mailbox, the check above throws due AssertNotNull in response.
 			if (mailboxDetail == null) {
 				return
 			}
 			const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 			const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
-
-			if (reportType === MailReportType.PHISHING) {
-				// When reported as phishing mail is moved to spam, this move can't be undone
-				await this.markAsPhishing()
-				await this.mailModel.moveMails([this.mail._id], spamFolder, MoveMode.Mails)
-				await this.mailModel.reportMails(MailReportType.PHISHING, [this.mail])
-			} else {
-				// The moving of mails into spam folder will mark them as spam
-				await moveMails({
-					mailboxModel: this.mailboxModel,
-					mailModel: this.mailModel,
-					mailIds: [this.mail._id],
-					targetFolder: spamFolder,
-					moveMode: MoveMode.Mails,
-					undoModel: this.undoModel,
-				})
-			}
+			await this.mailModel.moveMails([this.mail._id], spamFolder, MoveMode.Mails)
 		} catch (e) {
 			if (e instanceof NotFoundError) {
 				console.log("mail already moved")

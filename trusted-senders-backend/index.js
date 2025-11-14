@@ -14,6 +14,14 @@ const supabaseUrl = process.env.SUPABASE_URL
 const supabaseKey = process.env.SUPABASE_ANON_KEY
 const supabase = createClient(supabaseUrl, supabaseKey)
 
+// Table name prefix to avoid conflicts with other branches
+const TABLE_PREFIX = process.env.TABLE_PREFIX || "dev_"
+const TABLES = {
+	TRUSTED_SENDERS: `${TABLE_PREFIX}trusted_senders`,
+	EMAIL_SENDER_STATUS: `${TABLE_PREFIX}email_sender_status`,
+	PHISHING_REPORTS: `${TABLE_PREFIX}phishing_reports`,
+}
+
 // --- CORS Setup ---
 const allowedOrigins = ["http://localhost:9000"]
 
@@ -46,7 +54,7 @@ app.post("/add-trusted", async (req, res) => {
 
 	try {
 		const { data, error } = await supabase
-			.from("trusted_senders")
+			.from(TABLES.TRUSTED_SENDERS)
 			.upsert(
 				{
 					user_email,
@@ -83,7 +91,7 @@ app.post("/remove-trusted", async (req, res) => {
 
 	try {
 		// Remove from trusted_senders
-		const { error: trustedError } = await supabase.from("trusted_senders").delete().eq("user_email", user_email).eq("trusted_email", trusted_email)
+		const { error: trustedError } = await supabase.from(TABLES.TRUSTED_SENDERS).delete().eq("user_email", user_email).eq("trusted_email", trusted_email)
 
 		if (trustedError) {
 			console.error("Supabase Error removing trusted sender:", trustedError.message)
@@ -91,7 +99,7 @@ app.post("/remove-trusted", async (req, res) => {
 		}
 
 		// Remove related email statuses
-		const { error: statusError } = await supabase.from("email_sender_status").delete().eq("user_email", user_email).eq("sender_email", trusted_email)
+		const { error: statusError } = await supabase.from(TABLES.EMAIL_SENDER_STATUS).delete().eq("user_email", user_email).eq("sender_email", trusted_email)
 
 		if (statusError) {
 			console.error("Supabase Error removing statuses:", statusError.message)
@@ -113,7 +121,7 @@ app.post("/reset-email-statuses", async (req, res) => {
 	}
 
 	try {
-		const { error, count } = await supabase.from("email_sender_status").delete().eq("user_email", user_email).eq("sender_email", sender_email)
+		const { error, count } = await supabase.from(TABLES.EMAIL_SENDER_STATUS).delete().eq("user_email", user_email).eq("sender_email", sender_email)
 
 		if (error) {
 			console.error("Supabase Error resetting statuses:", error.message)
@@ -132,7 +140,7 @@ app.get("/trusted-senders/:user_email", async (req, res) => {
 
 	try {
 		const { data, error } = await supabase
-			.from("trusted_senders")
+			.from(TABLES.TRUSTED_SENDERS)
 			.select("trusted_email, trusted_name")
 			.eq("user_email", user_email)
 			.order("trusted_name", { ascending: true })
@@ -158,7 +166,7 @@ app.get("/email-status/:user_email/:email_id", async (req, res) => {
 	const { user_email, email_id } = req.params
 	try {
 		const { data, error } = await supabase
-			.from("email_sender_status")
+			.from(TABLES.EMAIL_SENDER_STATUS)
 			.select("sender_email, status")
 			.eq("user_email", user_email)
 			.eq("email_id", email_id)
@@ -210,7 +218,7 @@ app.post("/update-email-status", async (req, res) => {
 		}
 
 		const { data, error } = await supabase
-			.from("email_sender_status")
+			.from(TABLES.EMAIL_SENDER_STATUS)
 			.upsert(upsertData, {
 				onConflict: "user_email,email_id",
 			})
@@ -233,7 +241,7 @@ app.delete("/reset-single-email-status", async (req, res) => {
 		return res.status(400).json({ error: "Missing user_email or email_id" })
 	}
 	try {
-		const { error, count } = await supabase.from("email_sender_status").delete().eq("user_email", user_email).eq("email_id", email_id)
+		const { error, count } = await supabase.from(TABLES.EMAIL_SENDER_STATUS).delete().eq("user_email", user_email).eq("email_id", email_id)
 		if (error) {
 			console.error("Supabase Error resetting status:", error.message)
 			return res.status(500).json({ error: "Failed to reset email status." })
@@ -244,6 +252,74 @@ app.delete("/reset-single-email-status", async (req, res) => {
 		res.status(500).json({ error: "Failed to reset email status." })
 	}
 })
+
+app.post("/report-spam", async (req, res) => {
+	const { user_email, sender_email, sender_name = "", report_type, email_id } = req.body
+
+	if (!user_email || !sender_email || !report_type) {
+		return res.status(400).json({ error: "Missing required fields: user_email, sender_email, or report_type" })
+	}
+
+	const validReportTypes = ["phishing", "spam", "impersonation"]
+	if (!validReportTypes.includes(report_type)) {
+		return res.status(400).json({ error: "Invalid report_type. Must be: phishing, spam, or impersonation" })
+	}
+
+	try {
+		// Add to phishing_reports table (you'll need to create this table in Supabase)
+		const { data: reportData, error: reportError } = await supabase
+			.from(TABLES.PHISHING_REPORTS)
+			.insert({
+				user_email,
+				sender_email,
+				sender_name,
+				report_type,
+				email_id,
+			})
+			.select()
+
+		if (reportError) {
+			console.error("Supabase Error adding phishing report:", reportError.message)
+			return res.status(500).json({ error: "Failed to add phishing report." })
+		}
+
+		// Also update email_sender_status with appropriate status
+		if (email_id) {
+			const status = report_type === "phishing" ? "reported_phishing" : report_type === "impersonation" ? "reported_impersonation" : "reported_phishing"
+
+			const { error: statusError } = await supabase
+				.from(TABLES.EMAIL_SENDER_STATUS)
+				.upsert(
+					{
+						user_email,
+						email_id,
+						sender_email,
+						status,
+						interaction_type: "interacted",
+					},
+					{
+						onConflict: "user_email,email_id",
+					},
+				)
+				.select()
+
+			if (statusError) {
+				console.error("Supabase Error updating email status:", statusError.message)
+				// Don't fail the request, report was still recorded
+			}
+		}
+
+		console.log(`✅ Reported ${sender_email} as ${report_type} by user ${user_email}`)
+		res.status(201).json({
+			message: `${report_type} report added successfully.`,
+			data: reportData[0],
+		})
+	} catch (err) {
+		console.error("Error reporting spam/phishing:", err.message)
+		res.status(500).json({ error: "Failed to report spam/phishing." })
+	}
+})
+
 app.get("/", (req, res) => {
 	res.send("Trusted Senders Backend is Running with Supabase...")
 })
