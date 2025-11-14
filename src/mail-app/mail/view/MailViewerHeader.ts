@@ -637,20 +637,22 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	}
 
 	private renderPhishingWarning(viewModel: MailViewerViewModel): Children | null {
-		if (viewModel.isMailSuspicious()) {
-			return m(InfoBanner, {
-				message: "phishingMessageBody_msg",
-				icon: Icons.Warning,
-				type: BannerType.Warning,
-				helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.Phishing : null,
-				buttons: [
-					{
-						label: "markAsNotPhishing_action",
-						click: () => viewModel.markAsNotPhishing().then(() => m.redraw()),
-					},
-				],
-			})
-		}
+		// Always disabled - never show phishing warning
+		return null
+		// if (viewModel.isMailSuspicious()) {
+		// 	return m(InfoBanner, {
+		// 		message: "phishingMessageBody_msg",
+		// 		icon: Icons.Warning,
+		// 		type: BannerType.Warning,
+		// 		helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.Phishing : null,
+		// 		buttons: [
+		// 			{
+		// 				label: "markAsNotPhishing_action",
+		// 				click: () => viewModel.markAsNotPhishing().then(() => m.redraw()),
+		// 			},
+		// 		],
+		// 	})
+		// }
 	}
 
 	private renderHardAuthenticationFailWarning(viewModel: MailViewerViewModel): Children | null {
@@ -709,10 +711,8 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	}
 
 	private renderExternalContentBanner(attrs: MailViewerHeaderAttrs): Children | null {
-		// only show banner when there are blocked images and the user hasn't made a decision about how to handle them
-		if (attrs.viewModel.getContentBlockingStatus() !== ContentBlockingStatus.Block) {
-			return null
-		}
+		// Always show the external content blocked banner
+		// Original condition: if (attrs.viewModel.getContentBlockingStatus() !== ContentBlockingStatus.Block) { return null }
 
 		const showButton: BannerButtonAttrs = {
 			label: "showBlockedContent_action",
