@@ -1,5 +1,6 @@
 build
 bindings
+**/.env
 cache
 target
 build-calendar-app
