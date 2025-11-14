@@ -3,7 +3,11 @@ version: '3.8'
 services:
   # All-in-one Tutanota service (frontend + backend + CORS proxy)
   # Use BUILD_BRANCH environment variable to switch branches (default: sean-dev1)
-  # Example: BUILD_BRANCH=no-antiphishing-header docker-compose up --build
+  # Available branches:
+  #   - sean-dev1: Full MobyPhish anti-phishing interface with custom header
+  #   - default-antiphishing-header: Default Tutanota anti-phishing header (upstream)
+  #   - no-antiphishing-header: No anti-phishing header, dropdown reporting only
+  # Example: BUILD_BRANCH=default-antiphishing-header docker-compose up --build
   tutanota:
     build:
       context: .

@@ -4,7 +4,8 @@
 # Usage: ./switch-branch.sh [branch-name]
 # 
 # Available branches:
-#   sean-dev1 (default) - Full anti-phishing interface with header
+#   sean-dev1 (default) - Full MobyPhish anti-phishing interface with custom header
+#   default-antiphishing-header - Default Tutanota anti-phishing header (upstream)
 #   no-antiphishing-header - No anti-phishing header, only dropdown reporting
 
 set -e
@@ -23,7 +24,8 @@ echo "  2. Build the application from branch '$BRANCH'"
 echo "  3. Start the services"
 echo ""
 echo "Available branches:"
-echo "  - sean-dev1 (default): Full anti-phishing interface with banner"
+echo "  - sean-dev1 (default): Full MobyPhish anti-phishing interface with custom header"
+echo "  - default-antiphishing-header: Default Tutanota anti-phishing header (upstream)"
 echo "  - no-antiphishing-header: No anti-phishing header, dropdown reporting only"
 echo ""
 echo "=================================================="
