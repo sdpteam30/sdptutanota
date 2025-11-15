@@ -567,9 +567,60 @@ export class MailViewerViewModel {
 		}
 
 		// We don't check mail authentication status here because the user has manually called this
-		this.sanitizeResult = await this.sanitizeMailBody(this.mail, status === ContentBlockingStatus.Block || status === ContentBlockingStatus.AlwaysBlock)
+		// When status is Show or AlwaysShow, we should not block external content
+		// When status is Block or AlwaysBlock, we should block external content
+		const shouldBlockExternalContent = status === ContentBlockingStatus.Block || status === ContentBlockingStatus.AlwaysBlock
+		this.sanitizeResult = await this.sanitizeMailBody(this.mail, shouldBlockExternalContent)
 		//follow-up actions resulting from a changed blocking status must start after sanitization finished
 		this.contentBlockingStatus = status
+		m.redraw() // Redraw to update the mail body with new sanitization
+
+		// If user allowed content (Show or AlwaysShow), load inline images if they haven't been loaded yet
+		if ((status === ContentBlockingStatus.Show || status === ContentBlockingStatus.AlwaysShow) && this.sanitizeResult.inlineImageCids.length > 0) {
+			// Ensure attachments are loaded first
+			if (this.attachments.length === 0 && this.mail.attachments.length > 0) {
+				// Attachments haven't been loaded yet, load them first
+				try {
+					const files = await this.cryptoFacade.enforceSessionKeyUpdateIfNeeded(this._mail, await this.mailFacade.loadAttachments(this.mail))
+					this.attachments = files
+				} catch (e) {
+					console.error("Failed to load attachments for inline images:", e)
+				}
+			}
+
+			// Load inline images if we have attachments
+			// Note: We always reload inline images when allowing content, even if they were loaded before,
+			// because the sanitization might have changed the CIDs or structure
+			if (this.attachments.length > 0) {
+				try {
+					// Clear any previously loaded inline images to force reload
+					if (this.loadedInlineImages) {
+						revokeInlineImages(this.loadedInlineImages)
+						this.loadedInlineImages = null
+					}
+
+					// Load the inline images
+					this.loadedInlineImages = await loadInlineImages(this.fileController, this.attachments, this.sanitizeResult.inlineImageCids)
+
+					// Trigger multiple redraws and notifications to ensure MailViewer replaces inline images
+					// First redraw to update the mail body with new sanitization
+					m.redraw()
+
+					// Wait for DOM to update, then trigger load complete notification
+					// This will cause MailViewer to call replaceInlineImages() after the mail body is rendered
+					await Promise.resolve()
+					setTimeout(() => {
+						this.loadCompleteNotification(null)
+						// Trigger another redraw after notification to ensure replacement happens
+						setTimeout(() => {
+							m.redraw()
+						}, 50)
+					}, 150)
+				} catch (e) {
+					console.error("Failed to load inline images after allowing content:", e)
+				}
+			}
+		}
 	}
 
 	async markAsNotPhishing(): Promise<void> {
@@ -816,12 +867,17 @@ export class MailViewerViewModel {
 				this.loadingAttachments = false
 				m.redraw()
 
+				// Only load inline images if content blocking status allows it (Show or AlwaysShow)
+				// This ensures inline images are not loaded until user explicitly allows content
+				const canLoadInlineImages =
+					this.contentBlockingStatus === ContentBlockingStatus.Show || this.contentBlockingStatus === ContentBlockingStatus.AlwaysShow
+
 				// We can load any other part again because they are cached but inline images are fileData e.g. binary blobs so we don't cache them like
 				// entities. So instead we check here whether we need to load them.
-				if (this.loadedInlineImages == null) {
+				if (canLoadInlineImages && this.loadedInlineImages == null && inlineCids.length > 0) {
 					this.loadedInlineImages = await loadInlineImages(this.fileController, files, inlineCids)
+					m.redraw()
 				}
-				m.redraw()
 			} catch (e) {
 				if (e instanceof NotFoundError) {
 					console.log("could load attachments as they have been moved/deleted already", e)
@@ -1095,6 +1151,7 @@ export class MailViewerViewModel {
 		const sanitizeResult = htmlSanitizer.sanitizeFragment(urlified, {
 			blockExternalContent,
 			allowRelativeLinks: isTutanotaTeamMail(mail),
+			usePlaceholderForInlineImages: true, // Always use placeholders for inline images so they can be replaced later
 			highlightedStrings: this.highlightedStrings,
 		})
 		const { fragment, inlineImageCids, links, blockedExternalContent } = sanitizeResult
