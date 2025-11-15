@@ -25,6 +25,7 @@ import { ListAutoSelectBehavior, MailListDisplayMode } from "../../../common/mis
 import { MailModel } from "../model/MailModel.js"
 
 import { isOfTypeOrSubfolderOf } from "../model/MailChecks.js"
+import { getEnabledMailAddressesWithUser } from "../../../common/mailFunctionality/SharedMailUtils.js"
 
 export type MailViewerViewModelFactory = (options: CreateMailViewerOptions) => MailViewerViewModel
 
@@ -114,18 +115,23 @@ export class ConversationViewModel {
 					return
 				}
 				const mail = await this.entityClient.load(MailTypeRef, entry.mail)
-				let index = findLastIndex(conversation, (i) => firstBiggerThanSecond(getElementId(entry), elementIdPart(i.entryId)))
-				if (index < 0) {
-					index = conversation.length
-				} else {
-					index = index + 1
+				// Filter out emails sent by the user (from their aliases)
+				// Always show the primary mail even if it's sent by the user
+				const userMailAddresses = await this.getUserMailAddresses()
+				if (isSameId(mail._id, this.primaryMail._id) || !this.isMailSentByUser(mail, userMailAddresses)) {
+					let index = findLastIndex(conversation, (i) => firstBiggerThanSecond(getElementId(entry), elementIdPart(i.entryId)))
+					if (index < 0) {
+						index = conversation.length
+					} else {
+						index = index + 1
+					}
+					conversation.splice(index, 0, {
+						type_ref: MailTypeRef,
+						viewModel: this.viewModelFactory({ ...this.options, mail }),
+						entryId: entry._id,
+					})
+					this.onUiUpdate()
 				}
-				conversation.splice(index, 0, {
-					type_ref: MailTypeRef,
-					viewModel: this.viewModelFactory({ ...this.options, mail }),
-					entryId: entry._id,
-				})
-				this.onUiUpdate()
 			}
 		} catch (e) {
 			if (e instanceof NotFoundError) {
@@ -182,7 +188,14 @@ export class ConversationViewModel {
 
 			if (mail) {
 				// We do not show trashed drafts
-				if (mail.state === MailState.DRAFT && (await this.isInTrash(mail))) {
+				// Also filter out emails sent by the user (from their aliases)
+				// Always show the primary mail even if it's sent by the user
+				const userMailAddresses = await this.getUserMailAddresses()
+				const isDraftInTrash = mail.state === MailState.DRAFT && (await this.isInTrash(mail))
+				const isSentByUser = this.isMailSentByUser(mail, userMailAddresses)
+				const isPrimaryMail = isSameId(mail._id, this.primaryMail._id)
+
+				if (isDraftInTrash || (!isPrimaryMail && isSentByUser)) {
 					conversation.splice(oldItemIndex, 1)
 				} else {
 					conversation[oldItemIndex] = {
@@ -218,7 +231,7 @@ export class ConversationViewModel {
 						this.conversation = this.conversationItemsForSelectedMailOnly()
 					} else {
 						const allMails = await this.loadMails(entries)
-						this.conversation = this.createConversationItems(entries, allMails)
+						this.conversation = await this.createConversationItems(entries, allMails)
 					}
 				}
 			} catch (e) {
@@ -236,22 +249,29 @@ export class ConversationViewModel {
 		}
 	}
 
-	private createConversationItems(conversationEntries: ConversationEntry[], allMails: Map<Id, Mail>) {
+	private async createConversationItems(conversationEntries: ConversationEntry[], allMails: Map<Id, Mail>) {
 		const newConversation: ConversationItem[] = []
+		// Get user's email addresses to filter out emails sent by the user
+		const userMailAddresses = await this.getUserMailAddresses()
+
 		for (const c of conversationEntries) {
 			const mail = c.mail && allMails.get(elementIdPart(c.mail))
 
 			if (mail) {
-				newConversation.push({
-					type_ref: MailTypeRef,
-					viewModel: isSameId(mail._id, this.options.mail._id)
-						? this._primaryViewModel
-						: this.viewModelFactory({
-								...this.options,
-								mail,
-							}),
-					entryId: c._id,
-				})
+				// Filter out emails sent by the user (from their aliases)
+				// Always show the primary mail even if it's sent by the user
+				if (isSameId(mail._id, this.options.mail._id) || !this.isMailSentByUser(mail, userMailAddresses)) {
+					newConversation.push({
+						type_ref: MailTypeRef,
+						viewModel: isSameId(mail._id, this.options.mail._id)
+							? this._primaryViewModel
+							: this.viewModelFactory({
+									...this.options,
+									mail,
+								}),
+						entryId: c._id,
+					})
+				}
 			}
 		}
 		return newConversation
@@ -260,6 +280,9 @@ export class ConversationViewModel {
 	private async loadMails(conversationEntries: ConversationEntry[]): Promise<Map<Id, Mail>> {
 		const byList = groupBy(conversationEntries, (c) => c.mail && listIdPart(c.mail))
 		const allMails: Map<Id, Mail> = new Map()
+		// Get user's email addresses to filter out emails sent by the user
+		const userMailAddresses = await this.getUserMailAddresses()
+
 		for (const [listId, conversations] of byList.entries()) {
 			if (!listId) continue
 			const loaded = await this.entityClient.loadMultiple(
@@ -269,9 +292,15 @@ export class ConversationViewModel {
 			)
 
 			for (const mail of loaded) {
-				// If the mail is a draft and is the primary mail, we will show it no matter what
-				// otherwise, if a draft is in trash we will not show it
-				if (isSameId(mail._id, this.primaryMail._id) || mail.state !== MailState.DRAFT || !(await this.isInTrash(mail))) {
+				// If the mail is the primary mail, we will show it no matter what
+				// Otherwise, filter out:
+				// - Drafts in trash
+				// - Emails sent by the user (from their aliases)
+				const isPrimaryMail = isSameId(mail._id, this.primaryMail._id)
+				const isDraftInTrash = mail.state === MailState.DRAFT && (await this.isInTrash(mail))
+				const isSentByUser = this.isMailSentByUser(mail, userMailAddresses)
+
+				if (isPrimaryMail || (!isDraftInTrash && !isSentByUser)) {
 					allMails.set(getElementId(mail), mail)
 				}
 			}
@@ -373,5 +402,31 @@ export class ConversationViewModel {
 
 	private showFullConversation(): boolean {
 		return this.mailModel.canUseConversationView() && !this.conversationPrefProvider.getConversationViewShowOnlySelectedMail()
+	}
+
+	/**
+	 * Get user's email addresses (including aliases) for filtering sent emails
+	 */
+	private async getUserMailAddresses(): Promise<Set<string>> {
+		try {
+			const mailboxDetails = await this.mailModel.getMailboxDetailsForMail(this.primaryMail)
+			if (!mailboxDetails) {
+				return new Set()
+			}
+			// Get user's email addresses from the primary viewModel's logins
+			const userGroupInfo = this._primaryViewModel.logins.getUserController().userGroupInfo
+			const enabledAddresses = getEnabledMailAddressesWithUser(mailboxDetails, userGroupInfo)
+			return new Set(enabledAddresses.map((addr) => addr.toLowerCase()))
+		} catch (e) {
+			console.warn("Failed to get user mail addresses for filtering:", e)
+			return new Set()
+		}
+	}
+
+	/**
+	 * Check if a mail was sent by the user (from any of their aliases)
+	 */
+	private isMailSentByUser(mail: Mail, userMailAddresses: Set<string>): boolean {
+		return mail.state === MailState.SENT && userMailAddresses.has(mail.sender.address.toLowerCase())
 	}
 }

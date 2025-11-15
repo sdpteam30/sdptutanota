@@ -69,7 +69,7 @@ import { CryptoFacade } from "../../../common/api/worker/crypto/CryptoFacade.js"
 import { AttachmentType, getAttachmentType } from "../../../common/gui/AttachmentBubble.js"
 import type { ContactImporter } from "../../contacts/ContactImporter.js"
 import { InlineImages, revokeInlineImages } from "../../../common/mailFunctionality/inlineImagesUtils.js"
-import { getDefaultSender, getEnabledMailAddressesWithUser, getMailboxName } from "../../../common/mailFunctionality/SharedMailUtils.js"
+import { getDefaultSender, getEnabledMailAddressesWithUser, getMailboxName, isTutaMailAddress } from "../../../common/mailFunctionality/SharedMailUtils.js"
 import { getDisplayedSender, getMailBodyText, MailAddressAndName } from "../../../common/api/common/CommonMailUtils.js"
 import { MailModel, MoveMode } from "../model/MailModel.js"
 import { isNoReplyTeamAddress, isSystemNotification, loadMailDetails } from "./MailViewerUtils.js"
@@ -754,26 +754,45 @@ export class MailViewerViewModel {
 			console.log("Error getting external image rule:", e)
 			return ExternalImageRule.None
 		})
-		const isAllowedAndAuthenticatedExternalSender =
-			externalImageRule === ExternalImageRule.Allow && this.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED)
 		// We should not try to sanitize body while we still animate because it's a heavy operation.
 		await delayBodyRenderingUntil
 		this.renderIsDelayed = false
 
-		this.sanitizeResult = await this.sanitizeMailBody(mail, !isAllowedAndAuthenticatedExternalSender)
+		// Check if email has external content before sanitization
+		// This ensures we show the banner for any email with external content, including user's own aliases
+		const rawBody = this.getMailBody()
+		const hasExternalContent =
+			/<img[^>]+src=["'](https?:\/\/|www\.)/i.test(rawBody) ||
+			/<img[^>]+srcset=["'][^"']*https?:\/\//i.test(rawBody) ||
+			/background[=:]["'][^"']*https?:\/\//i.test(rawBody) ||
+			/url\(["']?https?:\/\//i.test(rawBody)
+
+		// Always block external content initially to show the banner for any sender (including user's own aliases)
+		// The banner will be hidden after user interaction
+		this.sanitizeResult = await this.sanitizeMailBody(mail, true)
 
 		if (!isDraft) {
 			this.checkMailForPhishing(mail, this.sanitizeResult.links)
 		}
 
-		this.contentBlockingStatus =
-			externalImageRule === ExternalImageRule.Block
-				? ContentBlockingStatus.AlwaysBlock
-				: isAllowedAndAuthenticatedExternalSender
-					? ContentBlockingStatus.AlwaysShow
-					: this.sanitizeResult.blockedExternalContent > 0
-						? ContentBlockingStatus.Block
-						: ContentBlockingStatus.NoExternalContent
+		// Check if sender is from a Tuta domain - always show banner for Tuta emails
+		const senderAddress = mail.sender.address
+		const isTutaSender = isTutaMailAddress(senderAddress)
+
+		// Always show the banner initially if there's blocked content OR if we detected external content OR if sender is from Tuta domain
+		// This ensures banner shows for all senders, including user's own aliases and other Tuta accounts
+		// Force status to Block initially for any email with external content or from Tuta domain, so banner shows for all senders
+		// Only use AlwaysBlock if explicitly set AND there's no content to block AND not a Tuta sender
+		if (this.sanitizeResult.blockedExternalContent > 0 || hasExternalContent || isTutaSender) {
+			// Always show banner initially when there's blocked content, external content detected, or sender is from Tuta domain
+			// regardless of external image rules
+			this.contentBlockingStatus = ContentBlockingStatus.Block
+		} else if (externalImageRule === ExternalImageRule.Block) {
+			// Only use AlwaysBlock if explicitly set and there's no content to block
+			this.contentBlockingStatus = ContentBlockingStatus.AlwaysBlock
+		} else {
+			this.contentBlockingStatus = ContentBlockingStatus.NoExternalContent
+		}
 		m.redraw()
 		this.renderedMail = this.mail
 		return this.sanitizeResult.inlineImageCids
