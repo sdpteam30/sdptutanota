@@ -391,27 +391,33 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			}
 		}
 
-		// Show Blocked Content button action
-		const showBlockedContentAction = async () => {
-			console.log(`🔒 MOBYPHISH_LOG: Show Blocked Content button clicked`)
-
-			// Register as "trusted_once" in the database first
-			await viewModel.updateSenderStatus("trusted_once")
-
-			// Always unblock content regardless of sender status
-			// Force re-sanitization by temporarily changing status if needed
-			// This ensures the sanitization always happens, even if status was already Show
+		// Toggle Blocked Content button action (shows or blocks content based on current state)
+		const toggleBlockedContentAction = async () => {
 			const currentStatus = viewModel.getContentBlockingStatus()
-			if (currentStatus === ContentBlockingStatus.Show || currentStatus === ContentBlockingStatus.AlwaysShow) {
-				// If already Show/AlwaysShow, temporarily set to Block to force re-sanitization
-				await viewModel.setContentBlockingStatus(ContentBlockingStatus.Block)
-			}
-			// Now set to Show - this will re-sanitize with blockExternalContent = false
-			// This unblocks all images and links regardless of sender authentication status
-			await viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
+			const isContentBlocked = currentStatus === ContentBlockingStatus.Block || currentStatus === ContentBlockingStatus.AlwaysBlock
 
-			// Force a redraw to ensure the mail body re-renders with unblocked content
-			m.redraw()
+			if (isContentBlocked) {
+				// Content is blocked - unblock it
+				console.log(`🔒 MOBYPHISH_LOG: Show Blocked Content button clicked`)
+
+				// Register as "trusted_once" in the database first
+				await viewModel.updateSenderStatus("trusted_once")
+
+				// Unblock content - re-sanitize with blockExternalContent = false
+				await viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
+
+				// Force a redraw to ensure the mail body re-renders with unblocked content
+				m.redraw()
+			} else {
+				// Content is shown - block it again
+				console.log(`🔒 MOBYPHISH_LOG: Block Content button clicked`)
+
+				// Block content - re-sanitize with blockExternalContent = true
+				await viewModel.setContentBlockingStatus(ContentBlockingStatus.Block)
+
+				// Force a redraw to ensure the mail body re-renders with blocked content
+				m.redraw()
+			}
 		}
 
 		const showInfoModal = () => {
@@ -443,23 +449,10 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		let bannerIcon: Icons = Icons.Warning
 		let buttons: BannerButtonAttrs[] = []
 
-		if (senderStatus === "trusted_once") {
-			messageKey = "mobyPhish_sender_trusted_once"
-			bannerType = BannerType.Info
-			bannerIcon = Icons.CircleCheckmark
-			buttons = [
-				{
-					label: "mobyPhish_untrust",
-					icon: m(Icon, { icon: Icons.Trash }),
-					click: async () => {
-						console.log(
-							`🔒 MOBYPHISH_LOG: Remove from whitelist button clicked for sender="${getDisplayedSenderWithDomainReplacement(viewModel.mail).address}"`,
-						)
-						await viewModel.resetSenderStatusForCurrentEmail()
-					},
-				},
-			]
-		} else if (senderStatus === "confirmed" || senderStatus === "added_to_trusted") {
+		// Only hide banner if sender is explicitly confirmed
+		// For "trusted_once" status (content shown but not confirmed), keep banner visible with all buttons
+		// so users can still add sender to known senders list
+		if (senderStatus === "confirmed" || senderStatus === "added_to_trusted") {
 			// Only show confirmed message if status is explicitly "confirmed" or "added_to_trusted"
 			// Don't auto-confirm based on just being in trusted list without explicit status
 			messageKey = "mobyPhish_sender_confirmed"
@@ -497,19 +490,27 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 			// Default case - show different buttons based on screen size
 			// Check if content is blocked to show "Show Blocked Content" button
-			const isContentBlocked = viewModel.getContentBlockingStatus() === ContentBlockingStatus.Block
+			// Note: We show the button even if content is already unblocked (status is "trusted_once")
+			// so users can still add sender to known senders list and toggle content blocking
+			const isContentBlocked =
+				viewModel.getContentBlockingStatus() === ContentBlockingStatus.Block ||
+				viewModel.getContentBlockingStatus() === ContentBlockingStatus.AlwaysBlock
+			const isContentUnblocked =
+				viewModel.getContentBlockingStatus() === ContentBlockingStatus.Show || viewModel.getContentBlockingStatus() === ContentBlockingStatus.AlwaysShow
 
-			// Show Blocked Content button (if content is blocked)
-			const showBlockedContentButton: BannerButtonAttrs | null = isContentBlocked
-				? {
-						label: "showBlockedContent_action",
-						icon: m(Icon, {
-							icon: Icons.Picture,
-							style: { marginRight: px(size.hpad_small) },
-						}),
-						click: showBlockedContentAction,
-					}
-				: null
+			// Toggle Blocked Content button - changes label based on current state
+			// Shows "Show Blocked Content" when blocked, "Block external content" when shown
+			const toggleBlockedContentButton: BannerButtonAttrs | null =
+				senderStatus !== "confirmed" && senderStatus !== "added_to_trusted"
+					? {
+							label: isContentBlocked ? "showBlockedContent_action" : "disallowExternalContent_action",
+							icon: m(Icon, {
+								icon: Icons.Picture,
+								style: { marginRight: px(size.hpad_small) },
+							}),
+							click: toggleBlockedContentAction,
+						}
+					: null
 
 			if (styles.isSingleColumnLayout()) {
 				// Mobile: Show only more button with dropdown containing all actions
@@ -519,11 +520,14 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 						width: 220,
 						lazyButtons: async () => {
 							const dropdownButtons: Array<DropdownButtonAttrs> = []
-							if (showBlockedContentButton) {
+							if (toggleBlockedContentButton) {
+								const isContentBlocked =
+									viewModel.getContentBlockingStatus() === ContentBlockingStatus.Block ||
+									viewModel.getContentBlockingStatus() === ContentBlockingStatus.AlwaysBlock
 								dropdownButtons.push({
-									label: "showBlockedContent_action",
+									label: isContentBlocked ? "showBlockedContent_action" : "disallowExternalContent_action",
 									icon: Icons.Picture,
-									click: showBlockedContentAction,
+									click: toggleBlockedContentAction,
 								})
 							}
 							dropdownButtons.push(
@@ -562,8 +566,8 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					click: reportAction,
 				}
 
-				// Add buttons in order: Show Blocked Content (if applicable), Known Sender, Report Phishing, Learn More
-				buttons = [showBlockedContentButton, confirmButton, reportButton, learnMoreButton].filter(isNotNull)
+				// Add buttons in order: Toggle Blocked Content (if applicable), Known Sender, Report Phishing, Learn More
+				buttons = [toggleBlockedContentButton, confirmButton, reportButton, learnMoreButton].filter(isNotNull)
 			}
 		}
 
