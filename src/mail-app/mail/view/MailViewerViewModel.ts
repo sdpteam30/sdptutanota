@@ -945,49 +945,60 @@ export class MailViewerViewModel {
 	}
 
 	async reportMail(reportType: MailReportType): Promise<void> {
-		if (reportType === MailReportType.PHISHING) {
-			console.log(`🔒 MOBYPHISH_LOG: Report phishing button clicked...`)
-		}
+		// Add logging for both phishing and spam reports
+		const reportTypeString = reportType === MailReportType.PHISHING ? "phishing" : "spam"
+		console.log(
+			`🔒 MOBYPHISH_LOG: Report ${reportTypeString} button clicked in three dots menu for sender="${this.getSender().address}", mailId="${
+				this.mail._id[1]
+			}", userEmail="${this.logins.getUserController().loginUsername}"`,
+		)
 
 		try {
 			// NO Tutanota API calls for any report type in no-antiphishing-header branch
-			// Only use our custom backend for phishing reports
-			if (reportType === MailReportType.PHISHING) {
-				// Update backend database with reported_phishing status
-				const senderEmail = this.getSender().address
-				const userEmail = this.logins.getUserController().loginUsername
+			// Use our custom backend for both phishing and spam reports
+			const senderWithReplacement = getDisplayedSenderWithDomainReplacement(this.mail)
+			const senderEmail = senderWithReplacement.address || ""
+			const senderName = senderWithReplacement.name || ""
+			const userEmail = this.logins.getUserController().loginUsername
+			const emailId = this.mail._id[1]
 
-				try {
-					const response = await fetch(`${TRUSTED_SENDERS_API_URL}/update-email-status`, {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							user_email: userEmail,
-							email_id: this.mail._id[1],
-							sender_email: senderEmail,
-							status: "reported_phishing",
-							interaction_type: "interacted",
-						}),
-					})
+			try {
+				// Call the report-spam endpoint which handles both phishing and spam
+				const response = await fetch(`${TRUSTED_SENDERS_API_URL}/report-spam`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						user_email: userEmail,
+						email_id: emailId,
+						sender_email: senderEmail,
+						sender_name: senderName,
+						report_type: reportTypeString,
+					}),
+				})
 
-					if (response.ok) {
-						console.log(
-							`🔒 MOBYPHISH_LOG: Successfully reported phishing to backend database via three dots menu for sender="${senderEmail}", mailId="${this.mail._id[1]}", userEmail="${userEmail}"`,
-						)
-					} else {
-						console.error(
-							`🔒 MOBYPHISH_LOG: Failed to report phishing to backend database via three dots menu for sender="${senderEmail}", status=${response.status}`,
-						)
-					}
-				} catch (fetchError) {
-					console.error(`🔒 MOBYPHISH_LOG: Error calling backend API to report phishing for sender="${senderEmail}":`, fetchError)
+				if (response.ok) {
+					console.log(
+						`🔒 MOBYPHISH_LOG: Successfully reported ${reportTypeString} to backend database via three dots menu for sender="${senderEmail}", mailId="${emailId}", userEmail="${userEmail}"`,
+					)
+				} else {
+					console.error(
+						`🔒 MOBYPHISH_LOG: Failed to report ${reportTypeString} to backend database via three dots menu for sender="${senderEmail}", status=${response.status}`,
+					)
 				}
-				// Removed: Tutanota API calls (markAsPhishing, moveMails, reportMails)
+			} catch (fetchError) {
+				console.error(`🔒 MOBYPHISH_LOG: Error calling backend API to report ${reportTypeString} for sender="${senderEmail}":`, fetchError)
 			}
+			// Removed: Tutanota API calls (markAsPhishing, moveMails, reportMails)
 		} catch (e) {
 			if (e instanceof NotFoundError) {
 				console.log("mail already moved")
 			} else {
+				console.error(
+					`🔒 MOBYPHISH_LOG: Failed to report ${reportTypeString} via three dots menu for sender="${this.getSender().address}", mailId="${
+						this.mail._id[1]
+					}", error:`,
+					e,
+				)
 				throw e
 			}
 		}
@@ -1002,7 +1013,11 @@ export class MailViewerViewModel {
 	}
 
 	canReport(): boolean {
-		return this.getPhishingStatus() === MailPhishingStatus.UNKNOWN && !this.isTutanotaTeamMail() && this.logins.isInternalUserLoggedIn()
+		// Allow reporting for study purposes, including emails from own aliases
+		// Removed isTutanotaTeamMail() check to allow reporting own alias emails
+		// Removed phishing status check to allow reporting even if email was previously reported
+		// Users can always report emails, even if they were reported before and re-added to inbox
+		return this.logins.isInternalUserLoggedIn()
 	}
 
 	canShowHeaders(): boolean {

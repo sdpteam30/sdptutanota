@@ -234,7 +234,16 @@ app.post("/update-email-status", async (req, res) => {
 		return res.status(400).json({ error: "Missing fields." })
 	}
 
-	const validStatuses = ["confirmed", "denied", "added_to_trusted", "removed_from_trusted", "reported_phishing", "reported_impersonation", "trusted_once"]
+	const validStatuses = [
+		"confirmed",
+		"denied",
+		"added_to_trusted",
+		"removed_from_trusted",
+		"reported_phishing",
+		"reported_spam",
+		"reported_impersonation",
+		"trusted_once",
+	]
 	if (!validStatuses.includes(status)) {
 		return res.status(400).json({ error: "Invalid status value." })
 	}
@@ -318,6 +327,136 @@ app.delete("/reset-single-email-status", async (req, res) => {
 		res.status(500).json({ error: "Failed to reset email status." })
 	}
 })
+app.post("/report-spam", async (req, res) => {
+	const { user_email, sender_email, sender_name = "", report_type = "phishing", email_id } = req.body
+
+	if (!user_email || !sender_email || !email_id) {
+		return res.status(400).json({ error: "Missing required fields: user_email, sender_email, or email_id" })
+	}
+
+	// Validate report_type
+	const validReportTypes = ["phishing", "spam"]
+	if (!validReportTypes.includes(report_type)) {
+		return res.status(400).json({ error: "Invalid report_type. Must be 'phishing' or 'spam'" })
+	}
+
+	try {
+		// Determine the status for email_sender_status table
+		// "reported_phishing" for phishing reports, "reported_spam" for spam reports
+		const status = report_type === "phishing" ? "reported_phishing" : "reported_spam"
+
+		// Always log to phishing_reports table with report_type "phishing" (generic)
+		// This ensures all reports are tracked generically as phishing
+		// If the table doesn't exist or has issues, we'll log but not fail
+		// Note: phishing_reports table uses "mail_id" (not "email_id") and requires it
+		const phishingReportData = {
+			user_email,
+			sender_email,
+			mail_id: email_id, // phishing_reports table uses "mail_id" column name
+			report_type: "phishing", // Always use "phishing" as generic report type
+			interaction_type: "interacted",
+		}
+		const { error: reportError } = await supabase.from("phishing_reports").insert(phishingReportData)
+
+		if (reportError) {
+			console.error("Supabase Error inserting phishing report:", reportError)
+			console.error("Full error details:", JSON.stringify(reportError, null, 2))
+			// Don't fail the request if phishing_reports table doesn't exist or has issues
+			// The email_sender_status update is more critical
+		} else {
+			console.log(`✅ Added ${report_type} report to phishing_reports for ${user_email}`)
+		}
+
+		// Log to email_sender_status table with specific status (reported_phishing or reported_spam)
+		const { error: statusError } = await supabase.from("email_sender_status").upsert(
+			{
+				user_email,
+				email_id,
+				sender_email,
+				status,
+				interaction_type: "interacted",
+			},
+			{
+				onConflict: "user_email,email_id",
+			},
+		)
+
+		if (statusError) {
+			console.error("Supabase Error updating email status:", statusError)
+			console.error("Full error details:", JSON.stringify(statusError, null, 2))
+			return res.status(500).json({
+				error: "Failed to update email status.",
+				details: statusError.message,
+				code: statusError.code,
+			})
+		} else {
+			console.log(`✅ Updated email_sender_status with status "${status}" for ${user_email}`)
+		}
+
+		// Also explicitly add to dev_phishing_reports table (regardless of prefix)
+		// Only if the table exists
+		// Note: dev_phishing_reports table likely uses "mail_id" (not "email_id") and may not have "interaction_type"
+		try {
+			const devPhishingReportData = {
+				user_email,
+				sender_email,
+				mail_id: email_id, // dev_phishing_reports table likely uses "mail_id" column name
+				report_type: "phishing", // Always use "phishing" as generic report type
+			}
+			// Don't include interaction_type if the table doesn't have it
+			const { error: devReportError } = await supabase.from("dev_phishing_reports").insert(devPhishingReportData)
+
+			if (devReportError) {
+				console.error("Supabase Error inserting dev phishing report:", devReportError.message)
+				// Don't fail the request, just log the error
+			} else {
+				console.log(`✅ Added ${report_type} report to dev_phishing_reports for ${user_email}`)
+			}
+		} catch (devReportErr) {
+			console.warn("dev_phishing_reports table may not exist:", devReportErr.message)
+		}
+
+		// Also explicitly update dev_email_sender_status table (regardless of prefix)
+		// Only if the table exists
+		try {
+			const { error: devStatusError } = await supabase.from("dev_email_sender_status").upsert(
+				{
+					user_email,
+					email_id,
+					sender_email,
+					status,
+					interaction_type: "interacted",
+				},
+				{
+					onConflict: "user_email,email_id",
+				},
+			)
+
+			if (devStatusError) {
+				console.error("Supabase Error updating dev email status:", devStatusError.message)
+				// Don't fail the request, just log the error
+			} else {
+				console.log(`✅ Updated dev_email_sender_status with status "${status}" for ${user_email}`)
+			}
+		} catch (devStatusErr) {
+			console.warn("dev_email_sender_status table may not exist:", devStatusErr.message)
+		}
+
+		res.status(201).json({
+			message: `Report logged successfully. Status: ${status}`,
+			status,
+			report_type: "phishing", // Generic report type in phishing_reports
+		})
+	} catch (err) {
+		console.error("Error reporting spam/phishing:", err)
+		console.error("Full error stack:", err.stack)
+		res.status(500).json({
+			error: "Failed to report spam/phishing.",
+			details: err.message,
+		})
+	}
+})
+
 app.get("/", (req, res) => {
 	res.send("Trusted Senders Backend is Running with Supabase...")
 })
