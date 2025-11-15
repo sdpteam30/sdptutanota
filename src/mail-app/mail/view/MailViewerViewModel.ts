@@ -693,7 +693,9 @@ export class MailViewerViewModel {
 	canReport(): boolean {
 		// Allow reporting for study purposes, including emails from own aliases
 		// Removed isTutanotaTeamMail() check to allow reporting own alias emails
-		return this.getPhishingStatus() === MailPhishingStatus.UNKNOWN && this.logins.isInternalUserLoggedIn()
+		// Removed phishing status check to allow reporting even if email was previously reported
+		// Users can always report emails, even if they were reported before and re-added to inbox
+		return this.logins.isInternalUserLoggedIn()
 	}
 
 	canShowHeaders(): boolean {
@@ -889,27 +891,27 @@ export class MailViewerViewModel {
 	}
 
 	private checkMailForPhishing(mail: Mail, links: Array<HTMLElement>) {
-		if (mail.phishingStatus === MailPhishingStatus.UNKNOWN) {
-			const linkObjects = links.map((link) => {
-				return {
-					href: link.getAttribute("href") || "",
-					innerHTML: link.innerHTML,
-				}
-			})
-
-			this.mailModel.checkMailForPhishing(mail, linkObjects).then((isSuspicious) => {
-				if (isSuspicious) {
-					mail.phishingStatus = MailPhishingStatus.SUSPICIOUS
-
-					this.entityClient
-						.update(mail)
-						.catch(ofClass(LockedError, (_) => console.log("could not update mail phishing status as mail is locked")))
-						.catch(ofClass(NotFoundError, (_) => console.log("mail already moved")))
-
-					m.redraw()
-				}
-			})
-		}
+		// DISABLED: Automatic phishing detection to prevent Tutanota backend calls
+		// For study purposes, we don't want automatic phishing detection that calls the Tutanota backend
+		// Users can still manually report emails via the report button
+		// if (mail.phishingStatus === MailPhishingStatus.UNKNOWN) {
+		// 	const linkObjects = links.map((link) => {
+		// 		return {
+		// 			href: link.getAttribute("href") || "",
+		// 			innerHTML: link.innerHTML,
+		// 		}
+		// 	})
+		// 	this.mailModel.checkMailForPhishing(mail, linkObjects).then((isSuspicious) => {
+		// 		if (isSuspicious) {
+		// 			mail.phishingStatus = MailPhishingStatus.SUSPICIOUS
+		// 			this.entityClient
+		// 				.update(mail)
+		// 				.catch(ofClass(LockedError, (_) => console.log("could not update mail phishing status as mail is locked")))
+		// 				.catch(ofClass(NotFoundError, (_) => console.log("mail already moved")))
+		// 			m.redraw()
+		// 		}
+		// 	})
+		// }
 	}
 
 	/**
