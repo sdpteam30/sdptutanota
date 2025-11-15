@@ -672,7 +672,10 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 				buttons: [
 					{
 						label: "close_alt",
-						click: () => viewModel.setWarningDismissed(true),
+						click: () => {
+							viewModel.setWarningDismissed(true)
+							viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
+						},
 					},
 				],
 			})
@@ -683,7 +686,10 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		const buttons: ReadonlyArray<BannerButtonAttrs | null> = [
 			{
 				label: "close_alt",
-				click: () => viewModel.setWarningDismissed(true),
+				click: () => {
+					viewModel.setWarningDismissed(true)
+					viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
+				},
 			},
 		]
 		if (viewModel.mail.encryptionAuthStatus === EncryptionAuthStatus.RSA_DESPITE_TUTACRYPT) {
@@ -711,8 +717,12 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	}
 
 	private renderExternalContentBanner(attrs: MailViewerHeaderAttrs): Children | null {
-		// Always show the external content blocked banner
-		// Original condition: if (attrs.viewModel.getContentBlockingStatus() !== ContentBlockingStatus.Block) { return null }
+		// Show the banner initially (when status is Block), hide it after user interaction
+		// Also show if status is AlwaysBlock (user explicitly blocked, but banner should still show initially)
+		const status = attrs.viewModel.getContentBlockingStatus()
+		if (status !== ContentBlockingStatus.Block && status !== ContentBlockingStatus.AlwaysBlock) {
+			return null
+		}
 
 		const showButton: BannerButtonAttrs = {
 			label: "showBlockedContent_action",
