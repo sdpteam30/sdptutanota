@@ -224,30 +224,29 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 					m("option", { value: "__custom__" }, "--- Or type a new sender name ---"),
 				],
 			),
-			// Text input showing email address for selected sender (or name for custom entry)
-			m("input[type=text]", {
-				placeholder: this.selectedSenderEmail ? "Email address" : "Type the sender's name...",
-				value: this.selectedSenderEmail || this.selectedSenderName,
-				readonly: !!this.selectedSenderEmail, // Read-only when showing email from dropdown selection
-				oninput: (e: Event) => {
-					// Only allow input when no sender is selected (custom entry)
-					if (!this.selectedSenderEmail) {
-						this.selectedSenderName = (e.target as HTMLInputElement).value
-						this.errorMessage = null
-						m.redraw()
-					}
-				},
-				style: {
-					padding: "10px",
-					width: "100%",
-					boxSizing: "border-box",
-					borderRadius: "8px",
-					border: "1px solid #ccc",
-					color: "black",
-					fontSize: "14px",
-					display: "block",
-				},
-			}),
+			// Text input showing name for custom entry (only show if no known sender is selected)
+			// Never show email address when a known sender is selected
+			this.selectedSenderEmail
+				? null // Hide input when a known sender is selected
+				: m("input[type=text]", {
+						placeholder: "Type the sender's name...",
+						value: this.selectedSenderName,
+						oninput: (e: Event) => {
+							this.selectedSenderName = (e.target as HTMLInputElement).value
+							this.errorMessage = null
+							m.redraw()
+						},
+						style: {
+							padding: "10px",
+							width: "100%",
+							boxSizing: "border-box",
+							borderRadius: "8px",
+							border: "1px solid #ccc",
+							color: "black",
+							fontSize: "14px",
+							display: "block",
+						},
+					}),
 			this.errorMessage
 				? m(
 						".error-message",
@@ -264,7 +263,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 					onclick: async () => {
 						if (isConfirmDisabled) return
 						console.log(
-							`🔒 MOBYPHISH_LOG: Confirm button clicked in initial modal, selectedSenderName="${this.selectedSenderName}", actualSender="${
+							`🔒 MOBYPHISH_LOG: Confirm button clicked in initial modal, selectedSenderName="${this.selectedSenderName}", selectedSenderEmail="${this.selectedSenderEmail}", actualSender="${
 								getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
 							}"`,
 						)
@@ -286,6 +285,46 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 							return
 						}
 
+						// If a known sender was selected from dropdown, skip name matching validation
+						// and proceed directly to confirmation (user is confirming this email is from that known sender)
+						if (this.selectedSenderEmail) {
+							try {
+								// Known sender selected - confirm this email is from that known sender
+								// Use the actual email from the mail (not the selected sender's email)
+								const addResponse = await fetch(`${TRUSTED_SENDERS_API_URL}/add-trusted`, {
+									method: "POST",
+									headers: { "Content-Type": "application/json" },
+									body: JSON.stringify({
+										user_email: this.viewModel.logins.getUserController().loginUsername,
+										trusted_email: actualEmail,
+										trusted_name: enteredName,
+									}),
+								})
+								if (!addResponse.ok) {
+									throw new Error("Failed to add sender to known senders list.")
+								}
+								console.log(`🔒 MOBYPHISH_LOG: Confirmed known sender name="${enteredName}" for email="${actualEmail}"`)
+								// Refresh trusted senders list
+								await this.viewModel.fetchSenderData()
+
+								// Now update the email status to confirmed
+								await this.viewModel.updateSenderStatus("confirmed")
+								// Execute callback if provided (e.g., to open link after confirmation)
+								if (this.onConfirm) {
+									this.onConfirm()
+								}
+								modal.remove(this.modalHandle!)
+								return
+							} catch (err) {
+								console.error(err)
+								this.errorMessage = "Failed to update status. Please try again."
+								this.isLoading = false
+								m.redraw()
+								return
+							}
+						}
+
+						// For custom/new sender entries, validate name matching
 						// Validation: Check if names match (case-insensitive)
 						// Show phishing warning if:
 						// 1. Actual sender has no name (empty or missing)

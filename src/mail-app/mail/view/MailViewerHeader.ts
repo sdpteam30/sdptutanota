@@ -327,68 +327,11 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 				`🔒 MOBYPHISH_LOG: Known sender button clicked for sender="${displayedSender?.address}", name="${senderName}", isNameTrusted=${viewModel.isSenderNameTrusted()}, senderStatus="${senderStatus}"`,
 			)
 
-			if (!senderName) {
-				// If no sender name, fall back to email-based checking
-				if (isTrusted && !(senderStatus === "confirmed" || senderStatus === "trusted_once")) {
-					// Sender is already in trusted database, just confirm
-					await viewModel.updateSenderStatus("confirmed")
-				} else if (!isTrusted) {
-					// Sender is not in trusted database - show modal to add them
-					const modalInstance = new MobyPhishConfirmSenderModal(viewModel, viewModel.trustedSenders())
-					modal.display(modalInstance)
-					modalInstance.setModalHandle(modalInstance)
-				}
-				return
-			}
-
-			// Check if sender name is in trusted list
-			const isNameTrusted = viewModel.isSenderNameTrusted()
-			const isConfirmed = senderStatus === "confirmed" || senderStatus === "trusted_once"
-
-			if (isNameTrusted && isConfirmed) {
-				// Sender name is trusted and already confirmed - show already trusted modal
-				const modalInstance = new MobyPhishAlreadyTrustedModal(viewModel)
-				modal.display(modalInstance)
-				modalInstance.setModalHandle(modalInstance)
-			} else if (isNameTrusted && !isConfirmed) {
-				// Sender name is trusted but not yet confirmed - ensure sender is in trusted database and confirm it
-				const senderEmail = displayedSender?.address
-
-				// Check if sender email is already in trusted senders database
-				const isSenderInTrustedList = viewModel.trustedSenders().some((sender) => sender.address.toLowerCase() === senderEmail?.toLowerCase())
-
-				// If not in trusted list, add to trusted senders database first
-				if (!isSenderInTrustedList && senderEmail) {
-					try {
-						const addResponse = await fetch(`${TRUSTED_SENDERS_API_URL}/add-trusted`, {
-							method: "POST",
-							headers: { "Content-Type": "application/json" },
-							body: JSON.stringify({
-								user_email: viewModel.logins.getUserController().loginUsername,
-								trusted_email: senderEmail,
-								trusted_name: senderName || "",
-							}),
-						})
-						if (!addResponse.ok) {
-							console.error("🔒 MOBYPHISH_LOG: Failed to add sender to trusted senders database")
-						} else {
-							console.log(`🔒 MOBYPHISH_LOG: Added sender="${senderEmail}" to trusted senders database`)
-							// Refresh trusted senders list
-							await viewModel.fetchSenderData()
-						}
-					} catch (error) {
-						console.error("🔒 MOBYPHISH_LOG: Error adding sender to trusted senders database:", error)
-					}
-				}
-
-				// Now update the email status to confirmed
-				await viewModel.updateSenderStatus("confirmed")
-			} else {
-				// Sender name is not in trusted list - show confirm sender modal
-				const modalInstance = new MobyPhishConfirmSenderModal(viewModel, viewModel.trustedSenders())
-				modal.display(modalInstance)
-				modalInstance.setModalHandle(modalInstance)
-			}
+			// Always show the confirm sender modal with dropdown menu (same as when clicking a link)
+			// This provides a consistent experience and allows users to select from known senders
+			const modalInstance = new MobyPhishConfirmSenderModal(viewModel, viewModel.trustedSenders())
+			modal.display(modalInstance)
+			modalInstance.setModalHandle(modalInstance)
 		}
 
 		// Toggle Blocked Content button action (shows or blocks content based on current state)
