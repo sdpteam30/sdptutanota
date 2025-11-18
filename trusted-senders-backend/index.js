@@ -221,6 +221,27 @@ app.post("/update-email-status", async (req, res) => {
 			return res.status(500).json({ error: "Failed to update email status." })
 		}
 
+		// If status is reported_phishing, also insert into phishing_reports table
+		if (status === "reported_phishing") {
+			const phishingReportData = {
+				user_email,
+				mail_id: email_id,
+				sender_email,
+				report_type: "phishing",
+				interaction_type: finalInteractionType,
+			}
+
+			const { error: phishingError } = await supabase.from("phishing_reports").insert(phishingReportData)
+
+			if (phishingError) {
+				console.error("Supabase Error inserting into phishing_reports table:", phishingError.message)
+				// Log the error but don't fail the request since the main status update succeeded
+				console.log(`⚠️ BACKEND_LOG: Failed to insert into phishing_reports table, but email_sender_status was updated successfully`)
+			} else {
+				console.log(`🔒 BACKEND_LOG: Successfully added phishing report to phishing_reports table - sender="${sender_email}", user="${user_email}"`)
+			}
+		}
+
 		res.json({ message: "Email status updated.", data: data[0] })
 	} catch (err) {
 		console.error("Error updating email status:", err.message)
