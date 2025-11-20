@@ -23,7 +23,7 @@ export class MobyPhishInfoModal implements ModalComponent {
 								color: "black",
 							},
 						},
-						"About Phishing Emails",
+						"About MobyMail Phishing Detection",
 					),
 
 					m(
@@ -34,18 +34,13 @@ export class MobyPhishInfoModal implements ModalComponent {
 								textAlign: "center",
 								marginBottom: "20px",
 								color: "black",
+								whiteSpace: "pre-line",
 							},
 						},
-						"Phishing emails imitate trusted senders and use a tone of urgency to convince you to reveal sensitive information or install malware by clicking on a link. Be suspicious of any email requesting information from you that does not come from a trusted sender.",
-					),
-
-					m(
-						"button",
-						{
-							onclick: () => window.open(HELP_LINK, "_blank"),
-							style: { ...this.getLearnMoreButtonStyle(), color: "white" },
-						},
-						"Learn more...",
+						"MobyMail protects you by: \n" +
+							"• Tracking senders you've previously verified \n" +
+							"• Warning you about emails from new or unverified senders \n" +
+							"• Letting you manage your personal known-senders list",
 					),
 
 					m(
