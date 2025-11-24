@@ -10,7 +10,9 @@ import {
 	addEmailReplacement,
 	removeEmailReplacement,
 	getEmailReplacements,
-} from "./DomainReplacementUtils.js"
+	type DomainReplacement,
+	type EmailReplacement,
+} from "../model/DomainReplacementUtils.js"
 
 /**
  * Initialize domain replacement rules
@@ -19,12 +21,12 @@ import {
 export function initializeDomainReplacements(): void {
 	// Clear any existing replacements
 	const existingReplacements = getDomainReplacements()
-	existingReplacements.forEach((domainReplacement) => {
+	existingReplacements.forEach((domainReplacement: DomainReplacement) => {
 		removeDomainReplacement(domainReplacement.originalDomain)
 	})
 
 	const existingEmailReplacements = getEmailReplacements()
-	existingEmailReplacements.forEach((emailReplacement) => {
+	existingEmailReplacements.forEach((emailReplacement: EmailReplacement) => {
 		removeEmailReplacement(emailReplacement.originalEmail)
 	})
 
@@ -36,6 +38,7 @@ export function initializeDomainReplacements(): void {
 	addEmailReplacement("citytrust@bskyakhargha1.help", "citytrust@citytrust.com")
 	addEmailReplacement("cloudjetairways@bskyakhargha1.help", "cloudjet@cloudjetairways.com")
 	addEmailReplacement("meridiansuites@bskyakhargha1.help", "meridian@meridiansuites.com")
+
 	// If you still want domain-wide fallbacks, add them here (optional)
 	// addDomainReplacement("tuta.com", "example.com")
 }
