@@ -973,6 +973,7 @@ class MailLocator implements CommonLocator {
 				return {
 					html: "",
 					blockedExternalContent: 0,
+					blockedLinks: 0,
 					inlineImageCids: [],
 					links: [],
 				}

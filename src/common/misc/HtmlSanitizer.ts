@@ -44,6 +44,8 @@ export type SanitizedHTML = {
 	html: string
 	/** Number of blocked external content that was encountered */
 	blockedExternalContent: number
+	/** Number of blocked links that were encountered */
+	blockedLinks: number
 	/** Collected cid: URLs, normally used for inline content */
 	inlineImageCids: Array<string>
 	/** Collected href link elements */
@@ -60,6 +62,8 @@ export type SanitizedFragment = {
 	fragment: DocumentFragment
 	/** Number of blocked external content that was encountered */
 	blockedExternalContent: number
+	/** Number of blocked links that were encountered */
+	blockedLinks: number
 	/** Collected cid: URLs, normally used for inline content */
 	inlineImageCids: Array<string>
 	/** Collected href link elements */
@@ -119,6 +123,7 @@ type BaseConfig = typeof HTML_CONFIG | typeof SVG_CONFIG | typeof FRAGMENT_CONFI
 /** Class to pre-process HTML/SVG content. */
 export class HtmlSanitizer {
 	private externalContent!: number
+	private blockedLinks!: number
 	private inlineImageCids!: Array<string>
 	private links!: Array<Link>
 	private purifier!: typeof DOMPurify
@@ -141,6 +146,7 @@ export class HtmlSanitizer {
 		return {
 			html: cleanHtml,
 			blockedExternalContent: this.externalContent,
+			blockedLinks: this.blockedLinks,
 			inlineImageCids: this.inlineImageCids,
 			links: this.links,
 		}
@@ -155,6 +161,7 @@ export class HtmlSanitizer {
 		return {
 			html: cleanSvg,
 			blockedExternalContent: this.externalContent,
+			blockedLinks: this.blockedLinks,
 			inlineImageCids: this.inlineImageCids,
 			links: this.links,
 		}
@@ -213,6 +220,7 @@ export class HtmlSanitizer {
 		return {
 			fragment: cleanFragment,
 			blockedExternalContent: this.externalContent,
+			blockedLinks: this.blockedLinks,
 			inlineImageCids: this.inlineImageCids,
 			links: this.links,
 		}
@@ -220,6 +228,7 @@ export class HtmlSanitizer {
 
 	private init<T extends BaseConfig>(config: T, configExtra: Partial<SanitizeConfigExtra>): SanitizeConfigExtra & T {
 		this.externalContent = 0
+		this.blockedLinks = 0
 		this.inlineImageCids = []
 		this.links = []
 		return Object.assign({}, config, DEFAULT_CONFIG_EXTRA, configExtra)
@@ -347,6 +356,21 @@ export class HtmlSanitizer {
 					htmlNode.style.maxWidth = "100px"
 				} else if (
 					config.blockExternalContent &&
+					(attribute.name === "href" || attribute.name === "xlink:href") &&
+					(nodeName === "a" || nodeName === "area")
+				) {
+					// Block links by converting href to draft-href
+					this.blockedLinks++
+					const draftAttrName = attribute.name === "href" ? "draft-href" : "draft-xlink:href"
+					htmlNode.setAttribute(draftAttrName, attribute.value)
+					htmlNode.removeAttribute(attribute.name)
+					// Add visual styling to indicate blocked link
+					htmlNode.style.textDecoration = "line-through"
+					htmlNode.style.cursor = "not-allowed"
+					htmlNode.style.color = "#888"
+					htmlNode.classList.add("blocked-link")
+				} else if (
+					config.blockExternalContent &&
 					!attribute.value.startsWith("data:") &&
 					!attribute.value.startsWith("cid:") &&
 					!attribute.name.startsWith("draft-") &&
@@ -355,8 +379,7 @@ export class HtmlSanitizer {
 					!(nodeName === "base") &&
 					!(nodeName === "link")
 				) {
-					// Since we are blocking href now we need to check if the attr isn't
-					// being used by a valid tag (a, area, base, link)
+					// Block other external content (images, etc.)
 					this.externalContent++
 
 					htmlNode.setAttribute("draft-" + attribute.name, attribute.value)
@@ -371,6 +394,17 @@ export class HtmlSanitizer {
 						const hrefTag = attribute.name === "draft-href" ? "href" : "xlink:href"
 						htmlNode.setAttribute(hrefTag, attribute.value)
 						htmlNode.removeAttribute(attribute.name)
+						// Restore link styling
+						htmlNode.style.textDecoration = ""
+						htmlNode.style.cursor = ""
+						htmlNode.style.color = ""
+						htmlNode.classList.remove("blocked-link")
+						// Remove the text role we added when blocking
+						htmlNode.removeAttribute("role")
+						// Remove the blocked link title
+						if (htmlNode.getAttribute("title")?.startsWith("Blocked link:")) {
+							htmlNode.removeAttribute("title")
+						}
 					} else {
 						htmlNode.setAttribute("srcset", attribute.value)
 						htmlNode.removeAttribute(attribute.name)
@@ -429,17 +463,32 @@ export class HtmlSanitizer {
 			(currentNode.tagName.toLowerCase() === "a" || currentNode.tagName.toLowerCase() === "area" || currentNode.tagName.toLowerCase() === "form")
 		) {
 			const href = currentNode.getAttribute("href")
+			const draftHref = currentNode.getAttribute("draft-href")
+
+			// If link is blocked (has draft-href instead of href), don't add to links array yet
 			if (href) this.links.push(currentNode)
 
-			if (config.allowRelativeLinks || !href || isAllowedLink(href)) {
+			// If the link is blocked, prevent navigation completely
+			if (config.blockExternalContent && draftHref && !href) {
+				// Remove href completely instead of setting to javascript:void(0)
+				// This prevents any navigation including opening new tabs
+				currentNode.removeAttribute("href")
+				// Remove target to prevent opening new tabs
+				currentNode.removeAttribute("target")
+				currentNode.removeAttribute("rel")
+				// Add title to show the blocked URL on hover
+				currentNode.setAttribute("title", `Blocked link: ${draftHref}`)
+				// Add role to indicate it's not actually a link
+				currentNode.setAttribute("role", "text")
+			} else if (config.allowRelativeLinks || !href || isAllowedLink(href)) {
 				currentNode.setAttribute("rel", "noopener noreferrer")
 				currentNode.setAttribute("target", "_blank")
-			} else if (href.trim() === "{link}") {
+			} else if (href && href.trim() === "{link}") {
 				// notification mail template
 				downcast(currentNode).href = "{link}"
 				currentNode.setAttribute("rel", "noopener noreferrer")
 				currentNode.setAttribute("target", "_blank")
-			} else {
+			} else if (href) {
 				console.log("Relative/invalid URL", currentNode, href)
 				downcast(currentNode).href = "javascript:void(0)"
 			}

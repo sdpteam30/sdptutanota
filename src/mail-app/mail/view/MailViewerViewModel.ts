@@ -346,6 +346,10 @@ export class MailViewerViewModel {
 		return this.sanitizeResult?.fragment ?? null
 	}
 
+	getBlockedLinksCount(): number {
+		return this.sanitizeResult?.blockedLinks ?? 0
+	}
+
 	getMailBody(): string {
 		if (this.mailDetails) {
 			return getMailBodyText(this.mailDetails.body)
@@ -832,11 +836,11 @@ export class MailViewerViewModel {
 		const senderAddress = mail.sender.address
 		const isTutaSender = isTutaMailAddress(senderAddress)
 
-		// Always show the banner initially if there's blocked content OR if we detected external content OR if sender is from Tuta domain
+		// Always show the banner initially if there's blocked content (images OR links) OR if we detected external content OR if sender is from Tuta domain
 		// This ensures banner shows for all senders, including user's own aliases and other Tuta accounts
 		// Force status to Block initially for any email with external content or from Tuta domain, so banner shows for all senders
 		// Only use AlwaysBlock if explicitly set AND there's no content to block AND not a Tuta sender
-		if (this.sanitizeResult.blockedExternalContent > 0 || hasExternalContent || isTutaSender) {
+		if (this.sanitizeResult.blockedExternalContent > 0 || this.sanitizeResult.blockedLinks > 0 || hasExternalContent || isTutaSender) {
 			// Always show banner initially when there's blocked content, external content detected, or sender is from Tuta domain
 			// regardless of external image rules
 			this.contentBlockingStatus = ContentBlockingStatus.Block
@@ -1156,7 +1160,7 @@ export class MailViewerViewModel {
 			usePlaceholderForInlineImages: true, // Always use placeholders for inline images so they can be replaced later
 			highlightedStrings: this.highlightedStrings,
 		})
-		const { fragment, inlineImageCids, links, blockedExternalContent } = sanitizeResult
+		const { fragment, inlineImageCids, links, blockedExternalContent, blockedLinks } = sanitizeResult
 
 		/**
 		 * Check if we need to improve contrast for dark theme. We apply the contrast fix if any of the following is contained in
@@ -1176,6 +1180,7 @@ export class MailViewerViewModel {
 			inlineImageCids,
 			links,
 			blockedExternalContent,
+			blockedLinks,
 		}
 	}
 
