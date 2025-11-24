@@ -5,12 +5,12 @@
  * for study purposes. Email replacements take precedence over domain rules.
  */
 
-interface DomainReplacement {
+export interface DomainReplacement {
 	originalDomain: string
 	replacementDomain: string
 }
 
-interface EmailReplacement {
+export interface EmailReplacement {
 	originalEmail: string
 	replacementEmail: string
 }
