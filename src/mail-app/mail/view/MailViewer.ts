@@ -703,7 +703,18 @@ export class MailViewer implements Component<MailViewerAttrs> {
 	}
 
 	private handleAnchorClick(event: Event, eventTarget: EventTarget | null, shouldDispatchSyntheticClick: boolean): void {
-		const href = (eventTarget as Element | null)?.closest("a")?.getAttribute("href") ?? null
+		const anchorElement = (eventTarget as Element | null)?.closest("a")
+		const href = anchorElement?.getAttribute("href") ?? null
+		const draftHref = anchorElement?.getAttribute("draft-href") ?? null
+
+		// Check if link is blocked (has draft-href instead of href)
+		if (draftHref && !href) {
+			event.preventDefault()
+			console.log("🔒 Blocked link click prevented:", draftHref)
+			// Link is blocked - prevent any navigation
+			return
+		}
+
 		if (href) {
 			if (href.startsWith("mailto:")) {
 				event.preventDefault()
