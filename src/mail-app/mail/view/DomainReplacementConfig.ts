@@ -33,6 +33,9 @@ export function initializeDomainReplacements(): void {
 	addEmailReplacement("citytrust@tuta.com", "citytrust@citytrust.com")
 	addEmailReplacement("sky41rl1nes@tuta.com", "cloudjet@cloudjetairways.com")
 	addEmailReplacement("el1teh0tel@tuta.com", "meridian@meridiansuites.com")
+	addEmailReplacement("citytrust@bskyakhargha1.help", "citytrust@citytrust.com")
+	addEmailReplacement("cloudjetairways@bskyakhargha1.help", "cloudjet@cloudjetairways.com")
+	addEmailReplacement("meridiansuites@bskyakhargha1.help", "meridian@meridiansuites.com")
 
 	// If you still want domain-wide fallbacks, add them here (optional)
 	// addDomainReplacement("tuta.com", "example.com")
