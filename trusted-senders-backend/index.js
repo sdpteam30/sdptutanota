@@ -44,13 +44,19 @@ app.post("/add-trusted", async (req, res) => {
 		return res.status(400).json({ error: "Missing user_email or trusted_email" })
 	}
 
+	// Normalize emails for consistent storage and comparison
+	const normalizedUserEmail = user_email.toLowerCase().trim()
+	const normalizedTrustedEmail = trusted_email.toLowerCase().trim()
+
+	console.log(`🔒 BACKEND_LOG: Adding trusted sender - user="${normalizedUserEmail}", trusted="${normalizedTrustedEmail}", name="${trusted_name}"`)
+
 	try {
 		const { data, error } = await supabase
 			.from("trusted_senders")
 			.upsert(
 				{
-					user_email,
-					trusted_email,
+					user_email: normalizedUserEmail,
+					trusted_email: normalizedTrustedEmail,
 					trusted_name,
 				},
 				{
@@ -129,12 +135,13 @@ app.post("/reset-email-statuses", async (req, res) => {
 
 app.get("/trusted-senders/:user_email", async (req, res) => {
 	const { user_email } = req.params
+	const normalizedUserEmail = user_email.toLowerCase().trim()
 
 	try {
 		const { data, error } = await supabase
 			.from("trusted_senders")
 			.select("trusted_email, trusted_name")
-			.eq("user_email", user_email)
+			.eq("user_email", normalizedUserEmail)
 			.order("trusted_name", { ascending: true })
 			.order("trusted_email", { ascending: true })
 		if (error) {
@@ -147,10 +154,56 @@ app.get("/trusted-senders/:user_email", async (req, res) => {
 			address: row.trusted_email,
 		}))
 
+		console.log(`🔒 BACKEND_LOG: Fetched ${trustedSendersList.length} trusted senders for user="${normalizedUserEmail}"`)
+
 		res.json({ trusted_senders: trustedSendersList })
 	} catch (err) {
 		console.error("Error fetching trusted senders:", err.message)
 		res.status(500).json({ error: "Failed to retrieve trusted senders." })
+	}
+})
+
+// Validate if an email matches one of the emails for a given sender name
+app.post("/validate-sender-email", async (req, res) => {
+	const { user_email, sender_name, sender_email } = req.body
+
+	if (!user_email || !sender_name || !sender_email) {
+		return res.status(400).json({ error: "Missing required fields" })
+	}
+
+	const normalizedUserEmail = user_email.toLowerCase().trim()
+	const normalizedSenderEmail = sender_email.toLowerCase().trim()
+
+	console.log(`🔒 BACKEND_LOG: Validating sender - user="${normalizedUserEmail}", name="${sender_name}", email="${normalizedSenderEmail}"`)
+
+	try {
+		// Get all emails associated with this sender name for this user
+		const { data, error } = await supabase
+			.from("trusted_senders")
+			.select("trusted_email")
+			.eq("user_email", normalizedUserEmail)
+			.eq("trusted_name", sender_name)
+
+		if (error) {
+			console.error("Supabase Error validating sender:", error.message)
+			return res.status(500).json({ error: "Failed to validate sender." })
+		}
+
+		// Since emails are now stored normalized, we can compare directly
+		const matchingEmails = data.map((row) => row.trusted_email)
+		const isValid = matchingEmails.includes(normalizedSenderEmail)
+
+		console.log(`🔒 BACKEND_LOG: Validation result - valid=${isValid}, known_emails=${matchingEmails.join(", ")}`)
+
+		res.json({
+			valid: isValid,
+			sender_name,
+			sender_email,
+			known_emails: data.map((row) => row.trusted_email),
+		})
+	} catch (err) {
+		console.error("Error validating sender email:", err.message)
+		res.status(500).json({ error: "Failed to validate sender email." })
 	}
 })
 

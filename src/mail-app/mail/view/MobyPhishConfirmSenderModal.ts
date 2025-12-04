@@ -285,29 +285,42 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 							return
 						}
 
-						// If a known sender was selected from dropdown, skip name matching validation
-						// and proceed directly to confirmation (user is confirming this email is from that known sender)
+						// If a known sender was selected from dropdown, validate that the actual email
+						// matches one of the emails already associated with that sender name
 						if (this.selectedSenderEmail) {
 							try {
-								// Known sender selected - confirm this email is from that known sender
-								// Use the actual email from the mail (not the selected sender's email)
-								const addResponse = await fetch(`${TRUSTED_SENDERS_API_URL}/add-trusted`, {
+								// Validate that the actual email matches one of the known emails for this sender name
+								const validateResponse = await fetch(`${TRUSTED_SENDERS_API_URL}/validate-sender-email`, {
 									method: "POST",
 									headers: { "Content-Type": "application/json" },
 									body: JSON.stringify({
 										user_email: this.viewModel.logins.getUserController().loginUsername,
-										trusted_email: actualEmail,
-										trusted_name: enteredName,
+										sender_name: enteredName,
+										sender_email: actualEmail,
 									}),
 								})
-								if (!addResponse.ok) {
-									throw new Error("Failed to add sender to known senders list.")
-								}
-								console.log(`🔒 MOBYPHISH_LOG: Confirmed known sender name="${enteredName}" for email="${actualEmail}"`)
-								// Refresh trusted senders list
-								await this.viewModel.fetchSenderData()
 
-								// Now update the email status to confirmed
+								if (!validateResponse.ok) {
+									throw new Error("Failed to validate sender email.")
+								}
+
+								const validationResult = await validateResponse.json()
+
+								if (!validationResult.valid) {
+									// Email doesn't match any known emails for this sender name - show warning
+									console.log(
+										`🔒 MOBYPHISH_LOG: Email validation failed - actualEmail="${actualEmail}" not in known emails for sender="${enteredName}". Known emails: ${validationResult.known_emails.join(", ")}`,
+									)
+									this.errorMessage = `This email address (${actualEmail}) is not associated with the known sender "${enteredName}". Known addresses: ${validationResult.known_emails.join(", ")}`
+									this.isLoading = false
+									m.redraw()
+									return
+								}
+
+								// Validation passed - the email is already associated with this sender name
+								console.log(`🔒 MOBYPHISH_LOG: Email validation passed - actualEmail="${actualEmail}" matches known sender "${enteredName}"`)
+
+								// Now update the email status to confirmed (no need to add to trusted senders - it's already there)
 								await this.viewModel.updateSenderStatus("confirmed")
 								// Execute callback if provided (e.g., to open link after confirmation)
 								if (this.onConfirm) {
@@ -317,7 +330,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 								return
 							} catch (err) {
 								console.error(err)
-								this.errorMessage = "Failed to update status. Please try again."
+								this.errorMessage = "Failed to validate sender. Please try again."
 								this.isLoading = false
 								m.redraw()
 								return

@@ -322,16 +322,49 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		const confirmAction = async () => {
 			const displayedSender = getDisplayedSenderWithDomainReplacement(viewModel.mail)
 			const senderName = displayedSender?.name?.trim()
+			const senderEmail = displayedSender?.address?.toLowerCase()
 
 			console.log(
 				`🔒 MOBYPHISH_LOG: Known sender button clicked for sender="${displayedSender?.address}", name="${senderName}", isNameTrusted=${viewModel.isSenderNameTrusted()}, senderStatus="${senderStatus}"`,
 			)
 
-			// Always show the confirm sender modal with dropdown menu (same as when clicking a link)
-			// This provides a consistent experience and allows users to select from known senders
-			const modalInstance = new MobyPhishConfirmSenderModal(viewModel, viewModel.trustedSenders())
-			modal.display(modalInstance)
-			modalInstance.setModalHandle(modalInstance)
+			// Log all trusted senders for debugging
+			console.log(
+				`🔒 MOBYPHISH_LOG: Current trusted senders list:`,
+				viewModel.trustedSenders().map((s) => `${s.name} <${s.address}>`),
+			)
+			console.log(`🔒 MOBYPHISH_LOG: Comparing senderEmail="${senderEmail}" with database entries`)
+
+			// Check if this specific email address is already in the trusted senders list
+			const isSenderEmailInList = viewModel.trustedSenders().some((sender) => {
+				const dbEmail = sender.address.toLowerCase()
+				const matches = dbEmail === senderEmail
+				console.log(`🔒 MOBYPHISH_LOG: Comparing "${dbEmail}" === "${senderEmail}" ? ${matches}`)
+				return matches
+			})
+
+			console.log(`🔒 MOBYPHISH_LOG: Is sender email in list? ${isSenderEmailInList}`)
+
+			if (isSenderEmailInList) {
+				// Sender's email is already in the trusted list - confirm silently without showing modal
+				console.log(`🔒 MOBYPHISH_LOG: Sender email "${senderEmail}" is already in trusted list - confirming silently`)
+
+				// Update status to confirmed
+				await viewModel.updateSenderStatus("confirmed")
+
+				// Unblock content automatically
+				await viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
+
+				// Force redraw to show links and content
+				m.redraw()
+			} else {
+				// Sender's email is NOT in the trusted list - show the adding senders dialogue
+				console.log(`🔒 MOBYPHISH_LOG: Sender email "${senderEmail}" is NOT in trusted list - showing add sender modal`)
+
+				const modalInstance = new MobyPhishConfirmSenderModal(viewModel, viewModel.trustedSenders())
+				modal.display(modalInstance)
+				modalInstance.setModalHandle(modalInstance)
+			}
 		}
 
 		// Toggle Blocked Content button action (shows or blocks content based on current state)
