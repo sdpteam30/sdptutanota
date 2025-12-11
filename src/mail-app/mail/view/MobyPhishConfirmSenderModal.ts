@@ -316,7 +316,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 									console.log(
 										`🔒 MOBYPHISH_LOG: Email validation failed - actualEmail="${actualEmail}" not in known emails for sender="${enteredName}". Known emails: ${validationResult.known_emails.join(", ")}`,
 									)
-									this.errorMessage = `You may have selected the wrong sender. Please select a different sender from the list or add a new one.`
+									this.errorMessage = `We detected that the email you are confirming is not from ${enteredName}. Please select a different sender from the list or if this is phishing, report it as such.`
 									// Clear the selection so user can easily reselect
 									this.selectedSenderName = ""
 									this.selectedSenderEmail = ""
@@ -397,13 +397,30 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 						}
 					},
 					disabled: isConfirmDisabled,
-					style: { ...this.getCancelButtonStyle(), color: "black" },
+					style: {
+						background: "#28a745",
+						color: "#ffffff",
+						border: "none",
+						padding: "12px",
+						borderRadius: "8px",
+						cursor: "pointer",
+						width: "100%",
+						fontSize: "14px",
+						fontWeight: "bold",
+						textAlign: "center",
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "center",
+						marginTop: "10px",
+						opacity: isConfirmDisabled ? 0.5 : 1,
+						transition: "opacity 0.2s ease",
+					},
 				},
 				"Confirm",
 			),
 
 			// Report as Phishing button - only show when wrong sender warning is displayed
-			this.errorMessage && this.errorMessage.includes("wrong sender")
+			this.errorMessage && this.errorMessage.includes("Please select a different sender")
 				? m(
 						"button.mobyphish-btn",
 						{
