@@ -96,9 +96,14 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 		this.fetchTrustedSendersFromBackend()
 
 		if (this.trustedSenderObjects.length === 0) {
-			this.modalState = "warning"
-			this.selectedSenderName = (this.viewModel.getSender().name || "").trim()
-			this.skippedInitialView = true
+			const senderName = (this.viewModel.getSender().name || "").trim()
+			// Only show warning if sender has a name; otherwise stay on initial view
+			// so user can add sender without seeing phishing warning
+			if (senderName.length > 0) {
+				this.modalState = "warning"
+				this.selectedSenderName = senderName
+				this.skippedInitialView = true
+			}
 		}
 	}
 
@@ -342,13 +347,13 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 
 						// For custom/new sender entries, validate name matching
 						// Validation: Check if names match (case-insensitive)
-						// Show phishing warning if:
-						// 1. Actual sender has no name (empty or missing)
-						// 2. Entered name doesn't match actual sender name (case-insensitive)
-						const namesMatch = actualSenderName.length > 0 && enteredName.toLowerCase() === actualSenderName.toLowerCase()
+						// Only show phishing warning if actual sender has a name AND it doesn't match the entered name
+						// If sender has no name, proceed without warning
+						const actualHasName = actualSenderName.length > 0
+						const namesMatch = !actualHasName || enteredName.toLowerCase() === actualSenderName.toLowerCase()
 
 						if (!namesMatch) {
-							// Names don't match or sender has no name - show phishing warning
+							// Names don't match - show phishing warning
 							console.log(
 								`🔒 MOBYPHISH_LOG: Name mismatch detected - enteredName="${enteredName}", actualSenderName="${actualSenderName}", showing warning view`,
 							)
@@ -397,6 +402,85 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 				"Confirm",
 			),
 
+			// Report as Phishing button - only show when wrong sender warning is displayed
+			this.errorMessage && this.errorMessage.includes("wrong sender")
+				? m(
+						"button.mobyphish-btn",
+						{
+							onclick: async () => {
+								console.log(
+									`🔒 MOBYPHISH_LOG: "Report as Phishing" button clicked from initial view for sender="${getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address}"`,
+								)
+
+								this.isLoading = true
+								m.redraw()
+
+								const senderEmail = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
+								const userEmail = this.viewModel.logins.getUserController().loginUsername
+
+								try {
+									// Update MobyPhish API
+									const response = await fetch(`${TRUSTED_SENDERS_API_URL}/update-email-status`, {
+										method: "POST",
+										headers: { "Content-Type": "application/json" },
+										body: JSON.stringify({
+											user_email: userEmail,
+											email_id: this.viewModel.mail._id[1],
+											sender_email: senderEmail,
+											status: "reported_phishing",
+											interaction_type: "interacted",
+										}),
+									})
+
+									if (response.ok) {
+										console.log(`🔒 MOBYPHISH_LOG: Successfully updated MobyPhish API for sender="${senderEmail}"`)
+
+										// Move email to spam folder (without reporting to Tutanota servers)
+										try {
+											const mailboxDetail = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
+											if (mailboxDetail && mailboxDetail.mailbox.folders) {
+												const folders = await this.viewModel.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.folders._id)
+												const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
+
+												await moveMails({
+													mailboxModel: this.viewModel.mailboxModel,
+													mailModel: this.viewModel.mailModel,
+													mailIds: [this.viewModel.mail._id],
+													targetFolder: spamFolder,
+													moveMode: MoveMode.Mails,
+													isReportable: false,
+													mailViewModel: await this.viewModel.mailViewModel(),
+												})
+												console.log(`🔒 MOBYPHISH_LOG: Successfully moved email to spam folder for sender="${senderEmail}"`)
+											}
+										} catch (moveError) {
+											console.error(`🔒 MOBYPHISH_LOG: Failed to move email to spam folder for sender="${senderEmail}":`, moveError)
+										}
+
+										await this.viewModel.fetchSenderData()
+										if (this.modalHandle) {
+											modal.remove(this.modalHandle)
+										} else {
+											console.warn("No modal handle set")
+										}
+										m.redraw()
+									} else {
+										console.error("🔒 MOBYPHISH_LOG: Failed to update MobyPhish API")
+										this.isLoading = false
+										m.redraw()
+									}
+								} catch (error) {
+									console.error("🔒 MOBYPHISH_LOG: Error updating MobyPhish API:", error)
+									this.isLoading = false
+									m.redraw()
+								}
+							},
+							disabled: this.isLoading,
+						},
+						"Report as Phishing",
+					)
+				: null,
+
 			m(
 				"button",
 				{
@@ -411,10 +495,8 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 
 	private renderWarningView(): Children {
 		const actual = this.viewModel.getDisplayedSender()
-		const address = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
 		const actualSenderName = (actual?.name || "").trim()
 		const actualNameOnly = actualSenderName.length > 0 ? actualSenderName : "Unknown sender"
-		const canAddSender = !!address
 
 		let warningText = this.skippedInitialView ? "This sender is not on your known senders list:" : "You indicated this email might be from:"
 		const indicatedName = this.selectedSenderName.trim() || "Unknown sender"
@@ -543,49 +625,22 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 				"Report as Phishing",
 			),
 
-			// Add to Known Senders List (Outlined, NOT bold)
+			// Go Back to select correct sender
 			m(
 				"button.mobyphish-outline-btn",
 				{
-					onclick: async () => {
-						console.log(
-							`🔒 MOBYPHISH_LOG: "Add to Known Senders List" button clicked for sender="${getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address}"`,
-						)
-
-						if (this.isLoading || !canAddSender) return
-						this.isLoading = true
+					onclick: () => {
+						console.log(`🔒 MOBYPHISH_LOG: "Go Back" button clicked - returning to sender selection`)
+						// Reset to initial view so user can select the correct sender
+						this.modalState = "initial"
+						this.selectedSenderName = ""
+						this.selectedSenderEmail = ""
 						this.errorMessage = null
 						m.redraw()
-
-						try {
-							const response = await fetch(`${TRUSTED_SENDERS_API_URL}/add-trusted`, {
-								method: "POST",
-								headers: { "Content-Type": "application/json" },
-								body: JSON.stringify({
-									user_email: this.viewModel.logins.getUserController().loginUsername,
-									trusted_email: address,
-									trusted_name: actual?.name || "",
-								}),
-							})
-							if (!response.ok) throw new Error("Failed to add sender.")
-
-							console.log(`🔒 MOBYPHISH_LOG: Successfully added sender="${address}" to trusted list`)
-							await this.viewModel.updateSenderStatus("confirmed")
-							// Execute callback if provided (e.g., to open link after confirmation)
-							if (this.onConfirm) {
-								this.onConfirm()
-							}
-							modal.remove(this.modalHandle!)
-						} catch (err: any) {
-							console.error(`🔒 MOBYPHISH_LOG: Error adding sender to trusted list:`, err)
-							this.errorMessage = err.message || "Error occurred while adding."
-							this.isLoading = false
-							m.redraw()
-						}
 					},
-					disabled: this.isLoading || !canAddSender,
+					disabled: this.isLoading,
 				},
-				`Add ${actualNameOnly} to Known Senders List`,
+				"Go Back and Select Correct Sender",
 			),
 
 			// Cancel

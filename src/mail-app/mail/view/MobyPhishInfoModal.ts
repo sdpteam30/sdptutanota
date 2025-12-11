@@ -38,9 +38,10 @@ export class MobyPhishInfoModal implements ModalComponent {
 							},
 						},
 						"MobyMail protects you by: \n" +
-							"• Tracking senders you've previously verified \n" +
-							"• Warning you about emails from new or unverified senders \n" +
-							"• Letting you manage your personal known-senders list",
+							"• Allowing users to identify and confirm senders they know \n" +
+							"• Automatically detecting and enabling emails from senders that the user has already identified as known” \n" +
+							" (through cryptographic protocols) \n" +
+							"• Warning you about emails that may be phishing attempts",
 					),
 
 					m(
