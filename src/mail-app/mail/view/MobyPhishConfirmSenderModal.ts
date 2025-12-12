@@ -74,6 +74,41 @@ if (!document.getElementById(outlineStyleId)) {
 	document.head.appendChild(style)
 }
 
+/**
+ * Normalizes a name for fuzzy comparison by:
+ * - Converting to lowercase
+ * - Removing all whitespace
+ * - Removing special characters (keeping only alphanumeric)
+ */
+function normalizeNameForComparison(name: string): string {
+	return name
+		.toLowerCase()
+		.replace(/\s+/g, "") // Remove all whitespace
+		.replace(/[^a-z0-9]/g, "") // Remove special characters
+}
+
+/**
+ * Checks if two names match using fuzzy logic.
+ * Matches if:
+ * - Exact match after normalization (e.g., "Bank Easy" === "BankEasy")
+ * - One normalized name contains the other (e.g., "Bank" matches "Bank Easy")
+ */
+function namesMatchFuzzy(name1: string, name2: string): boolean {
+	const n1 = normalizeNameForComparison(name1)
+	const n2 = normalizeNameForComparison(name2)
+
+	// Both empty or one is empty - not a match
+	if (!n1 || !n2) return false
+
+	// Exact match after normalization
+	if (n1 === n2) return true
+
+	// One contains the other (for partial matches like "Bank" vs "Bank Easy")
+	if (n1.includes(n2) || n2.includes(n1)) return true
+
+	return false
+}
+
 export class MobyPhishConfirmSenderModal implements ModalComponent {
 	private viewModel: MailViewerViewModel
 	private modalHandle?: ModalComponent
@@ -345,17 +380,16 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 							}
 						}
 
-						// For custom/new sender entries, validate name matching
-						// Validation: Check if names match (case-insensitive)
-						// Only show phishing warning if actual sender has a name AND it doesn't match the entered name
+						// For custom/new sender entries, validate name matching using fuzzy logic
+						// Only show phishing warning if actual sender has a name AND it doesn't fuzzy-match the entered name
 						// If sender has no name, proceed without warning
 						const actualHasName = actualSenderName.length > 0
-						const namesMatch = !actualHasName || enteredName.toLowerCase() === actualSenderName.toLowerCase()
+						const namesMatch = !actualHasName || namesMatchFuzzy(enteredName, actualSenderName)
 
 						if (!namesMatch) {
-							// Names don't match - show phishing warning
+							// Names don't match even with fuzzy matching - show phishing warning
 							console.log(
-								`🔒 MOBYPHISH_LOG: Name mismatch detected - enteredName="${enteredName}", actualSenderName="${actualSenderName}", showing warning view`,
+								`🔒 MOBYPHISH_LOG: Name mismatch detected (fuzzy) - enteredName="${enteredName}", actualSenderName="${actualSenderName}", showing warning view`,
 							)
 							this.modalState = "warning"
 							this.isLoading = false
