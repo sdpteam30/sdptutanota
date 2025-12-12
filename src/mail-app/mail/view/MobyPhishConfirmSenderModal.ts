@@ -316,8 +316,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 									console.log(
 										`🔒 MOBYPHISH_LOG: Email validation failed - actualEmail="${actualEmail}" not in known emails for sender="${enteredName}". Known emails: ${validationResult.known_emails.join(", ")}`,
 									)
-									this.errorMessage =
-										"We detected that the email you are confirming is not from ${enteredName}. Please select a different sender from the list or if this is phishing, report it as such."
+									this.errorMessage = `We detected that the email you are confirming is not from ${enteredName}. Please select a different sender from the list or if this is phishing, report it as such.`
 									// Clear the selection so user can easily reselect
 									this.selectedSenderName = ""
 									this.selectedSenderEmail = ""
