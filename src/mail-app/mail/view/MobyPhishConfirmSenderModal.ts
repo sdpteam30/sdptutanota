@@ -420,7 +420,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 			),
 
 			// Report as Phishing button - only show when wrong sender warning is displayed
-			this.errorMessage && this.errorMessage.includes("Please select a different sender")
+			this.errorMessage && this.errorMessage.includes("This email is not from")
 				? m(
 						"button.mobyphish-btn",
 						{
