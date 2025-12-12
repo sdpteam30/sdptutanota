@@ -203,11 +203,18 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 		const isConfirmDisabled = !this.selectedSenderName.trim() || this.isLoading
 
 		return [
-			m(
-				"p",
-				{ style: { fontSize: "16px", fontWeight: "bold", textAlign: "center", marginBottom: "15px", color: "black" } },
-				"Who do you believe this email is from?",
-			),
+			m("p", { style: { fontSize: "16px", fontWeight: "bold", textAlign: "center", marginBottom: "5px", color: "black" } }, [
+				m(Icon, {
+					icon: Icons.Warning,
+					style: { fill: "#FFA500", marginRight: "8px", verticalAlign: "middle" },
+				}),
+				"Unknown Sender Detected",
+			]),
+			m("p", { style: { fontSize: "14px", textAlign: "center", marginBottom: "15px", color: "#333" } }, [
+				"This email may be phishing.",
+				m("br"),
+				"Please verify who you believe it's from:",
+			]),
 			this.isFetchingTrustedSenders
 				? m(
 						"p",
