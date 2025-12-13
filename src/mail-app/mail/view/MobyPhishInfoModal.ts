@@ -23,25 +23,37 @@ export class MobyPhishInfoModal implements ModalComponent {
 								color: "black",
 							},
 						},
-						"About MobyMail Phishing Detection",
+						"How Moby Protects You from Phishing",
 					),
 
 					m(
-						"p",
+						"div",
 						{
 							style: {
 								fontSize: "14px",
-								textAlign: "center",
+								textAlign: "left",
 								marginBottom: "20px",
 								color: "black",
-								whiteSpace: "pre-line",
+								lineHeight: "1.6",
 							},
 						},
-						"MobyMail protects you by: \n" +
-							"• Allowing users to identify and confirm senders they know \n" +
-							"• Automatically detecting and enabling content from senders that the user has already identified as known \n" +
-							" (through cryptographic protocols) \n" +
-							"• Warning you about emails that may be phishing attempts",
+						[
+							m("p", { style: { marginBottom: "12px" } }, "Phishing emails and websites mimic those from known, legitimate senders."),
+							m("p", { style: { marginBottom: "6px" } }, m("strong", "Using Moby:")),
+							m("ul", { style: { margin: "0 0 12px 20px", padding: "0" } }, [
+								m(
+									"li",
+									{ style: { marginBottom: "6px" } },
+									"Click on Moby when you receive an email or visit a website that appears to be from a known, legitimate sender.",
+								),
+								m("li", "Moby uses cryptography to verify legitimacy. It disables interactions until you mark the sender or website as known."),
+							]),
+							m(
+								"p",
+								{ style: { marginBottom: "0" } },
+								"You'll be warned when an email or website only appears legitimate, but is not. With Moby, you are protected from them.",
+							),
+						],
 					),
 
 					m(
@@ -122,7 +134,7 @@ export class MobyPhishInfoModal implements ModalComponent {
 			boxShadow: "0px 5px 15px rgba(0,0,0,0.25)",
 			borderRadius: "10px",
 			width: "90%",
-			maxWidth: "400px",
+			maxWidth: "480px",
 			display: "flex",
 			flexDirection: "column",
 			gap: "0px",
