@@ -38,21 +38,28 @@ export class MobyPhishInfoModal implements ModalComponent {
 							},
 						},
 						[
-							m("p", { style: { marginBottom: "12px" } }, "Phishing emails and websites mimic those from known, legitimate senders."),
+							m(
+								"p",
+								{ style: { marginBottom: "12px" } },
+								"Phishing websites mimic known, legitimate websites; phishing emails mimic emails from known, legitimate senders. Moby can help you distinguish between these counterfeits and the legit websites and emails.",
+							),
 							m("p", { style: { marginBottom: "6px" } }, m("strong", "Using Moby:")),
 							m("ul", { style: { margin: "0 0 12px 20px", padding: "0" } }, [
 								m(
 									"li",
 									{ style: { marginBottom: "6px" } },
-									"Click on Moby when you receive an email or visit a website that appears to be from a known, legitimate sender.",
+									"Click on Moby to identify websites you know and emails from senders you know, and later, every time you open the website or email from the known sender.",
 								),
-								m("li", "Moby uses cryptography to verify legitimacy. It disables interactions until you mark the sender or website as known."),
+								m(
+									"li",
+									{ style: { marginBottom: "6px" } },
+									"Until you click, Moby will disable interactions with the known, identified websites and with emails from known, identified senders.",
+								),
+								m(
+									"li",
+									"When you click, Moby uses cryptography to confirm that the website/email is authentic. If it isn't, Moby will inform you, allowing you to avoid being phished. ",
+								),
 							]),
-							m(
-								"p",
-								{ style: { marginBottom: "0" } },
-								"You'll be warned when an email or website only appears legitimate, but is not. With Moby, you are protected from them.",
-							),
 						],
 					),
 
