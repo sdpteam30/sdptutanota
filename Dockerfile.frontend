@@ -61,8 +61,8 @@ RUN if [ -d ".git" ]; then \
 
 # Find specific tutanota-release, checkout, init submodules, then switch to sean-dev1 branch
 RUN if [ -d ".git" ]; then \
-        echo "Using specific release: tutanota-release-301.250806.1" && \
-        LATEST_RELEASE="tutanota-release-301.250806.1" && \
+        echo "Using specific release: tutanota-release-317.251217.0" && \
+        LATEST_RELEASE="tutanota-release-317.251217.0" && \
         echo "Using release: $LATEST_RELEASE" && \
         echo "Handling untracked files before checkout..." && \
         git ls-files --others --exclude-standard | while read -r file; do \
