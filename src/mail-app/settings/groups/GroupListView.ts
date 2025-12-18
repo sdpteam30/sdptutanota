@@ -14,7 +14,7 @@ import { GroupDetailsModel } from "./GroupDetailsModel.js"
 import { SelectableRowContainer, SelectableRowSelectedSetter, setVisibility } from "../../../common/gui/SelectableRowContainer.js"
 import Stream from "mithril/stream"
 import { List, ListAttrs, MultiselectMode, RenderConfig } from "../../../common/gui/base/List.js"
-import { size } from "../../../common/gui/size.js"
+import { component_size, size } from "../../../common/gui/size.js"
 import { ListElementListModel } from "../../../common/misc/ListElementListModel.js"
 import { compareGroupInfos } from "../../../common/api/common/utils/GroupUtils.js"
 import { NotFoundError } from "../../../common/api/common/error/RestError.js"
@@ -25,7 +25,6 @@ import { lang } from "../../../common/misc/LanguageViewModel.js"
 import ColumnEmptyMessageBox from "../../../common/gui/base/ColumnEmptyMessageBox.js"
 import { theme } from "../../../common/gui/theme.js"
 import { IconButton } from "../../../common/gui/base/IconButton.js"
-import { NewPaidPlans } from "../../../common/api/common/TutanotaConstants.js"
 import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js"
 import { ListAutoSelectBehavior } from "../../../common/misc/DeviceConfig.js"
 import { UpdatableSettingsViewer } from "../../../common/settings/Interfaces.js"
@@ -37,7 +36,7 @@ export class GroupListView implements UpdatableSettingsViewer {
 	private searchQuery: string = ""
 	private listModel: ListElementListModel<GroupInfo>
 	private readonly renderConfig: RenderConfig<GroupInfo, GroupRow> = {
-		itemHeight: size.list_row_height,
+		itemHeight: component_size.list_row_height,
 		multiselectionAllowed: MultiselectMode.Disabled,
 		swipe: null,
 		createElement: (dom) => {
@@ -82,7 +81,7 @@ export class GroupListView implements UpdatableSettingsViewer {
 			ListColumnWrapper,
 			{
 				headerContent: m(
-					".flex.flex-space-between.center-vertically.plr-l",
+					".flex.flex-space-between.center-vertically.plr-24",
 					m(BaseSearchBar, {
 						text: this.searchQuery,
 						onInput: (text) => this.updateQuery(text),
@@ -95,7 +94,7 @@ export class GroupListView implements UpdatableSettingsViewer {
 						placeholder: lang.get("searchMailboxes_placeholder"),
 					} satisfies BaseSearchBarAttrs),
 					m(
-						".mr-negative-s",
+						".mr-negative-8",
 						m(IconButton, {
 							title: "createSharedMailbox_label",
 							icon: Icons.Add,
@@ -106,7 +105,7 @@ export class GroupListView implements UpdatableSettingsViewer {
 			},
 			this.listModel.isEmptyAndDone()
 				? m(ColumnEmptyMessageBox, {
-						color: theme.list_message_bg,
+						color: theme.on_surface_variant,
 						icon: Icons.People,
 						message: "noEntries_msg",
 					})
@@ -138,16 +137,14 @@ export class GroupListView implements UpdatableSettingsViewer {
 		} else {
 			const msg = lang.makeTranslation("upgrade_text", lang.get("newPaidPlanRequired_msg") + " " + lang.get("sharedMailboxesMultiUser_msg"))
 			const wizard = await import("../../../common/subscription/UpgradeSubscriptionWizard")
-			await wizard.showUpgradeWizard(locator.logins, NewPaidPlans, msg)
+			await wizard.showUpgradeWizard({ logins: locator.logins, msg })
 		}
 	}
 
 	async entityEventsReceived(updates: ReadonlyArray<EntityUpdateData>): Promise<void> {
 		for (const update of updates) {
-			const { instanceListId, instanceId, operation } = update
-
-			if (isUpdateForTypeRef(GroupInfoTypeRef, update) && this.listId.getSync() === instanceListId) {
-				await this.listModel.entityEventReceived(instanceListId, instanceId, operation)
+			if (isUpdateForTypeRef(GroupInfoTypeRef, update) && this.listId.getSync() === update.instanceListId) {
+				await this.listModel.entityEventReceived(update.instanceListId, update.instanceId, update.operation)
 			} else if (isUpdateForTypeRef(GroupMemberTypeRef, update)) {
 				this.listModel.reapplyFilter()
 			}
@@ -263,7 +260,7 @@ export class GroupRow implements VirtualRow<GroupInfo> {
 						oncreate: (vnode) => (this.nameDom = vnode.dom as HTMLElement),
 					}),
 				]),
-				m(".flex-space-between.mt-xxs", [
+				m(".flex-space-between.mt-4", [
 					m(".smaller", {
 						oncreate: (vnode) => (this.addressDom = vnode.dom as HTMLElement),
 					}),

@@ -3,7 +3,7 @@ use crate::crypto_entity_client::CryptoEntityClient;
 use crate::element_value::ParsedEntity;
 use crate::entities::generated::sys::{Group, GroupInfo};
 use crate::entities::generated::tutanota::{
-	Mail, MailBox, MailFolder, MailboxGroupRoot, SimpleMoveMailPostIn, UnreadMailStatePostIn,
+	Mail, MailBox, MailSet, MailboxGroupRoot, SimpleMoveMailPostIn, UnreadMailStatePostIn,
 };
 use crate::entities::Entity;
 use crate::folder_system::{FolderSystem, MailSetKind};
@@ -71,8 +71,8 @@ impl MailFacade {
 		&self,
 		mailbox: &MailBox,
 	) -> Result<FolderSystem, ApiCallError> {
-		let folders_list = &mailbox.folders.as_ref().unwrap().folders;
-		let folders: Vec<MailFolder> = self
+		let folders_list = &mailbox.mailSets.mailSets;
+		let folders: Vec<MailSet> = self
 			.crypto_entity_client
 			.load_range(
 				folders_list,
@@ -112,6 +112,7 @@ impl MailFacade {
 						_format: 0,
 						destinationSetType: folder_type as i64,
 						mails: mail.to_vec(),
+						moveReason: None,
 					},
 					Default::default(),
 				)
@@ -210,10 +211,10 @@ impl MailFacade {
 
 	/// Move the given mails to the trash.
 	///
-	/// This is used to avoid having to load the user's mailbox, folders, etc., as it directly
+	/// This is used to avoid having to load the user's mailbox, mailSets, etc., as it directly
 	/// invokes the SimpleMoveMailService. It can also be used to move multiple Mails across
 	/// different mailboxes that the user has access to, moving each Mail to their respective
-	/// Trash folders.
+	/// Trash mailSets.
 	pub async fn trash_mails(&self, mails: Vec<IdTupleGenerated>) -> Result<(), ApiCallError> {
 		self.simple_move_mail(mails, MailSetKind::Trash).await
 	}
@@ -233,13 +234,14 @@ fn get_enabled_mail_addresses_for_group_info(group_info: &GroupInfo) -> Vec<Stri
 mod tests {
 	use super::UnreadMailStatePostIn;
 	use crate::crypto_entity_client::MockCryptoEntityClient;
-	use crate::entities::generated::tutanota::SimpleMoveMailPostIn;
+	use crate::entities::generated::tutanota::{MoveMailPostOut, SimpleMoveMailPostIn};
 	use crate::folder_system::MailSetKind;
 	use crate::mail_facade::MailFacade;
 	use crate::services::generated::tutanota::SimpleMoveMailService;
 	use crate::services::generated::tutanota::UnreadMailStateService;
 	use crate::services::service_executor::MockResolvingServiceExecutor;
 	use crate::user_facade::MockUserFacade;
+	use crate::util::test_utils::create_test_entity;
 	use crate::GeneratedId;
 	use crate::IdTupleGenerated;
 	use mockall::predicate::{always, eq};
@@ -357,22 +359,32 @@ mod tests {
 			_format: 0,
 			mails: mails[..50].to_vec(),
 			destinationSetType: MailSetKind::Trash as i64,
+			moveReason: None,
 		};
 		let second_invocation = SimpleMoveMailPostIn {
 			_format: 0,
 			mails: mails[50..].to_vec(),
 			destinationSetType: MailSetKind::Trash as i64,
+			moveReason: None,
 		};
 
 		executor
 			.expect_post::<SimpleMoveMailService>()
 			.with(eq(first_invocation), always())
-			.returning(|_, _| Ok(()));
+			.returning(|_, _| {
+				Ok(MoveMailPostOut {
+					..create_test_entity()
+				})
+			});
 
 		executor
 			.expect_post::<SimpleMoveMailService>()
 			.with(eq(second_invocation), always())
-			.returning(|_, _| Ok(()));
+			.returning(|_, _| {
+				Ok(MoveMailPostOut {
+					..create_test_entity()
+				})
+			});
 
 		let facade = MailFacade::new(
 			Arc::new(MockCryptoEntityClient::default()),
@@ -395,11 +407,16 @@ mod tests {
 			_format: 0,
 			mails: vec![mails[0].clone()],
 			destinationSetType: MailSetKind::Trash as i64,
+			moveReason: None,
 		};
 		executor
 			.expect_post::<SimpleMoveMailService>()
 			.with(eq(invocation), always())
-			.returning(|_, _| Ok(()));
+			.returning(|_, _| {
+				Ok(MoveMailPostOut {
+					..create_test_entity()
+				})
+			});
 		let facade = MailFacade::new(
 			Arc::new(MockCryptoEntityClient::default()),
 			Arc::new(MockUserFacade::default()),
@@ -416,11 +433,16 @@ mod tests {
 			_format: 0,
 			mails: mails.clone(),
 			destinationSetType: MailSetKind::Trash as i64,
+			moveReason: None,
 		};
 		executor
 			.expect_post::<SimpleMoveMailService>()
 			.with(eq(invocation), always())
-			.returning(|_, _| Ok(()));
+			.returning(|_, _| {
+				Ok(MoveMailPostOut {
+					..create_test_entity()
+				})
+			});
 		let facade = MailFacade::new(
 			Arc::new(MockCryptoEntityClient::default()),
 			Arc::new(MockUserFacade::default()),

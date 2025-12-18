@@ -4,7 +4,8 @@ export {
 	lazyNumberRange,
 	arrayEquals,
 	arrayEqualsWithPredicate,
-	arrayHash,
+	arrayHashSigned,
+	arrayHashUnsigned,
 	remove,
 	clear,
 	findAll,
@@ -45,6 +46,7 @@ export {
 	zeroOut,
 	compare,
 	collectToMap,
+	splitArrayAt,
 } from "./ArrayUtils.js"
 export { AsyncResult } from "./AsyncResult.js"
 export {
@@ -63,7 +65,6 @@ export {
 	setDifference,
 } from "./CollectionUtils.js"
 export {
-	DAY_IN_MILLIS,
 	YEAR_IN_MILLIS,
 	getStartOfNextDay,
 	getEndOfDay,
@@ -81,9 +82,18 @@ export {
 	sortableTimestamp,
 	isValidDate,
 	millisToDays,
-	daysToMillis,
 	TIMESTAMP_ZERO_YEAR,
 } from "./DateUtils.js"
+export {
+	SECOND_IN_MILLIS,
+	MINUTE_IN_MILLIS,
+	HOUR_IN_MILLIS,
+	DAY_IN_MILLIS,
+	daysToMillis,
+	secondsToMillis,
+	minutesToMillis,
+	hoursToMillis,
+} from "./TimeUtils.js"
 export {
 	uint8ArrayToArrayBuffer,
 	hexToBase64,
@@ -146,8 +156,10 @@ export {
 	makeSingleUse,
 	identity,
 	noOp,
+	throttle,
 	debounce,
 	debounceStart,
+	throttleStart,
 	randomIntFromInterval,
 	errorToString,
 	objectEntries,
@@ -169,6 +181,12 @@ export {
 	BoundedExecutor,
 	freshVersioned,
 	isKeyVersion,
+	newPromise,
+	isSessionStorageAvailable,
+	assertValidURL,
+	createResizeObserver,
+	singleAsync,
+	isAsciiChar,
 } from "./Utils.js"
 export type {
 	Callback,
@@ -182,6 +200,7 @@ export type {
 	ErrorInfo,
 	Versioned,
 	KeyVersion,
+	Nullable,
 } from "./Utils.js"
 
 export {
@@ -200,7 +219,9 @@ export {
 
 export { mod, clamp } from "./MathUtils.js"
 
-export { renderCsv } from "./Csv.js"
+export { renderCsv, renderCsvBody, renderCsvHeader } from "./Csv.js"
 
 export { tokenize } from "./Tokenizer.js"
 export { memoizedWithHiddenArgument, memoized, deepMemoized, lazyMemoized } from "./memoized.js"
+
+export { parseUrl, getUrlDomain } from "./URLUtils.js"

@@ -5,8 +5,8 @@ import Stream from "mithril/stream"
 import { TextField, TextFieldType } from "../../../common/gui/base/TextField.js"
 import { lang, type TranslationKey } from "../../../common/misc/LanguageViewModel.js"
 import type { TranslationKeyType } from "../../../common/misc/TranslationKey.js"
-import { deepEqual, isNotNull } from "@tutao/tutanota-utils"
-import { AlarmInterval, CalendarType, isExternalCalendarType, isNormalCalendarType } from "../../../common/calendar/date/CalendarUtils.js"
+import { clone, deepEqual, isNotNull } from "@tutao/tutanota-utils"
+import { AlarmInterval, CalendarType } from "../../../common/calendar/date/CalendarUtils.js"
 import { RemindersEditor } from "./RemindersEditor.js"
 import { checkURLString, isIcal } from "../../../common/calendar/gui/ImportExportUtils.js"
 import { locator } from "../../../common/api/main/CommonLocator.js"
@@ -15,16 +15,20 @@ import { DEFAULT_ERROR } from "../../../common/api/common/TutanotaConstants.js"
 import { LoginButton } from "../../../common/gui/base/buttons/LoginButton.js"
 import { ColorPickerView } from "../../../common/gui/base/colorPicker/ColorPickerView"
 import { generateRandomColor } from "./CalendarGuiUtils.js"
+import { GroupNameData } from "../../../common/sharing/model/GroupSettingsModel"
+import { GroupSettingNameInputFields } from "../../../common/sharing/view/GroupSettingNameInputFields"
 
 export type CalendarProperties = {
-	name: string
+	nameData: GroupNameData
 	color: string
 	alarms: AlarmInterval[]
 	sourceUrl: string | null
 }
 
-export const defaultCalendarProperties: CalendarProperties = {
-	name: "",
+export const defaultCalendarProperties: Readonly<CalendarProperties> & {
+	readonly nameData: Readonly<GroupNameData>
+} = {
+	nameData: { kind: "single", name: "" },
 	color: "",
 	alarms: [],
 	sourceUrl: "",
@@ -43,10 +47,10 @@ export async function handleUrlSubscription(calendarModel: CalendarModel, url: s
 function sourceUrlInputField(urlStream: Stream<string>, errorMessageStream: Stream<string>) {
 	const errorMessage = errorMessageStream().trim()
 	let helperMessage = ""
-	if (urlStream().trim() === "") helperMessage = "E.g: https://tuta.com/ics/example.ics"
+	if (urlStream().trim() === "") helperMessage = "E.g: https://tuta.com/ics/example.ics - webcals://example.com/calendar.ics"
 	else if (isNotNull(errorMessage) && errorMessage !== DEFAULT_ERROR) helperMessage = errorMessage
 	return m(TextField, {
-		class: `pt pb ${helperMessage.length ? "" : "mb-small-line-height"}`,
+		class: `pt-16 pb-16 ${helperMessage.length ? "" : "mb-small-line-height"}`,
 		value: urlStream(),
 		oninput: (url: string, inputElement: HTMLInputElement) => {
 			const assertionResult = checkURLString(url)
@@ -64,28 +68,24 @@ function sourceUrlInputField(urlStream: Stream<string>, errorMessageStream: Stre
 }
 
 function createEditCalendarComponent(
-	nameStream: Stream<string>,
+	nameData: GroupNameData,
 	colorStream: Stream<string>,
-	shared: boolean,
 	calendarType: CalendarType,
 	alarms: AlarmInterval[],
 	urlStream: Stream<string>,
 	errorMessageStream: Stream<string>,
 ) {
+	const currentColor = colorStream() ? `#${colorStream()}` : ""
 	return m.fragment({}, [
-		m(TextField, {
-			value: nameStream(),
-			oninput: nameStream,
-			label: "calendarName_label",
-		}),
-		m(".small.mt.mb-xs", lang.get("color_label")),
+		m(GroupSettingNameInputFields, { groupNameData: nameData }),
+		m(".small.mt-16.mb-4", lang.get("color_label")),
 		m(ColorPickerView, {
-			value: colorStream(),
+			value: currentColor,
 			onselect: (color: string) => {
-				colorStream(color)
+				colorStream(color.substring(1))
 			},
 		}),
-		!shared && isNormalCalendarType(calendarType)
+		calendarType === CalendarType.Private
 			? m(RemindersEditor, {
 					alarms,
 					addAlarm: (alarm: AlarmInterval) => {
@@ -99,14 +99,13 @@ function createEditCalendarComponent(
 					useNewEditor: false,
 				})
 			: null,
-		isExternalCalendarType(calendarType) ? sourceUrlInputField(urlStream, errorMessageStream) : null,
+		calendarType === CalendarType.External ? sourceUrlInputField(urlStream, errorMessageStream) : null,
 	])
 }
 
 export interface CreateEditDialogAttrs {
 	calendarType: CalendarType
 	titleTextId: TranslationKeyType
-	shared: boolean
 	okAction: (dialog: Dialog, calendarProperties: CalendarProperties, calendarModel?: CalendarModel) => unknown
 	okTextId: TranslationKeyType
 	warningMessage?: () => Children
@@ -118,21 +117,17 @@ export interface CreateEditDialogAttrs {
 export function showCreateEditCalendarDialog({
 	calendarType,
 	titleTextId,
-	shared,
 	okAction,
 	okTextId,
 	warningMessage,
-	calendarProperties: { name, color, alarms, sourceUrl } = defaultCalendarProperties,
+	calendarProperties: { nameData, color, alarms, sourceUrl } = clone(defaultCalendarProperties),
 	isNewCalendar = true,
 	calendarModel,
 }: CreateEditDialogAttrs) {
-	if (color !== "") {
-		color = "#" + color
-	} else if (isNewCalendar && isExternalCalendarType(calendarType)) {
-		color = generateRandomColor()
+	if (isNewCalendar && calendarType === CalendarType.External) {
+		color = generateRandomColor().substring(1)
 	}
 
-	const nameStream = stream(name)
 	const colorStream = stream(color)
 	const urlStream = stream(sourceUrl ?? "")
 	const errorMessageStream = stream(DEFAULT_ERROR)
@@ -155,8 +150,8 @@ export function showCreateEditCalendarDialog({
 		okAction(
 			dialog,
 			{
-				name: nameStream(),
-				color: colorStream().substring(1),
+				nameData,
+				color: colorStream(),
 				alarms,
 				sourceUrl: urlStream().trim(),
 			},
@@ -169,7 +164,7 @@ export function showCreateEditCalendarDialog({
 		child: {
 			view: () =>
 				m(".flex.col", [
-					m(".mt.mb.h6.b", lang.get(titleTextId)),
+					m(".mt-16.mb-16.h6.b", lang.get(titleTextId)),
 					warningMessage ? warningMessage() : null,
 					sourceUrlInputField(urlStream, errorMessageStream),
 					m(LoginButton, {
@@ -185,7 +180,7 @@ export function showCreateEditCalendarDialog({
 								})
 								.catch((e) => Dialog.message(lang.makeTranslation("error_message", e.message)))
 						},
-						class: errorMessageStream().trim() !== "" ? "mt-s no-hover button-bg" : "mt-s",
+						class: errorMessageStream().trim() !== "" ? "mt-8 no-hover disabled-button" : "mt-8",
 						disabled: errorMessageStream().trim() !== "",
 					}),
 				]),
@@ -203,13 +198,51 @@ export function showCreateEditCalendarDialog({
 					view: () =>
 						m(".flex.col", [
 							warningMessage ? warningMessage() : null,
-							createEditCalendarComponent(nameStream, colorStream, shared, calendarType, alarms, urlStream, errorMessageStream),
+							createEditCalendarComponent(nameData, colorStream, calendarType, alarms, urlStream, errorMessageStream),
 						]),
 				},
 				okAction: doAction,
 			},
-			isNewCalendar && isExternalCalendarType(calendarType) ? externalCalendarDialogProps : {},
+			isNewCalendar && calendarType === CalendarType.External ? externalCalendarDialogProps : {},
 		),
 	)
+	dialog.show()
+}
+
+export interface EditBirthdayCalendarAttrs {
+	okAction: (dialog: Dialog, newColorValue: string) => unknown
+	color: string
+}
+
+export function showEditBirthdayCalendarDialog(editBirthdayCalendarAttrs: EditBirthdayCalendarAttrs) {
+	const colorStream = stream("#" + editBirthdayCalendarAttrs.color)
+
+	const doAction = async (dialog: Dialog) => {
+		editBirthdayCalendarAttrs.okAction(dialog, colorStream().substring(1))
+	}
+
+	const dialog = Dialog.createActionDialog({
+		allowOkWithReturn: true,
+		okActionTextId: "save_action",
+		title: "edit_action",
+		child: {
+			view: () =>
+				m(".flex.col", [
+					m(TextField, {
+						label: "name_label",
+						value: lang.get("birthdayCalendar_label"),
+						isReadOnly: true,
+					}),
+					m(".small.mt-16.mb-4", lang.get("color_label")),
+					m(ColorPickerView, {
+						value: colorStream(),
+						onselect: (color: string) => {
+							colorStream(color)
+						},
+					}),
+				]),
+		},
+		okAction: doAction,
+	})
 	dialog.show()
 }

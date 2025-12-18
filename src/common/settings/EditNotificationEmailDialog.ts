@@ -11,12 +11,12 @@ import { DropDownSelector } from "../gui/base/DropDownSelector.js"
 import { TextField } from "../gui/base/TextField.js"
 import { showProgressDialog } from "../gui/dialogs/ProgressDialog.js"
 import { assertNotNull, LazyLoaded, memoized, neverNull, ofClass } from "@tutao/tutanota-utils"
-import { htmlSanitizer } from "../misc/HtmlSanitizer.js"
+import { getHtmlSanitizer } from "../misc/HtmlSanitizer.js"
 import { PayloadTooLargeError } from "../api/common/error/RestError.js"
 import { SegmentControl } from "../gui/base/SegmentControl.js"
 import { UserError } from "../api/main/UserError.js"
 import { showNotAvailableForFreeDialog, showPlanUpgradeRequiredDialog } from "../misc/SubscriptionDialogs.js"
-import { getAvailablePlansWithWhitelabel, isWhitelabelActive } from "../subscription/SubscriptionUtils.js"
+import { getAvailablePlansWithWhitelabel, isWhitelabelActive } from "../subscription/utils/SubscriptionUtils.js"
 import type { UserController } from "../api/main/UserController.js"
 import { GENERATED_MAX_ID } from "../api/common/utils/EntityUtils.js"
 import { locator } from "../api/main/CommonLocator.js"
@@ -133,7 +133,7 @@ export function show(existingTemplate: NotificationMailTemplate | null, customer
 	})
 
 	const editTabContent = () => [
-		m(".small.mt-s", lang.get("templateHelp_msg")),
+		m(".small.mt-8", lang.get("templateHelp_msg")),
 		existingTemplate
 			? m(TextField, {
 					label: "notificationMailLanguage_label",
@@ -162,6 +162,7 @@ export function show(existingTemplate: NotificationMailTemplate | null, customer
 		senderDomain = "https://" + ((whitelabelDomainInfo && whitelabelDomainInfo.domain) || "app.tuta.com")
 		m.redraw()
 	})
+	const htmlSanitizer = getHtmlSanitizer()
 	// Even though savedHtml is always sanitized changing it might lead to mXSS
 	const sanitizePreview = memoized<(html: string) => string>((html) => {
 		return htmlSanitizer.sanitizeHTML(html).html
@@ -173,7 +174,7 @@ export function show(existingTemplate: NotificationMailTemplate | null, customer
 			value: subject().replace(/{sender}/g, senderName),
 			isReadOnly: true,
 		}),
-		m(".small.mt.mb", lang.get("mailBody_label")),
+		m(".small.mt-16.mb-16", lang.get("mailBody_label")),
 		m.trust(sanitizePreview(savedHtml.replace(/{sender}/g, senderName).replace(/{link}/g, senderDomain))),
 	]
 

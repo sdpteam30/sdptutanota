@@ -10,11 +10,10 @@ import { Dialog } from "../../../../common/gui/base/Dialog.js"
 import { lang } from "../../../../common/misc/LanguageViewModel.js"
 import { ButtonAttrs, ButtonType } from "../../../../common/gui/base/Button.js"
 import { Keys } from "../../../../common/api/common/TutanotaConstants.js"
-import { AlarmInterval, getTimeFormatForUser, parseAlarmInterval } from "../../../../common/calendar/date/CalendarUtils.js"
+import { AlarmInterval, parseAlarmInterval } from "../../../../common/calendar/date/CalendarUtils.js"
 import { client } from "../../../../common/misc/ClientDetector.js"
 import { assertNotNull, noOp, Thunk } from "@tutao/tutanota-utils"
 import { PosRect } from "../../../../common/gui/base/Dropdown.js"
-import { Mail } from "../../../../common/api/entities/tutanota/TypeRefs.js"
 import type { HtmlEditor } from "../../../../common/gui/editor/HtmlEditor.js"
 import { locator } from "../../../../common/api/main/CommonLocator.js"
 import { CalendarEventEditView, EditorPages } from "./CalendarEventEditView.js"
@@ -28,10 +27,9 @@ import { UserError } from "../../../../common/api/main/UserError.js"
 import { showUserError } from "../../../../common/misc/ErrorHandlerImpl.js"
 import { theme } from "../../../../common/gui/theme.js"
 import stream from "mithril/stream"
-import { handleRatingByEvent } from "../../../../common/ratings/UserSatisfactionDialog.js"
 import { getStartOfTheWeekOffsetForUser } from "../../../../common/misc/weekOffset"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
+import { newPromise } from "@tutao/tutanota-utils"
+import { getTimeFormatForUser } from "../../../../common/api/common/utils/UserUtils"
 
 const enum ConfirmationResult {
 	Cancel,
@@ -85,7 +83,7 @@ export class EventEditorDialog {
 	 * the generic way to open any calendar edit dialog. the caller should know what to do after the
 	 * dialog is closed.
 	 */
-	async showCalendarEventEditDialog(model: CalendarEventModel, responseMail: Mail | null, handler: EditDialogOkHandler): Promise<void> {
+	async showCalendarEventEditDialog(model: CalendarEventModel, handler: EditDialogOkHandler): Promise<void> {
 		const recipientsSearch = await locator.recipientsSearchModel()
 		const { HtmlEditor } = await import("../../../../common/gui/editor/HtmlEditor.js")
 		const groupSettings = locator.logins.getUserController().userSettingsGroupRoot.groupSettings
@@ -112,6 +110,7 @@ export class EventEditorDialog {
 			.setValue(descriptionText)
 
 		const okAction = (dom: HTMLElement) => {
+			descriptionEditor.editor.domElement?.blur()
 			model.editModels.description.content = descriptionEditor.getTrimmedValue()
 			handler(dom.getBoundingClientRect(), () => dialog.close())
 		}
@@ -146,7 +145,8 @@ export class EventEditorDialog {
 			},
 			{
 				height: "100%",
-				"background-color": theme.navigation_bg,
+				"background-color": theme.surface_container,
+				color: theme.on_surface,
 			},
 		)
 			.addShortcut({
@@ -176,9 +176,10 @@ export class EventEditorDialog {
 	 *
 	 * will unconditionally send invites on save.
 	 * @param model the calendar event model used to edit and save the event
+	 * @param okActionCallback - High level callback fired when the operation is successfully executed/saved
 	 */
-	async showNewCalendarEventEditDialog(model: CalendarEventModel): Promise<void> {
-		let finished = false
+	async showNewCalendarEventEditDialog(model: CalendarEventModel, okActionCallback?: Thunk): Promise<void> {
+		let finished = false // Avoid async callbacks being called multiple times
 
 		const okAction: EditDialogOkHandler = async (posRect, finish) => {
 			/** new event, so we always want to send invites. */
@@ -191,8 +192,9 @@ export class EventEditorDialog {
 				const result = await model.apply()
 				if (result === EventSaveResult.Saved) {
 					finished = true
+					await okActionCallback?.()
 					finish()
-
+					const { handleRatingByEvent } = await import("../../../../common/ratings/UserSatisfactionDialog.js")
 					void handleRatingByEvent("Calendar")
 				}
 			} catch (e) {
@@ -207,7 +209,7 @@ export class EventEditorDialog {
 			}
 		}
 
-		return this.showCalendarEventEditDialog(model, null, okAction)
+		return this.showCalendarEventEditDialog(model, okAction)
 	}
 
 	/**
@@ -219,7 +221,7 @@ export class EventEditorDialog {
 	 * @param identity the identity of the event to edit
 	 * @param responseMail a mail containing an invite and/or update for this event in case we need to reply to the organizer
 	 */
-	async showExistingCalendarEventEditDialog(model: CalendarEventModel, identity: CalendarEventIdentity, responseMail: Mail | null = null): Promise<void> {
+	async showExistingCalendarEventEditDialog(model: CalendarEventModel, identity: CalendarEventIdentity): Promise<void> {
 		let finished = false
 
 		if (identity.uid == null) {
@@ -257,7 +259,7 @@ export class EventEditorDialog {
 				}
 			}
 
-			this.showCalendarEventEditDialog(model, responseMail, okAction)
+			this.showCalendarEventEditDialog(model, okAction)
 		})
 	}
 

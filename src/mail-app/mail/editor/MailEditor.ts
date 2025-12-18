@@ -5,7 +5,7 @@ import { Editor, ImagePasteEvent } from "../../../common/gui/editor/Editor"
 import type { Attachment, InitAsResponseArgs, SendMailModel } from "../../../common/mailFunctionality/SendMailModel.js"
 import { Dialog } from "../../../common/gui/base/Dialog"
 import { InfoLink, lang } from "../../../common/misc/LanguageViewModel"
-import type { MailboxDetail } from "../../../common/mailFunctionality/MailboxModel.js"
+import { MailboxDetail, MailboxModel } from "../../../common/mailFunctionality/MailboxModel.js"
 import { checkApprovalStatus } from "../../../common/misc/LoginUtils"
 import { locator } from "../../../common/api/main/CommonLocator"
 import {
@@ -31,7 +31,7 @@ import { ExpanderPanel } from "../../../common/gui/base/Expander"
 import { windowFacade } from "../../../common/misc/WindowFacade"
 import { UserError } from "../../../common/api/main/UserError"
 import { showProgressDialog } from "../../../common/gui/dialogs/ProgressDialog"
-import { htmlSanitizer } from "../../../common/misc/HtmlSanitizer"
+import { getHtmlSanitizer, HtmlSanitizer } from "../../../common/misc/HtmlSanitizer"
 import { DropDownSelector } from "../../../common/gui/base/DropDownSelector.js"
 import {
 	Contact,
@@ -44,9 +44,21 @@ import {
 	MailDetails,
 } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { FileOpenError } from "../../../common/api/common/error/FileOpenError"
-import type { lazy } from "@tutao/tutanota-utils"
-import { assertNotNull, cleanMatch, downcast, isNotNull, noOp, ofClass, typedValues } from "@tutao/tutanota-utils"
-import { createInlineImage, isMailContrastFixNeeded, replaceCidsWithInlineImages, replaceInlineImagesWithCids } from "../view/MailGuiUtils"
+import {
+	assertNotNull,
+	cleanMatch,
+	debounce,
+	downcast,
+	isNotNull,
+	lazy,
+	minutesToMillis,
+	noOp,
+	ofClass,
+	secondsToMillis,
+	throttle,
+	typedValues,
+} from "@tutao/tutanota-utils"
+import { createInlineImage, replaceCidsWithInlineImages, replaceInlineImagesWithCids } from "../view/MailGuiUtils"
 import { client } from "../../../common/misc/ClientDetector"
 import { appendEmailSignature } from "../signature/Signature"
 import { showTemplatePopupInEditor } from "../../templates/view/TemplatePopup"
@@ -56,7 +68,7 @@ import { createKnowledgeBaseDialogInjection } from "../../knowledgebase/view/Kno
 import { KnowledgeBaseModel } from "../../knowledgebase/model/KnowledgeBaseModel"
 import { styles } from "../../../common/gui/styles"
 import { showMinimizedMailEditor } from "../view/MinimizedMailEditorOverlay"
-import { SaveErrorReason, SaveStatus, SaveStatusEnum } from "../model/MinimizedMailEditorViewModel"
+import { MinimizedMailEditorViewModel, SaveErrorReason, SaveStatus, SaveStatusEnum } from "../model/MinimizedMailEditorViewModel"
 import { fileListToArray, FileReference, isTutanotaFile } from "../../../common/api/common/utils/FileUtils"
 import { parseMailtoUrl } from "../../../common/misc/parsing/MailAddressParser"
 import { CancelledError } from "../../../common/api/common/error/CancelledError"
@@ -96,13 +108,26 @@ import {
 } from "../../../common/mailFunctionality/SharedMailUtils.js"
 import { mailLocator } from "../../mailLocator.js"
 
-import { handleRatingByEvent } from "../../../common/ratings/UserSatisfactionDialog.js"
+import { isDarkTheme, theme } from "../../../common/gui/theme"
+import { px, size } from "../../../common/gui/size"
+
+import type { AutosaveFacade, LocalAutosavedDraftData } from "../../../common/api/worker/facades/lazy/AutosaveFacade"
+import { showOverwriteDraftDialog, showOverwriteRemoteDraftDialog } from "./OverwriteDraftDialogs"
+
+// Interval where we save drafts locally.
+//
+// This will save while the user is typing, thus the user only loses a few seconds of progress at most if the app
+// unexpectedly closes (crash, power outage, etc.).
+const AUTOSAVE_LOCAL_TIMEOUT: number = secondsToMillis(5)
+
+// If the editor is left untouched for this amount of time, then the draft will automatically save to the server.
+const AUTOSAVE_REMOTE_TIMEOUT: number = minutesToMillis(5)
 
 export type MailEditorAttrs = {
 	model: SendMailModel
 	doBlockExternalContent: Stream<boolean>
 	doShowToolbar: Stream<boolean>
-	onload?: (editor: Editor) => void
+	onChange?: () => unknown
 	onclose?: (...args: Array<any>) => any
 	selectedNotificationLanguage: Stream<string>
 	dialog: lazy<Dialog>
@@ -158,6 +183,11 @@ export class MailEditor implements Component<MailEditorAttrs> {
 	// if we're set to block external content, but there is no content to block,
 	// we don't want to show the banner.
 	private blockedExternalContent: number = 0
+	private shouldCollapseQuotedReply: boolean = true
+	private collapsedReply: HTMLElement | null = null
+	private forceLightMode: boolean = false
+
+	private readonly htmlSanitizer: HtmlSanitizer = getHtmlSanitizer()
 
 	constructor(vnode: Vnode<MailEditorAttrs>) {
 		const a = vnode.attrs
@@ -176,7 +206,7 @@ export class MailEditor implements Component<MailEditorAttrs> {
 		this.editor = new Editor(
 			200,
 			(html, isPaste) => {
-				const sanitized = htmlSanitizer.sanitizeFragment(html, {
+				const sanitized = this.htmlSanitizer.sanitizeFragment(html, {
 					blockExternalContent: !isPaste && this.blockExternalContent,
 				})
 				this.blockedExternalContent = sanitized.blockedExternalContent
@@ -198,14 +228,12 @@ export class MailEditor implements Component<MailEditorAttrs> {
 			this.editor.setHTML(model.getBody())
 
 			const editorDom = this.editor.getDOM()
-			const contrastFixNeeded = isMailContrastFixNeeded(editorDom)
-			// If mail body cannot be displayed as-is on the dark background then apply the background and text color
-			// fix. This class will change tutanota-quote's inside of it.
-			if (contrastFixNeeded) {
-				editorDom.classList.add("bg-fix-quoted")
-			}
 
 			this.processInlineImages()
+			const htmlBeforeProcessQuotedReply = editorDom.innerHTML
+			this.editor.squire.modifyDocument(() => {
+				this.processQuotedReply(editorDom)
+			})
 
 			// Add mutation observer to remove attachments when corresponding DOM element is removed
 			new MutationObserver(onEditorChanged).observe(this.editor.getDOM(), {
@@ -214,7 +242,21 @@ export class MailEditor implements Component<MailEditorAttrs> {
 				subtree: true,
 			})
 			// since the editor is the source for the body text, the model won't know if the body has changed unless we tell it
-			this.editor.addChangeListener(() => model.setBody(replaceInlineImagesWithCids(this.editor.getDOM()).innerHTML))
+			this.editor.addChangeListener(() => {
+				const editorDom = this.editor.getDOM()
+
+				// Reset collapsed reply processing when all changes are undone
+				if (editorDom.innerHTML === htmlBeforeProcessQuotedReply) {
+					this.shouldCollapseQuotedReply = true
+					this.collapsedReply = null
+				}
+				this.editor.squire.modifyDocument(() => {
+					// We process with modifyDocument to not raise an input event as that would cause an infinite loop
+					this.processQuotedReply(editorDom)
+				})
+
+				model.setBody(this.getBodyHtml(editorDom))
+			})
 			this.editor.addEventListener("pasteImage", ({ detail }: ImagePasteEvent) => {
 				const items = Array.from(detail.clipboardData.items)
 				const imageItems = items.filter((item) => /image/.test(item.type))
@@ -245,7 +287,10 @@ export class MailEditor implements Component<MailEditorAttrs> {
 			}
 		})
 
-		model.onMailChanged.map(() => m.redraw())
+		model.onMailChanged.map(() => {
+			this.attrs.onChange?.()
+			m.redraw()
+		})
 		// Leftover text in recipient field is an error
 		model.setOnBeforeSendFunction(() => {
 			let invalidText = ""
@@ -304,6 +349,94 @@ export class MailEditor implements Component<MailEditorAttrs> {
 		})
 	}
 
+	private processQuotedReply(dom: HTMLElement): void {
+		if (!this.shouldCollapseQuotedReply && this.collapsedReply == null) {
+			// Nothing to collapse
+			return
+		}
+
+		const alreadyCollapsedReply: HTMLElement | null = dom.querySelector("[tuta-collapsed-quote=true]")
+		if (alreadyCollapsedReply == null && this.collapsedReply != null) {
+			// Collapsed reply was removed from the dom at some point
+
+			// It's possible there are more than one collapsable reply, but we only ever collapse one, so when it's removed, we expand,
+			// this is to avoid collapsing another reply, which can lead to it being incorrectly replaced by the old one when expanding after undo.
+			this.shouldCollapseQuotedReply = false
+			return
+		}
+
+		// There's a chance there are more than one collapsable reply (this is the case for draft with inline replies),
+		// we only select the last one, since it's likely to be the one with the most nested replies.
+		let collapsableReply: HTMLElement | null = null
+		if (this.collapsedReply == null) {
+			this.collapsedReply = collapsableReply = dom.querySelector(".text_editor>.tutanota_quote:last-of-type>.tutanota_quote:last-of-type")
+		}
+
+		if (this.shouldCollapseQuotedReply) {
+			const elementToReplace = alreadyCollapsedReply ?? collapsableReply
+			if (elementToReplace != null) {
+				// We recreate the already collapsed reply to re-add the click handler that would otherwise be removed by undo
+				this.collapseQuotedReply(elementToReplace)
+			} else {
+				// Nothing to collapse
+				this.shouldCollapseQuotedReply = false
+			}
+		} else {
+			// Expands removed collapsed reply after undo
+			this.expandQuotedReply(assertNotNull(alreadyCollapsedReply))
+		}
+	}
+
+	private collapseQuotedReply(elementToReplace: HTMLElement): void {
+		const quoteWrap = document.createElement("div")
+		quoteWrap.setAttribute("tuta-collapsed-quote", "true")
+
+		elementToReplace.replaceWith(quoteWrap)
+
+		const quoteIndicator = document.createElement("div")
+		quoteIndicator.style.borderLeft = `2px solid ${theme.outline}`
+		quoteIndicator.style.paddingLeft = "2px"
+		quoteIndicator.style.marginTop = px(size.spacing_16)
+
+		m.render(
+			quoteIndicator,
+			m(
+				".ml-8.fit-content",
+				{
+					style: {
+						borderRadius: "25%",
+						border: `1px solid ${theme.outline}`,
+					},
+				},
+				m(IconButton, {
+					icon: Icons.More,
+					title: "showText_action",
+					size: ButtonSize.Normal,
+					click: () => this.expandQuotedReply(quoteWrap),
+				}),
+			),
+		)
+
+		quoteWrap.appendChild(quoteIndicator)
+	}
+
+	private expandQuotedReply(quoteWrap: HTMLElement): void {
+		this.shouldCollapseQuotedReply = false
+		this.editor.squire.modifyDocument(() => {
+			quoteWrap.replaceWith(assertNotNull(this.collapsedReply))
+		})
+	}
+
+	private getBodyHtml(editorDom: HTMLElement): string {
+		const modifiedDom = replaceInlineImagesWithCids(editorDom)
+		const collapsedQuote = modifiedDom.querySelector("[tuta-collapsed-quote=true]")
+		if (collapsedQuote != null) {
+			// Note that the user may have deleted the quote, but if not, we can expand it here
+			collapsedQuote.replaceWith(assertNotNull(this.collapsedReply))
+		}
+		return modifiedDom.innerHTML
+	}
+
 	private downloadInlineImage(model: SendMailModel, cid: string) {
 		const tutanotaFiles = model.getAttachments().filter((attachment) => isTutanotaFile(attachment))
 		const inlineAttachment = tutanotaFiles.find((attachment) => attachment.cid === cid)
@@ -337,6 +470,13 @@ export class MailEditor implements Component<MailEditorAttrs> {
 			icon: Icons.Attachment,
 			size: ButtonSize.Compact,
 		}
+
+		const darkTheme = isDarkTheme()
+
+		// The actual client theme can change at any time, so we do not want to actually do anything in the case that
+		// the client suddenly switches to the light theme.
+		const forcedLightMode = darkTheme && this.forceLightMode
+
 		const plaintextFormatting = locator.logins.getUserController().props.sendPlaintextOnly
 		this.editor.setCreatesLists(!plaintextFormatting)
 
@@ -362,11 +502,26 @@ export class MailEditor implements Component<MailEditorAttrs> {
 			value: model.getSubject(),
 			oninput: (val) => model.setSubject(val),
 			injectionsRight: () =>
-				m(".flex.end.ml-between-s.items-center", [
+				m(".flex.end.ml-between-4.items-center", [
+					isDarkTheme()
+						? m(IconButton, {
+								title: "viewInLightMode_action",
+								click: (e) => {
+									this.forceLightMode = !forcedLightMode
+									// Stop the subject bar from being focused
+									e.stopPropagation()
+									this.editor.focus()
+									m.redraw()
+								},
+								// reflect the current mode in the bulb
+								icon: forcedLightMode ? Icons.Bulb : Icons.BulbOutline,
+								size: ButtonSize.Compact,
+							})
+						: null,
+					toolbarButton(),
 					showConfidentialButton ? m(ToggleButton, confidentialButtonAttrs) : null,
 					this.knowledgeBaseInjection ? this.renderToggleKnowledgeBase(this.knowledgeBaseInjection) : null,
 					m(IconButton, attachFilesButtonAttrs),
-					toolbarButton(),
 				]),
 		}
 
@@ -504,7 +659,7 @@ export class MailEditor implements Component<MailEditorAttrs> {
 										}),
 									),
 									editCustomNotificationMailAttrs
-										? m(".pt.flex-no-grow.flex-end.border-bottom.flex.items-center", m(IconButton, editCustomNotificationMailAttrs))
+										? m(".pt-16.flex-no-grow.flex-end.border-bottom.flex.items-center", m(IconButton, editCustomNotificationMailAttrs))
 										: null,
 								],
 							)
@@ -513,20 +668,20 @@ export class MailEditor implements Component<MailEditorAttrs> {
 				isConfidential ? this.renderPasswordFields() : null,
 				m(".row", m(TextField, subjectFieldAttrs)),
 				m(
-					".flex-start.flex-wrap.mt-s.mb-s.gap-hpad",
+					".flex-start.flex-wrap.mt-8.mb-8.gap-12",
 					attachmentBubbleAttrs.map((a) => m(AttachmentBubble, a)),
 				),
 				model.getAttachments().length > 0 ? m("hr.hr") : null,
 				this.renderExternalContentBanner(this.attrs),
 				a.doShowToolbar() ? this.renderToolbar(model) : null,
 				m(
-					".pt-s.text.scroll-x.break-word-links.flex.flex-column.flex-grow",
+					".pt-8.text.scroll-x.break-word-links.flex.flex-column.flex-grow" + (forcedLightMode ? ".bg-white.content-black.bg-fix-quoted" : ""),
 					{
 						onclick: () => this.editor.focus(),
 					},
 					m(this.editor),
 				),
-				m(".pb"),
+				m(".pb-16"),
 			],
 		)
 	}
@@ -555,7 +710,7 @@ export class MailEditor implements Component<MailEditorAttrs> {
 	private updateExternalContentStatus(status: ContentBlockingStatus) {
 		this.blockExternalContent = status === ContentBlockingStatus.Block || status === ContentBlockingStatus.AlwaysBlock
 
-		const sanitized = htmlSanitizer.sanitizeHTML(this.editor.getHTML(), {
+		const sanitized = this.htmlSanitizer.sanitizeHTML(this.editor.getHTML(), {
 			blockExternalContent: this.blockExternalContent,
 		})
 
@@ -604,6 +759,7 @@ export class MailEditor implements Component<MailEditorAttrs> {
 			[
 				m(RichTextToolbar, {
 					editor: this.editor,
+					//Inline images require transporting over IPC boundary and we have not implemented a suitable way yet
 					imageButtonClickHandler: isApp()
 						? null
 						: (event: Event) => this.imageButtonClickHandler(model, (event.target as HTMLElement).getBoundingClientRect()),
@@ -813,16 +969,110 @@ export class MailEditor implements Component<MailEditorAttrs> {
 async function createMailEditorDialog(model: SendMailModel, blockExternalContent = false, alwaysBlockExternalContent = false): Promise<Dialog> {
 	let dialog: Dialog
 	let mailEditorAttrs: MailEditorAttrs
+	let isSending = false
 
-	const save = (showProgress: boolean = true) => {
+	const save = async (manuallySave: boolean = true): Promise<SaveStatus> => {
+		// Create an autosave now in case this errors
+		await model.makeLocalAutosave()
+
+		// Wait for sync if needed
+		await model.waitForSaveReady()
+
+		if (model.hasDraftDataChangedOnServer()) {
+			const result: "cancel" | "overwrite" | "discard" = await showOverwriteRemoteDraftDialog(model.getMailRemotelyUpdatedAt())
+
+			if (result === "cancel") {
+				// the user closed the dialog without making a choice
+				return { status: SaveStatusEnum.NotSaved, reason: SaveErrorReason.CancelledByUser }
+			} else if (result === "discard") {
+				// Discard and do not save
+				await model.clearLocalAutosave()
+
+				// if we have a minimized editor, delete it, too
+				const draftMail = model.getDraft()
+				const minimizedEditor = draftMail && mailLocator.minimizedMailModel.getEditorForDraft(draftMail)
+				if (minimizedEditor != null) {
+					mailLocator.minimizedMailModel.removeMinimizedEditor(minimizedEditor)
+				}
+
+				return {
+					status: SaveStatusEnum.NotSaved,
+					reason: SaveErrorReason.CancelledByUser,
+				}
+			}
+			// Nothing needs to be done if the result is "overwrite", it will go on to the save code below
+		}
+
 		const savePromise = model.saveDraft(true, MailMethod.NONE)
 
-		if (showProgress) {
-			return showProgressDialog("save_msg", savePromise)
+		if (manuallySave) {
+			await showProgressDialog("save_msg", savePromise)
 		} else {
-			return savePromise
+			await savePromise
 		}
+
+		await model.clearLocalAutosave()
+		return { status: SaveStatusEnum.Saved }
 	}
+
+	// This will be called once the user stops typing.
+	const autosaveRemote = debounce(AUTOSAVE_REMOTE_TIMEOUT, () => {
+		// Autosaving should stop working if the dialog is closed.
+		if (!dialog.visible) {
+			return
+		}
+
+		// If the mail was already saved before this was triggered, don't save again.
+		if (!model.hasMailChanged()) {
+			return
+		}
+
+		// Don't try to save remotely until everything is synced (and can thus determine if there's a conflict).
+		//
+		// This is highly unlikely to return false given the user has to be inactive for a large amount of time for this
+		// function to be called, but we really should still check.
+		if (!model.autosaveReady()) {
+			return
+		}
+
+		// Check if there's a conflict between what is on the server and what the user is editing.
+		//
+		// If we were to run save() with a conflict, we'll get a confirmation dialog, and the email won't be remotely
+		// saved until the user chooses an option.
+		//
+		// Since autosaveRemote is being triggered after a very long period of inactivity, the user is almost certainly
+		// not present to do that. As such, autosaveRemote() cannot actually autosave remotely.
+		if (model.hasDraftDataChangedOnServer()) {
+			return
+		}
+
+		// The user is currently sending the email, and that is going to save the email for us.
+		if (isSending) {
+			return
+		}
+
+		save(false)
+	})
+
+	// This will be invoked while the user is typing.
+	const autosaveLocal = throttle(AUTOSAVE_LOCAL_TIMEOUT, async () => {
+		// Autosaving should stop working if the dialog is closed.
+		if (!dialog.visible) {
+			return
+		}
+
+		// If the mail was already saved before this was triggered, don't save again.
+		if (!model.hasMailChanged()) {
+			return
+		}
+
+		// The user is currently sending the email, and that is going to save the email for us.
+		if (isSending) {
+			return
+		}
+
+		await model.makeLocalAutosave()
+	})
 
 	const send = async () => {
 		if (model.isSharedMailbox() && model.containsExternalRecipients() && model.isConfidential()) {
@@ -830,12 +1080,16 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
 			return
 		}
 
+		isSending = true
 		try {
+			// Note: model.send() will save without checking for conflicts, but unlike saving, send() will only ever be
+			// triggered by the user, so this is acceptable.
 			const success = await model.send(MailMethod.NONE, Dialog.confirm, showProgressDialog)
 			if (success) {
 				dispose()
 				dialog.close()
 
+				const { handleRatingByEvent } = await import("../../../common/ratings/UserSatisfactionDialog.js")
 				void handleRatingByEvent("Mail")
 			}
 		} catch (e) {
@@ -844,6 +1098,8 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
 			} else {
 				throw e
 			}
+		} finally {
+			isSending = false
 		}
 	}
 
@@ -862,7 +1118,7 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
 		let saveStatus = stream<SaveStatus>({ status: SaveStatusEnum.Saving })
 		if (model.hasMailChanged()) {
 			save(false)
-				.then(() => saveStatus({ status: SaveStatusEnum.Saved }))
+				.then((status) => saveStatus(status))
 				.catch((e) => {
 					const reason = isOfflineError(e) ? SaveErrorReason.ConnectionLost : SaveErrorReason.Unknown
 
@@ -884,9 +1140,16 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
 			dispose()
 			dialog.close()
 			return
+		} else {
+			// If the mail is unchanged and there /is/ a preexisting draft, there was no change and the mail is already saved
+			model.clearLocalAutosave()
+			saveStatus = stream<SaveStatus>({ status: SaveStatusEnum.Saved })
 		}
-		// If the mail is unchanged and there /is/ a preexisting draft, there was no change and the mail is already saved
-		else saveStatus = stream<SaveStatus>({ status: SaveStatusEnum.Saved })
+
+		if (client.isCalendarApp()) {
+			return dialog.close()
+		}
+
 		showMinimizedMailEditor(dialog, model, mailLocator.minimizedMailModel, locator.eventController, dispose, saveStatus)
 	}
 
@@ -967,6 +1230,7 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
 		await locator.recipientsSearchModel(),
 		alwaysBlockExternalContent,
 	)
+
 	const shortcuts: Shortcut[] = [
 		{
 			key: Keys.ESC,
@@ -979,7 +1243,7 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
 			key: Keys.S,
 			ctrlOrCmd: true,
 			exec: () => {
-				save().catch(ofClass(UserError, showUserError))
+				save(true).catch(ofClass(UserError, showUserError))
 			},
 			help: "save_action",
 		},
@@ -1001,6 +1265,12 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
 			help: "send_action",
 		},
 	]
+
+	mailEditorAttrs.onChange = () => {
+		autosaveLocal()
+		autosaveRemote()
+	}
+
 	dialog = Dialog.editDialog(headerBarAttrs, MailEditor, mailEditorAttrs)
 	dialog.setCloseHandler(() => minimize())
 
@@ -1018,7 +1288,7 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
  * @private
  * @throws PermissionError
  */
-export async function newMailEditor(mailboxDetails: MailboxDetail): Promise<Dialog> {
+export async function newMailEditor(mailboxDetails: MailboxDetail): Promise<Dialog | null> {
 	// We check approval status so as to get a dialog informing the user that they cannot send mails
 	// but we still want to open the mail editor because they should still be able to contact sales@tutao.de
 	await checkApprovalStatus(locator.logins, false)
@@ -1045,13 +1315,8 @@ async function getExternalContentRulesForEditor(model: SendMailModel, currentSta
 			return ExternalImageRule.None
 		})
 
-		let isAuthenticatedMail
-		if (previousMail.authStatus !== null) {
-			isAuthenticatedMail = previousMail.authStatus === MailAuthenticationStatus.AUTHENTICATED
-		} else {
-			const mailDetails = await locator.mailFacade.loadMailDetailsBlob(previousMail)
-			isAuthenticatedMail = mailDetails.authStatus === MailAuthenticationStatus.AUTHENTICATED
-		}
+		const mailDetails = await locator.mailFacade.loadMailDetailsBlob(previousMail)
+		const isAuthenticatedMail = mailDetails.authStatus === MailAuthenticationStatus.AUTHENTICATED
 
 		if (externalImageRule === ExternalImageRule.Block || (externalImageRule === ExternalImageRule.None && model.isUserPreviousSender())) {
 			contentRules = {
@@ -1081,7 +1346,11 @@ export async function newMailEditorAsResponse(
 	blockExternalContent: boolean,
 	inlineImages: InlineImages,
 	mailboxDetails?: MailboxDetail,
-): Promise<Dialog> {
+): Promise<Dialog | null> {
+	if (!(await confirmNewEditor(mailLocator.autosaveFacade, mailLocator.minimizedMailModel))) {
+		return null
+	}
+
 	const detailsProperties = await getMailboxDetailsAndProperties(mailboxDetails)
 	const model = await locator.sendMailModel(detailsProperties.mailboxDetails, detailsProperties.mailboxProperties)
 	await model.initAsResponse(args, inlineImages)
@@ -1093,20 +1362,70 @@ export async function newMailEditorAsResponse(
 export async function newMailEditorFromDraft(
 	mail: Mail,
 	mailDetails: MailDetails,
-	converstaionEntry: ConversationEntry,
+	conversationEntry: ConversationEntry,
 	attachments: TutanotaFile[],
 	inlineImages: InlineImages,
 	blockExternalContent: boolean,
+	localDraftData?: LocalAutosavedDraftData,
 	mailboxDetails?: MailboxDetail,
-): Promise<Dialog> {
+): Promise<Dialog | null> {
+	if (localDraftData == null && !(await confirmNewEditor(mailLocator.autosaveFacade, mailLocator.minimizedMailModel))) {
+		return null
+	}
+
 	const detailsProperties = await getMailboxDetailsAndProperties(mailboxDetails)
 	const model = await locator.sendMailModel(detailsProperties.mailboxDetails, detailsProperties.mailboxProperties)
-	await model.initWithDraft(mail, mailDetails, converstaionEntry, attachments, inlineImages)
+	await model.initWithDraft(mail, mailDetails, conversationEntry, attachments, inlineImages)
 	const externalImageRules = await getExternalContentRulesForEditor(model, blockExternalContent)
+
+	if (localDraftData) {
+		model.markAsChangedIfNecessary(true)
+		model.setWaitUntilSync(true)
+		model.setMailRemotelyUpdatedAt(localDraftData.lastUpdatedTime)
+		model.setMailSavedAt(localDraftData.editedTime)
+		model.setBody(localDraftData.body)
+		model.setSender(localDraftData.senderAddress)
+		model.setSubject(localDraftData.subject)
+		model.setConfidential(localDraftData.confidential)
+
+		for (const to of model.toRecipients()) {
+			model.removeRecipient(to, RecipientField.TO)
+		}
+		for (const cc of model.ccRecipients()) {
+			model.removeRecipient(cc, RecipientField.CC)
+		}
+		for (const bcc of model.bccRecipients()) {
+			model.removeRecipient(bcc, RecipientField.BCC)
+		}
+
+		await model.addRecipients({ to: localDraftData.to, cc: localDraftData.cc, bcc: localDraftData.bcc })
+	}
+
 	return createMailEditorDialog(model, externalImageRules?.blockExternalContent, externalImageRules?.alwaysBlockExternalContent)
 }
 
-export async function newMailtoUrlMailEditor(mailtoUrl: string, confidential: boolean, mailboxDetails?: MailboxDetail): Promise<Dialog> {
+async function confirmNewEditor(autosaveFacade: AutosaveFacade, minimizedEditorViewModel: MinimizedMailEditorViewModel): Promise<boolean> {
+	const data = await autosaveFacade.getAutosavedDraftData()
+	if (data == null) {
+		return true
+	}
+
+	const action: "cancel" | "discard" = await showOverwriteDraftDialog()
+
+	if (action === "discard") {
+		// Create a new draft
+		await autosaveFacade.clearAutosavedDraftData()
+		const existingEditor = data.mailId && minimizedEditorViewModel.getEditorForDraftById(data.mailId)
+
+		if (existingEditor != null) {
+			minimizedEditorViewModel.removeMinimizedEditor(existingEditor)
+		}
+		return true
+	}
+	return false
+}
+
+export async function newMailtoUrlMailEditor(mailtoUrl: string, confidential: boolean, mailboxDetails?: MailboxDetail): Promise<Dialog | null> {
 	const detailsProperties = await getMailboxDetailsAndProperties(mailboxDetails)
 	const mailTo = parseMailtoUrl(mailtoUrl)
 	let dataFiles: Attachment[] = []
@@ -1124,7 +1443,7 @@ export async function newMailtoUrlMailEditor(mailtoUrl: string, confidential: bo
 			(await Dialog.confirm("attachmentWarning_msg", "attachFiles_action", () =>
 				dataFiles.map((df, i) =>
 					m(
-						".text-break.selectable.mt-xs",
+						".text-break.selectable.mt-4",
 						{
 							title: attach[i],
 						},
@@ -1166,12 +1485,38 @@ export async function newMailEditorFromTemplate(
 	confidential?: boolean,
 	senderMailAddress?: string,
 	initialChangedState?: boolean,
-): Promise<Dialog> {
+): Promise<Dialog | null> {
+	if (!(await confirmNewEditor(mailLocator.autosaveFacade, mailLocator.minimizedMailModel))) {
+		return null
+	}
+
 	const mailboxProperties = await locator.mailboxModel.getMailboxProperties(mailboxDetails.mailboxGroupRoot)
-	return locator
-		.sendMailModel(mailboxDetails, mailboxProperties)
-		.then((model) => model.initWithTemplate(recipients, subject, bodyText, attachments, confidential, senderMailAddress, initialChangedState))
-		.then((model) => createMailEditorDialog(model))
+	const model = await locator.sendMailModel(mailboxDetails, mailboxProperties)
+	await model.initWithTemplate(recipients, subject, bodyText, attachments, confidential, senderMailAddress, initialChangedState)
+	return await createMailEditorDialog(model)
+}
+
+/**
+ * Opens a new mail editor from local draft data.
+ *
+ * This is called if the mail has not been saved to the server before and thus there is no mail ID yet.
+ *
+ * @param mailboxModel
+ * @param draft
+ */
+export async function newMailEditorFromLocalDraftData(mailboxModel: MailboxModel, draft: LocalAutosavedDraftData): Promise<Dialog | null> {
+	const details = await mailboxModel.getMailboxDetailsForMailGroup(draft.mailGroupId)
+	const recipients = {
+		to: draft.to,
+		cc: draft.cc,
+		bcc: draft.bcc,
+	}
+
+	const mailboxProperties = await locator.mailboxModel.getMailboxProperties(details.mailboxGroupRoot)
+	const model = await locator.sendMailModel(details, mailboxProperties)
+	await model.initWithTemplate(recipients, draft.subject, draft.body, [], draft.confidential, draft.senderAddress, true)
+	model.markAsChangedIfNecessary(true)
+	return await createMailEditorDialog(model)
 }
 
 /**
@@ -1188,7 +1533,7 @@ export async function writeInviteMail(referralLink: string) {
 	})
 	const { invitationSubject } = await locator.serviceExecutor.get(TranslationService, createTranslationGetIn({ lang: lang.code }))
 	const dialog = await newMailEditorFromTemplate(detailsProperties.mailboxDetails, {}, invitationSubject, body, [], false)
-	dialog.show()
+	dialog?.show()
 }
 
 /**

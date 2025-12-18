@@ -1,12 +1,10 @@
 import m, { Children, Component, VnodeDOM } from "mithril"
 import { LayerType } from "../../../RootView"
-import { lazy, makeSingleUse } from "@tutao/tutanota-utils"
+import { lazy, makeSingleUse, newPromise } from "@tutao/tutanota-utils"
 import { assertMainOrNodeBoot } from "../../api/common/Env"
-import { px, size } from "../size.js"
+import { component_size, px, size } from "../size.js"
 import { styles } from "../styles.js"
 import { getSafeAreaInsetBottom } from "../HtmlUtils.js"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 assertMainOrNodeBoot()
 export type PositionRect = {
@@ -61,8 +59,10 @@ export function displayOverlay(
 	// Make single so fast taps doesn't try to remove
 	// the same overlay twice
 	return makeSingleUse(() => {
-		// Remove the overlay & error if unsuccessful
-		if (!overlays.delete(overlayKey)) {
+		// Remove the overlay & warn if unsuccessful
+		if (overlays.delete(overlayKey)) {
+			m.redraw()
+		} else {
 			console.warn(`Missing overlay with key:${overlayKey}!`)
 		}
 	}) as () => void
@@ -83,7 +83,7 @@ export const overlay: Component<OverlayParentAttrs> = {
 					display: visible ? "" : "none",
 					"margin-top": "env(safe-area-inset-top)", // insets for iPhone X
 					// keep the bottom nav bar clear & inset for iOS
-					"margin-bottom": styles.isUsingBottomNavigation() ? px(size.bottom_nav_bar + getSafeAreaInsetBottom()) : "unset",
+					"margin-bottom": styles.isUsingBottomNavigation() ? px(component_size.bottom_nav_bar + getSafeAreaInsetBottom()) : "unset",
 					// we would need to change this if we wanted something to appear from the side
 					"margin-left": "env(safe-area-inset-left)",
 					"margin-right": "env(safe-area-inset-right)",

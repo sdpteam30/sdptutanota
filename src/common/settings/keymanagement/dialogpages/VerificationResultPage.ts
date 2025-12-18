@@ -3,25 +3,32 @@ import { lang } from "../../../misc/LanguageViewModel"
 import { KeyVerificationModel } from "../KeyVerificationModel"
 import { TitleSection } from "../../../gui/TitleSection"
 import { FingerprintRow } from "../FingerprintRow"
-import { assertNotNull } from "@tutao/tutanota-utils"
 import { Icons } from "../../../gui/base/icons/Icons"
+import { theme } from "../../../gui/theme"
 
 export class VerificationResultPage implements Component<VerificationResultPageAttrs> {
 	view(vnode: Vnode<VerificationResultPageAttrs>): Children {
 		const { model } = vnode.attrs
 
+		const publicIdentity = model.getPublicIdentity()
+
 		return m(
-			"section.flex.flex-column.mt",
+			"section.flex.flex-column.mt-16",
 			m(TitleSection, {
 				title: lang.get("keyManagement.contactVerificationConfirmationTitle_label"),
 				subTitle: lang.get("keyManagement.contactVerificationConfirmation_label"),
-				icon: Icons.Fingerprint,
+				icon: Icons.CheckCircleOutline,
+				iconOptions: { color: theme.success },
 			}),
-			m(".mb"),
-			m(FingerprintRow, {
-				publicKeyFingerprint: assertNotNull(model.publicKeyFingerprint),
-				mailAddress: model.mailAddress,
-			}),
+			m(".mb-16"),
+			publicIdentity === null
+				? null
+				: m(FingerprintRow, {
+						publicKeyFingerprint: publicIdentity.fingerprint,
+						publicKeyVersion: publicIdentity.trustDbEntry.publicIdentityKey.version,
+						publicKeyType: publicIdentity.trustDbEntry.publicIdentityKey.object.type,
+						mailAddress: publicIdentity.mailAddress,
+					}),
 		)
 	}
 }

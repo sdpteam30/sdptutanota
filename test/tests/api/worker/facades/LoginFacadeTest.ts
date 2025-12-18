@@ -21,7 +21,7 @@ import {
 	sha256Hash,
 	uint8ArrayToBitArray,
 } from "@tutao/tutanota-crypto"
-import { LoginFacade, LoginListener, ResumeSessionErrorReason } from "../../../../../src/common/api/worker/facades/LoginFacade"
+import { LoginFacade, LoginListener } from "../../../../../src/common/api/worker/facades/LoginFacade"
 import { IServiceExecutor } from "../../../../../src/common/api/common/ServiceRequest"
 import { EntityClient } from "../../../../../src/common/api/common/EntityClient"
 import { RestClient } from "../../../../../src/common/api/worker/rest/RestClient"
@@ -31,7 +31,7 @@ import { UserFacade } from "../../../../../src/common/api/worker/facades/UserFac
 import { ChangeKdfService, SaltService, SessionService } from "../../../../../src/common/api/entities/sys/Services"
 import { Credentials } from "../../../../../src/common/misc/credentials/Credentials"
 import { defer, DeferredObject, uint8ArrayToBase64 } from "@tutao/tutanota-utils"
-import { AccountType, Const, DEFAULT_KDF_TYPE, KdfType } from "../../../../../src/common/api/common/TutanotaConstants"
+import { AccountType, Const, DEFAULT_KDF_TYPE, KdfType, RolloutType } from "../../../../../src/common/api/common/TutanotaConstants"
 import { AccessExpiredError, ConnectionError, NotAuthenticatedError } from "../../../../../src/common/api/common/error/RestError"
 import { SessionType } from "../../../../../src/common/api/common/SessionType"
 import { HttpMethod, TypeModelResolver } from "../../../../../src/common/api/common/EntityFunctions"
@@ -42,12 +42,14 @@ import { EntropyFacade } from "../../../../../src/common/api/worker/facades/Entr
 import { DatabaseKeyFactory } from "../../../../../src/common/misc/credentials/DatabaseKeyFactory.js"
 import { Argon2idFacade } from "../../../../../src/common/api/worker/facades/Argon2idFacade.js"
 import { clientInitializedTypeModelResolver, createTestEntity, instancePipelineFromTypeModelResolver } from "../../../TestUtils.js"
-import { KeyRotationFacade } from "../../../../../src/common/api/worker/facades/KeyRotationFacade.js"
+import { KeyRotationFacade, KeyRotationRolloutAction } from "../../../../../src/common/api/worker/facades/KeyRotationFacade.js"
 import { CredentialType } from "../../../../../src/common/misc/credentials/CredentialType.js"
-import { encryptString } from "../../../../../src/common/api/worker/crypto/CryptoWrapper.js"
+import { _encryptString } from "../../../../../src/common/api/worker/crypto/CryptoWrapper.js"
 import { CacheManagementFacade } from "../../../../../src/common/api/worker/facades/lazy/CacheManagementFacade.js"
 import { InstancePipeline } from "../../../../../src/common/api/worker/crypto/InstancePipeline"
 import { CacheMode } from "../../../../../src/common/api/worker/rest/EntityRestClient"
+import { RolloutFacade } from "../../../../../src/common/api/worker/facades/RolloutFacade"
+import { LoginFailReason } from "../../../../../src/common/api/main/PageContextLoginListener"
 
 const { anything, argThat } = matchers
 
@@ -120,6 +122,7 @@ o.spec("LoginFacadeTest", function () {
 	let argon2idFacade: Argon2idFacade
 	let cacheManagmentFacadeMock: CacheManagementFacade
 	let typeModelResolver: TypeModelResolver
+	let rolloutFacade: RolloutFacade
 
 	const timeRangeDate = new Date("2025-03-21T12:33:40.972Z")
 	const login = "born.slippy@tuta.io"
@@ -166,6 +169,7 @@ o.spec("LoginFacadeTest", function () {
 		argon2idFacade = object()
 		when(argon2idFacade.generateKeyFromPassphrase(anything(), anything())).thenResolve(PASSWORD_KEY)
 		cacheManagmentFacadeMock = object()
+		rolloutFacade = object()
 
 		facade = new LoginFacade(
 			restClientMock,
@@ -185,11 +189,13 @@ o.spec("LoginFacadeTest", function () {
 			async (error: Error) => {},
 			async () => cacheManagmentFacadeMock,
 			typeModelResolver,
+			rolloutFacade,
 		)
 
 		eventBusClientMock = instance(EventBusClient)
 
 		facade.init(eventBusClientMock)
+		when(rolloutFacade.getScheduledRolloutTypes()).thenResolve([])
 	})
 
 	o.spec("Creating new sessions", function () {
@@ -254,6 +260,32 @@ o.spec("LoginFacadeTest", function () {
 				o(credentials.type).equals(CredentialType.Internal)
 				o(credentials.accessToken).equals(accessToken)
 			})
+
+			o.spec("Rollouts are configured", function () {
+				o.test("AdminOrUserGroupKeyRotation rollout is configured", async function () {
+					when(rolloutFacade.getScheduledRolloutTypes()).thenResolve([RolloutType.AdminOrUserGroupKeyRotation])
+
+					await facade.createSession(login, passphrase, "client", SessionType.Persistent, null)
+					verify(
+						rolloutFacade.configureRollout(
+							RolloutType.AdminOrUserGroupKeyRotation,
+							argThat((arg) => arg instanceof KeyRotationRolloutAction),
+						),
+					)
+				})
+
+				o.test("OtherGroupKeyRotation rollout is configured", async function () {
+					when(rolloutFacade.getScheduledRolloutTypes()).thenResolve([RolloutType.OtherGroupKeyRotation])
+
+					await facade.createSession(login, passphrase, "client", SessionType.Persistent, null)
+					verify(
+						rolloutFacade.configureRollout(
+							RolloutType.OtherGroupKeyRotation,
+							argThat((arg) => arg instanceof KeyRotationRolloutAction),
+						),
+					)
+				})
+			})
 		})
 	})
 
@@ -279,7 +311,7 @@ o.spec("LoginFacadeTest", function () {
 					login: login,
 
 					/** Session#accessKey encrypted password. Is set when session is persisted. */
-					encryptedPassword: uint8ArrayToBase64(encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
+					encryptedPassword: uint8ArrayToBase64(_encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
 					encryptedPassphraseKey: null,
 					accessToken,
 					userId,
@@ -296,7 +328,7 @@ o.spec("LoginFacadeTest", function () {
 						HttpMethod.GET,
 						anything(),
 					),
-				).thenResolve(JSON.stringify(await createSession(userId, accessKey, instancePipeline)))
+				).thenResolve(createSession(userId, accessKey, instancePipeline).then(JSON.stringify))
 			})
 
 			o.test("When resuming a session and there is a database key, it is passed to offline storage initialization", async function () {
@@ -362,9 +394,8 @@ o.spec("LoginFacadeTest", function () {
 				o(facade.asyncLoginState).deepEquals({ state: "running" })("Async login occurred so it is still running")
 			})
 
-			o.test("when resuming a session and a notauthenticatedError is thrown, the offline db is deleted", async function () {
+			o.test("when resuming a session and a notAuthenticatedError is thrown, the error is propagated to the main thread", async function () {
 				usingOfflineStorage = true
-				user.accountType = AccountType.FREE
 				when(
 					restClientMock.request(
 						matchers.argThat((path) => path.startsWith("/rest/sys/session/")),
@@ -373,18 +404,17 @@ o.spec("LoginFacadeTest", function () {
 					),
 				).thenReject(new NotAuthenticatedError("not your cheese"))
 
-				await o(() =>
-					facade.resumeSession(
-						credentials,
-						{
-							salt: SALT,
-							kdfType: DEFAULT_KDF_TYPE,
-						},
-						dbKey,
-						timeRangeDate,
-					),
-				).asyncThrows(NotAuthenticatedError)
-				verify(cacheStorageInitializerMock.deInitialize())
+				const res = await facade.resumeSession(
+					credentials,
+					{
+						salt: SALT,
+						kdfType: DEFAULT_KDF_TYPE,
+					},
+					dbKey,
+					timeRangeDate,
+				)
+				await res.asyncResumeCompleted
+				verify(loginListener.onLoginFailure(LoginFailReason.SessionExpired))
 			})
 
 			o.test("when resuming a session with credentials that don't have encryptedPassphraseKey it is assigned", async () => {
@@ -423,7 +453,7 @@ o.spec("LoginFacadeTest", function () {
 					login: login,
 
 					/** Session#accessKey encrypted password. Is set when session is persisted. */
-					encryptedPassword: uint8ArrayToBase64(encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
+					encryptedPassword: uint8ArrayToBase64(_encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
 					accessToken,
 					userId,
 					type: "internal",
@@ -443,104 +473,28 @@ o.spec("LoginFacadeTest", function () {
 				when(loginListener.onFullLoginSuccess(matchers.anything(), matchers.anything(), matchers.anything())).thenDo(() => fullLoginDeferred.resolve())
 			})
 
-			o("When using offline as a free user and with stable connection, login sync", async function () {
+			o("When using offline as a free user and with stable connection, async login", async function () {
 				usingOfflineStorage = true
 				user.accountType = AccountType.FREE
-				await testSuccessfulSyncLogin()
+				await testSuccessfulAsyncLogin()
 			})
 
-			o("When using offline as a free user with unstable connection, no offline for free users", async function () {
+			o("When using offline as a free user with unstable connection, offline is given to free users", async function () {
 				usingOfflineStorage = true
 				user.accountType = AccountType.FREE
-				when(restClientMock.request(anything(), HttpMethod.GET, anything())).thenDo(async () => {
-					calls.push("sessionService")
-					throw new ConnectionError("Oopsie 1")
-				})
-
-				const result = await facade
-					.resumeSession(
-						credentials,
-						{
-							salt: user.salt!,
-							kdfType: DEFAULT_KDF_TYPE,
-						},
-						dbKey,
-						timeRangeDate,
-					)
-					.finally(() => {
-						calls.push("return")
-					})
-
-				o(result).deepEquals({
-					type: "error",
-					reason: ResumeSessionErrorReason.OfflineNotAvailableForFree,
-					asyncResumeCompleted: null,
-				})
-				o(calls).deepEquals(["sessionService", "return"])
+				await testConnectionFailingAsyncLogin()
 			})
 
 			o("When using offline as premium user with stable connection, async login", async function () {
 				usingOfflineStorage = true
 				user.accountType = AccountType.PAID
-				when(restClientMock.request(anything(), HttpMethod.GET, anything())).thenDo(async () => {
-					calls.push("sessionService")
-					return JSON.stringify(await createSession(userId, accessKey, instancePipeline))
-				})
-
-				const deferred = defer()
-				when(loginListener.onFullLoginSuccess(matchers.anything(), matchers.anything(), matchers.anything())).thenDo(() => deferred.resolve(null))
-
-				const result = await facade.resumeSession(
-					credentials,
-					{
-						salt: user.salt!,
-						kdfType: DEFAULT_KDF_TYPE,
-					},
-					dbKey,
-					timeRangeDate,
-				)
-
-				o(result.type).equals("success")
-
-				await deferred.promise
-
-				// we would love to prove that part of the login is done async but without injecting some asyncExecutor it's a bit tricky to do
-				// we assume to have seUser twice, once using caching entity client and once using non caching entity client.
-				o(calls).deepEquals(["setUser", "sessionService", "setUser"])
-
-				// just wait for the async login to not bleed into other test cases or to not randomly fail
-				await fullLoginDeferred.promise
+				await testSuccessfulAsyncLogin()
 			})
 
 			o("When using offline as premium user with unstable connection, async login with later retry", async function () {
 				usingOfflineStorage = true
 				user.accountType = AccountType.PAID
-				const connectionError = new ConnectionError("Oopsie 2")
-				when(restClientMock.request(anything(), HttpMethod.GET, anything())).thenDo(async () => {
-					calls.push("sessionService")
-					throw connectionError
-				})
-
-				const result = await facade.resumeSession(
-					credentials,
-					{
-						salt: user.salt!,
-						kdfType: DEFAULT_KDF_TYPE,
-					},
-					dbKey,
-					timeRangeDate,
-				)
-
-				// wait for async resume session
-				await result.asyncResumeCompleted
-
-				console.log("after resolve " + calls.toString())
-
-				o(result.type).equals("success")
-				o(calls).deepEquals(["setUser", "sessionService"])
-
-				// Did not finish login
-				verify(userFacade.unlockUserGroupKey(anything()), { times: 0 })
+				await testConnectionFailingAsyncLogin()
 			})
 
 			o("When not using offline as free user with connection, sync login", async function () {
@@ -609,6 +563,66 @@ o.spec("LoginFacadeTest", function () {
 				).asyncThrows(ConnectionError)
 				o(calls).deepEquals(["sessionService"])
 			}
+
+			async function testSuccessfulAsyncLogin() {
+				when(restClientMock.request(anything(), HttpMethod.GET, anything())).thenDo(async () => {
+					calls.push("sessionService")
+					return JSON.stringify(await createSession(userId, accessKey, instancePipeline))
+				})
+
+				const deferred = defer()
+				when(loginListener.onFullLoginSuccess(matchers.anything(), matchers.anything(), matchers.anything())).thenDo(() => deferred.resolve(null))
+
+				const result = await facade.resumeSession(
+					credentials,
+					{
+						salt: user.salt!,
+						kdfType: DEFAULT_KDF_TYPE,
+					},
+					dbKey,
+					timeRangeDate,
+				)
+
+				o(result.type).equals("success")
+
+				await deferred.promise
+
+				// we would love to prove that part of the login is done async but without injecting some asyncExecutor it's a bit tricky to do
+				// we assume to have setUser twice, once using caching entity client and once using non caching entity client.
+				o(calls).deepEquals(["setUser", "sessionService", "setUser"])
+
+				// just wait for the async login to not bleed into other test cases or to not randomly fail
+				await fullLoginDeferred.promise
+			}
+
+			async function testConnectionFailingAsyncLogin() {
+				const connectionError = new ConnectionError("Oopsie 2")
+				when(restClientMock.request(anything(), HttpMethod.GET, anything())).thenDo(async () => {
+					calls.push("sessionService")
+					throw connectionError
+				})
+
+				const result = await facade.resumeSession(
+					credentials,
+					{
+						salt: user.salt!,
+						kdfType: DEFAULT_KDF_TYPE,
+					},
+					dbKey,
+					timeRangeDate,
+				)
+
+				// wait for async resume session
+				await result.asyncResumeCompleted
+
+				console.log("after resolve " + calls.toString())
+
+				o(result.type).equals("success")
+				o(calls).deepEquals(["setUser", "sessionService"])
+
+				// Did not finish login
+				verify(userFacade.unlockUserGroupKey(anything()), { times: 0 })
+			}
 		})
 
 		o.spec("async login", function () {
@@ -636,7 +650,7 @@ o.spec("LoginFacadeTest", function () {
 					login: login,
 
 					/** Session#accessKey encrypted password. Is set when session is persisted. */
-					encryptedPassword: uint8ArrayToBase64(encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
+					encryptedPassword: uint8ArrayToBase64(_encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
 					accessToken,
 					userId,
 					type: "internal",
@@ -749,7 +763,7 @@ o.spec("LoginFacadeTest", function () {
 					login: login,
 
 					/** Session#accessKey encrypted password. Is set when session is persisted. */
-					encryptedPassword: uint8ArrayToBase64(encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
+					encryptedPassword: uint8ArrayToBase64(_encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
 					accessToken,
 					userId,
 					type: "internal",
@@ -808,7 +822,7 @@ o.spec("LoginFacadeTest", function () {
 					login: userId,
 
 					/** Session#accessKey encrypted password. Is set when session is persisted. */
-					encryptedPassword: uint8ArrayToBase64(encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
+					encryptedPassword: uint8ArrayToBase64(_encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
 					accessToken,
 					userId,
 					type: "internal",
@@ -895,7 +909,7 @@ o.spec("LoginFacadeTest", function () {
 					login: userId,
 
 					/** Session#accessKey encrypted password. Is set when session is persisted. */
-					encryptedPassword: uint8ArrayToBase64(encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
+					encryptedPassword: uint8ArrayToBase64(_encryptString(accessKey, passphrase)), // We can't call encryptString in the top level of spec because `random` isn't initialized yet
 					accessToken,
 					userId,
 					type: "internal",

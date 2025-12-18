@@ -15,8 +15,8 @@ import { Checkbox } from "../../gui/base/Checkbox.js"
 import { Keys } from "../../api/common/TutanotaConstants"
 import { CURRENT_GIFT_CARD_TERMS_VERSION, renderTermsAndConditionsButton, TermsSection } from "../TermsAndConditions"
 import { IconButton } from "../../gui/base/IconButton.js"
-import { formatPrice } from "../PriceUtils.js"
-import { htmlSanitizer } from "../../misc/HtmlSanitizer.js"
+import { formatPrice } from "../utils/PriceUtils.js"
+import { getHtmlSanitizer } from "../../misc/HtmlSanitizer.js"
 import { urlEncodeHtmlTags } from "../../misc/Formatter.js"
 import QRCode from "qrcode-svg"
 
@@ -81,9 +81,9 @@ export function showGiftCardToShare(giftCard: GiftCard) {
 			{
 				view: () => [
 					m(
-						".flex-center.full-width.pt.pb",
+						".flex-center.full-width.pt-16.pb-16",
 						m(
-							".pt-l", // Needed to center SVG
+							".pt-32", // Needed to center SVG
 							{
 								style: {
 									width: "480px",
@@ -271,7 +271,7 @@ function getGiftCardElement(svgDocument: Document, id: "price" | "qr-code" | "me
  * @param message The text to be displayed in the element.
  */
 function renderMessage(x: number, y: number, width: number, height: number, color: string, message: string): string {
-	const cleanMessage: string = htmlSanitizer.sanitizeHTML(urlEncodeHtmlTags(message)).html
+	const cleanMessage: string = getHtmlSanitizer().sanitizeHTML(urlEncodeHtmlTags(message)).html
 
 	const lineBreaks = cleanMessage.split(/\r\n|\r|\n/).length
 	const charLength = cleanMessage.length
@@ -298,7 +298,7 @@ function renderMessage(x: number, y: number, width: number, height: number, colo
  * @return the SVG element of the generated QR code as a `string`
  */
 function renderQRCode(x: number, y: number, width: number, height: number, link: string): string {
-	const svg = new QRCode({
+	const svgFragment = new QRCode({
 		height,
 		width,
 		content: link,
@@ -310,9 +310,8 @@ function renderQRCode(x: number, y: number, width: number, height: number, link:
 		join: true,
 		pretty: false,
 	}).svg()
-	const qrCode = htmlSanitizer.sanitizeSVG(svg).html
 
-	return `<svg x="${x}" y="${y}" width="${width}" height="${height}">${qrCode}</svg>`
+	return getHtmlSanitizer().sanitizeSVG(`<svg x="${x}" y="${y}" width="${width}" height="${height}">${svgFragment}</svg>`).html
 }
 
 export function renderAcceptGiftCardTermsCheckbox(checked: boolean, onChecked: (checked: boolean) => void, classes?: string): Children {

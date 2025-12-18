@@ -24,7 +24,11 @@ type Pages<PageKey extends string> = {
 		onClose?: VoidFunction
 	}
 }
-type GetPagesFunc<PageKey extends string> = (dialog: Dialog, navigateToPage: (targetPage: PageKey) => void, goBack: (to?: PageKey) => void) => Pages<PageKey>
+type GetPagesFunc<PageKey extends string> = (
+	dialog: Dialog,
+	navigateToPage: (targetPage: PageKey, skipAnimating?: boolean) => void,
+	goBack: (to?: PageKey) => void,
+) => Pages<PageKey>
 
 /**
  * Allows to build a dialog with pagination, navigation & transitioning effect.
@@ -33,55 +37,55 @@ type GetPagesFunc<PageKey extends string> = (dialog: Dialog, navigateToPage: (ta
  * type Page = "event" | "guests"
  *
  * new MultiPageDialog<Page>("event", (
- * 	dialog, // : Dialog,
- * 	navigateToPage, // : (targetPage: "event" | "guests") => void,
- * 	goBack, // : (targetPage?: "event" | "guests") => void,
+ *    dialog, // : Dialog,
+ *    navigateToPage, // : (targetPage: "event" | "guests") => void,
+ *    goBack, // : (targetPage?: "event" | "guests") => void,
  * ) => ({
- * 	event: {
- * 		// The content of the events page shown within the dialog.
- * 		// It could also be a separate class implementing `Component` interface representing the content.
- * 		content: [
- * 			m("h1", "Jogging, 14:00-14:30"),
- * 			m("button", {
- * 				// When clicking the button, doing a forwards transition to the page `guests`
- * 				onclick: () => navigateToPage("guests"),
- * 			}, "Manage guests"),
- * 		],
- * 		// The title of the 'events' page, shown in the dialog's header bar
- * 		title: "Jogging",
- * 		// A button, displayed in the dialog's header bar for the respective page.
- * 		leftAction: { label: "close_alt", title: "close_alt", type: ButtonType.Secondary, click: () => dialog.onClose() },
- * 	},
- * 	guests: {
- * 		content: m("", [
- * 			m("h1", "Guests"),
- * 			m("h3", "John Doe"),
- * 			m("h3", "Jane Doe"),
- * 		]),
- * 		leftAction: {
- * 			label: "back_action",
- * 			title: "back_action",
- * 			type: ButtonType.Secondary,
- * 			// When clicked, perform a backwards animation to the `event` page.
- * 			click: () => goBack("event"),
- * 		},
- * 		rightAction: {
- * 			label: "save_action", title: "save_action", type: ButtonType.Primary, click: () => {
- * 				// ... do something and close the dialog afterward.
+ *    event: {
+ *        // The content of the events page shown within the dialog.
+ *        // It could also be a separate class implementing `Component` interface representing the content.
+ *        content: [
+ *            m("h1", "Jogging, 14:00-14:30"),
+ *            m("button", {
+ *                // When clicking the button, doing a forwards transition to the page `guests`
+ *                onclick: () => navigateToPage("guests"),
+ *            }, "Manage guests"),
+ *        ],
+ *        // The title of the 'events' page, shown in the dialog's header bar
+ *        title: "Jogging",
+ *        // A button, displayed in the dialog's header bar for the respective page.
+ *        leftAction: { label: "close_alt", title: "close_alt", type: ButtonType.Secondary, click: () => dialog.onClose() },
+ *    },
+ *    guests: {
+ *        content: m("", [
+ *            m("h1", "Guests"),
+ *            m("h3", "John Doe"),
+ *            m("h3", "Jane Doe"),
+ *        ]),
+ *        leftAction: {
+ *            label: "back_action",
+ *            title: "back_action",
+ *            type: ButtonType.Secondary,
+ *            // When clicked, perform a backwards animation to the `event` page.
+ *            click: () => goBack("event"),
+ *        },
+ *        rightAction: {
+ *            label: "save_action", title: "save_action", type: ButtonType.Primary, click: () => {
+ *                // ... do something and close the dialog afterward.
  *
- * 				dialog.onClose()
- * 			},
- * 		},
- * 		title: "Guests for jogging event",
- * 		onClose: () => {
- * 			// ... do something before the dialog is closed and close it afterward with `dialog.close()`
+ *                dialog.onClose()
+ *            },
+ *        },
+ *        title: "Guests for jogging event",
+ *        onClose: () => {
+ *            // ... do something before the dialog is closed and close it afterward with `dialog.close()`
  *
- * 			dialog.close()
- * 		},
- * 	},
+ *            dialog.close()
+ *        },
+ *    },
  * }), 600)
- * 	.getDialog()
- * 	.show()
+ *    .getDialog()
+ *    .show()
  *
  * @template PageKey - A union type representing the pages the dialog is using. Must be string.
  * @class
@@ -128,7 +132,7 @@ export class MultiPageDialog<PageKey extends string> {
 			},
 			{
 				height: "100%",
-				"background-color": theme.navigation_bg,
+				"background-color": theme.surface_container,
 			},
 		)
 
@@ -190,8 +194,16 @@ export class MultiPageDialog<PageKey extends string> {
 		this.currentPageStream(tmp[tmp.length - 1])
 	}
 
-	private readonly navigateToPage = (target: PageKey) => {
-		if (this.isAnimating()) {
+	/**
+	 * This function navigates from a page to another one
+	 *
+	 * @param target the target page we need to navigate to
+	 * @param skipAnimating option to skip waiting for animation to be finished before navigating to another page
+	 * @returns
+	 */
+	private readonly navigateToPage = (target: PageKey, skipAnimating = false) => {
+		if (!skipAnimating && this.isAnimating()) {
+			// Some pages need to show up before animation is completed, e.g. error pages can show up before animation is done.
 			return
 		}
 
@@ -250,7 +262,7 @@ class MultiPageDialogViewWrapper implements Component<Props> {
 	private setPageWidth(dom: HTMLElement) {
 		const parentElement = dom.parentElement
 		if (parentElement) {
-			this.pageWidth = dom.parentElement.clientWidth - size.hpad_large * 2
+			this.pageWidth = dom.parentElement.clientWidth - size.spacing_24 * 2
 		}
 	}
 
@@ -318,7 +330,7 @@ class MultiPageDialogViewWrapper implements Component<Props> {
 		this.tryScrollToTop()
 
 		const target = vnode.attrs.currentPageStream()
-		this.translate = -(this.pageWidth + size.vpad_xxl)
+		this.translate = -(this.pageWidth + size.spacing_64)
 		m.redraw.sync()
 
 		vnode.attrs.isAnimating(true)
@@ -346,12 +358,12 @@ class MultiPageDialogViewWrapper implements Component<Props> {
 		vnode.attrs.isAnimating(true)
 		this.transitionPage(target)
 		this.transitionClass = "transition-transform"
-		this.translate = -(this.pageWidth + size.vpad_xxl)
+		this.translate = -(this.pageWidth + size.spacing_64)
 	}
 
 	view(vnode: Vnode<Props>): Children {
 		return m(
-			".flex.gap-vpad-xxl.fit-content",
+			".flex.gap-64.fit-content",
 			{
 				id: "multi-page-dialog",
 				class: this.transitionClass,

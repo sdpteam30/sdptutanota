@@ -4,7 +4,6 @@ import { modal, ModalComponent } from "../../../common/gui/base/Modal.js"
 import type { Shortcut } from "../../../common/misc/KeyManager.js"
 import { MailViewerViewModel } from "./MailViewerViewModel.js"
 import { TRUSTED_SENDERS_API_URL } from "./MailViewerViewModel.js"
-import { moveMails } from "./MailGuiUtils.js"
 import { assertSystemFolderOfType } from "../model/MailUtils.js"
 import { MoveMode } from "../model/MailModel.js"
 
@@ -71,21 +70,13 @@ export class MobyPhishReportPhishingModal implements ModalComponent {
 													// Move email to spam folder (without reporting to Tutanota servers)
 													try {
 														const mailboxDetail = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
-														if (mailboxDetail && mailboxDetail.mailbox.folders) {
+														if (mailboxDetail && mailboxDetail.mailbox.mailSets) {
 															const folders = await this.viewModel.mailModel.getMailboxFoldersForId(
-																mailboxDetail.mailbox.folders._id,
+																mailboxDetail.mailbox.mailSets._id,
 															)
 															const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
 
-															await moveMails({
-																mailboxModel: this.viewModel.mailboxModel,
-																mailModel: this.viewModel.mailModel,
-																mailIds: [this.viewModel.mail._id],
-																targetFolder: spamFolder,
-																moveMode: MoveMode.Mails,
-																isReportable: false,
-																mailViewModel: await this.viewModel.mailViewModel(),
-															})
+															await this.viewModel.mailModel.moveMails([this.viewModel.mail._id], spamFolder, MoveMode.Mails)
 															console.log(`🔒 MOBYPHISH_LOG: Successfully moved email to spam folder for sender="${senderEmail}"`)
 														}
 													} catch (moveError) {

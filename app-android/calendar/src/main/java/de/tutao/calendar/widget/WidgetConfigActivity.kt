@@ -84,7 +84,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
-import androidx.core.graphics.toColorInt
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.MutableCreationExtras
@@ -96,6 +95,7 @@ import de.tutao.calendar.widget.error.WidgetErrorHandler
 import de.tutao.calendar.widget.error.WidgetErrorType
 import de.tutao.calendar.widget.model.WidgetConfigModel
 import de.tutao.calendar.widget.model.WidgetConfigViewModel
+import de.tutao.calendar.widget.style.AppTheme
 import de.tutao.calendar.widget.test.WidgetConfigTestViewModel
 import de.tutao.tutasdk.CalendarRenderData
 import de.tutao.tutasdk.GeneratedId
@@ -110,13 +110,14 @@ import de.tutao.tutashared.ipc.CalendarOpenAction
 import de.tutao.tutashared.ipc.CredentialsInfo
 import de.tutao.tutashared.ipc.DataWrapper
 import de.tutao.tutashared.ipc.PersistedCredentials
+import de.tutao.tutashared.parseColor
 import de.tutao.tutashared.remote.RemoteStorage
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-val CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID = "clientOnly_birthdays"
+const val BIRTHDAY_CALENDAR_BASE_ID = "clientOnly_birthdays"
 
 class WidgetConfigActivity : AppCompatActivity() {
 	private var appWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
@@ -541,7 +542,7 @@ class WidgetConfigActivity : AppCompatActivity() {
 
 	@Composable
 	private fun getCalendarName(id: GeneratedId, calendar: CalendarRenderData): String {
-		if (id.contains(CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID)) {
+		if (id.contains(BIRTHDAY_CALENDAR_BASE_ID)) {
 			return getString(R.string.birthdayCalendar_label)
 		}
 
@@ -579,9 +580,9 @@ class WidgetConfigActivity : AppCompatActivity() {
 				checked,
 				onCheckedChange = { markCalendarAsChecked() },
 				colors = CheckboxDefaults.colors(
-					checkedColor = Color("#$color".toColorInt()),
-					uncheckedColor = Color("#$color".toColorInt()),
-					checkmarkColor = Color("#$color".toColorInt()),
+					checkedColor = Color(parseColor("#$color")),
+					uncheckedColor = Color(parseColor("#$color")),
+					checkmarkColor = Color(parseColor("#$color")),
 				),
 				modifier = Modifier
 					.padding(0.dp)

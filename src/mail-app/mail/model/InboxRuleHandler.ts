@@ -1,61 +1,20 @@
-import type { InboxRule, Mail, MailFolder, MoveMailData } from "../../../common/api/entities/tutanota/TypeRefs.js"
-import { createMoveMailData } from "../../../common/api/entities/tutanota/TypeRefs.js"
-import { InboxRuleType, MailSetKind, MAX_NBR_MOVE_DELETE_MAIL_SERVICE } from "../../../common/api/common/TutanotaConstants"
+import { InboxRule, Mail, MailSet } from "../../../common/api/entities/tutanota/TypeRefs.js"
+import { InboxRuleType, MailSetKind, ProcessingState } from "../../../common/api/common/TutanotaConstants"
 import { isDomainName, isRegularExpression } from "../../../common/misc/FormatValidator"
-import { assertNotNull, asyncFind, ofClass, promiseMap, splitInChunks } from "@tutao/tutanota-utils"
+import { asyncFind, Nullable } from "@tutao/tutanota-utils"
 import { lang } from "../../../common/misc/LanguageViewModel"
 import type { MailboxDetail } from "../../../common/mailFunctionality/MailboxModel.js"
-import { LockedError, PreconditionFailedError } from "../../../common/api/common/error/RestError"
 import type { SelectorItemList } from "../../../common/gui/base/DropDownSelector.js"
-import { elementIdPart, isSameId } from "../../../common/api/common/utils/EntityUtils"
+import { elementIdPart } from "../../../common/api/common/utils/EntityUtils"
 import { assertMainOrNode } from "../../../common/api/common/Env"
 import { MailFacade } from "../../../common/api/worker/facades/lazy/MailFacade.js"
 import { LoginController } from "../../../common/api/main/LoginController.js"
-import { throttle } from "@tutao/tutanota-utils/dist/Utils.js"
 import { getMailHeaders } from "./MailUtils.js"
 import { MailModel } from "./MailModel"
+import { UnencryptedProcessInboxDatum } from "./ProcessInboxHandler"
+import { ClientClassifierType } from "../../../common/api/common/ClientClassifierType"
 
 assertMainOrNode()
-const moveMailDataPerFolder: MoveMailData[] = []
-const DEBOUNCE_FIRST_MOVE_MAIL_REQUEST_MS = 200
-let applyingRules = false // used to avoid concurrent application of rules (-> requests to locked service)
-
-async function sendMoveMailRequest(mailFacade: MailFacade): Promise<void> {
-	if (moveMailDataPerFolder.length) {
-		const moveToTargetFolder = assertNotNull(moveMailDataPerFolder.shift())
-		const mailChunks = splitInChunks(MAX_NBR_MOVE_DELETE_MAIL_SERVICE, moveToTargetFolder.mails)
-		await promiseMap(mailChunks, (mailChunk) => {
-			moveToTargetFolder.mails = mailChunk
-			return mailFacade.moveMails(mailChunk, moveToTargetFolder.targetFolder, null)
-		})
-			.catch(
-				ofClass(LockedError, (e) => {
-					//LockedError should no longer be thrown!?!
-					console.log("moving mail failed", e, moveToTargetFolder)
-				}),
-			)
-			.catch(
-				ofClass(PreconditionFailedError, (e) => {
-					// move mail operation may have been locked by other process
-					console.log("moving mail failed", e, moveToTargetFolder)
-				}),
-			)
-			.finally(() => {
-				return sendMoveMailRequest(mailFacade)
-			})
-	} //We are done and unlock for future requests
-}
-
-// We throttle the moveMail requests to a rate of 200ms
-// Each target folder requires one request
-const applyMatchingRules = throttle(DEBOUNCE_FIRST_MOVE_MAIL_REQUEST_MS, (mailFacade: MailFacade) => {
-	if (applyingRules) return
-	// We lock to avoid concurrent requests
-	applyingRules = true
-	sendMoveMailRequest(mailFacade).finally(() => {
-		applyingRules = false
-	})
-})
 
 export function getInboxRuleTypeNameMapping(): SelectorItemList<string> {
 	return [
@@ -104,53 +63,37 @@ export class InboxRuleHandler {
 	 */
 	async findAndApplyMatchingRule(
 		mailboxDetail: MailboxDetail,
-		mail: Mail,
-		applyRulesOnServer: boolean,
-		applyIfRead: boolean,
-	): Promise<{
-		folder: MailFolder
-		mail: Mail
-	} | null> {
-		const shouldApply = applyIfRead || mail.unread
+		mail: Readonly<Mail>,
+	): Promise<Nullable<{ targetFolder: MailSet; processInboxDatum: UnencryptedProcessInboxDatum }>> {
+		const shouldApply =
+			(mail.processingState === ProcessingState.INBOX_RULE_NOT_PROCESSED ||
+				mail.processingState === ProcessingState.INBOX_RULE_NOT_PROCESSED_AND_DO_NOT_RUN_SPAM_PREDICTION) &&
+			mail.processNeeded
 
-		if (
-			mail._errors ||
-			!shouldApply ||
-			!(await isInboxFolder(this.mailModel, mailboxDetail, mail)) ||
-			!this.logins.getUserController().isPaidAccount() ||
-			mailboxDetail.mailbox.folders == null
-		) {
+		if (mail._errors || !shouldApply || !(await isLandingFolder(this.mailModel, mailboxDetail, mail)) || !this.logins.getUserController().isPaidAccount()) {
 			return null
 		}
 
 		const inboxRule = await _findMatchingRule(this.mailFacade, mail, this.logins.getUserController().props.inboxRules)
+		const mailDetails = await this.mailFacade.loadMailDetailsBlob(mail)
 		if (inboxRule) {
-			const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.folders._id)
+			const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 			const targetFolder = folders.getFolderById(elementIdPart(inboxRule.targetFolder))
 
-			if (targetFolder && targetFolder.folderType !== MailSetKind.INBOX) {
-				if (applyRulesOnServer) {
-					let moveMailData = moveMailDataPerFolder.find((folderMoveMailData) => isSameId(folderMoveMailData.targetFolder, inboxRule.targetFolder))
-
-					if (moveMailData) {
-						moveMailData.mails.push(mail._id)
-					} else {
-						moveMailData = createMoveMailData({
-							targetFolder: inboxRule.targetFolder,
-							mails: [mail._id],
-							excludeMailSet: null,
-						})
-						moveMailDataPerFolder.push(moveMailData)
-					}
-
-					applyMatchingRules(this.mailFacade)
+			if (targetFolder) {
+				const processInboxDatum: UnencryptedProcessInboxDatum = {
+					mailId: mail._id,
+					targetMoveFolder: targetFolder._id,
+					classifierType: ClientClassifierType.CUSTOMER_INBOX_RULES,
+					vector: await this.mailFacade.vectorizeAndCompressMails({ mail, mailDetails }),
 				}
-
-				return { folder: targetFolder, mail }
+				return { targetFolder, processInboxDatum }
 			} else {
+				// target folder of inbox rule was deleted
 				return null
 			}
 		} else {
+			// no inbox rule applies to the mail
 			return null
 		}
 	}
@@ -244,8 +187,8 @@ function _checkEmailAddresses(mailAddresses: string[], inboxRule: InboxRule): bo
 	return mailAddress != null
 }
 
-async function isInboxFolder(mailModel: MailModel, mailboxDetail: MailboxDetail, mail: Mail): Promise<boolean> {
-	const folders = await mailModel.getMailboxFoldersForId(assertNotNull(mailboxDetail.mailbox.folders)._id)
+async function isLandingFolder(mailModel: MailModel, mailboxDetail: MailboxDetail, mail: Mail): Promise<boolean> {
+	const folders = await mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 	const mailFolder = folders.getFolderByMail(mail)
-	return mailFolder?.folderType === MailSetKind.INBOX
+	return mailFolder?.folderType === MailSetKind.INBOX || mailFolder?.folderType === MailSetKind.SPAM
 }

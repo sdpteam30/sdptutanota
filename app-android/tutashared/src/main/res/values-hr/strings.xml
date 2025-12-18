@@ -10,7 +10,9 @@
     <string name="markRead_action">Označi pročitanim</string>
     <string name="sendLogs_action">Pošalji zapise</string>
     <string name="account_label">Korisnik</string>
+    <string name="calendars_label">Kalendari</string>
     <string name="birthdayCalendar_label">Rođendani</string>
     <string name="birthdayEvent_title">{name}\'s rođendan</string>
     <string name="birthdayEventAge_title">{age} godina star</string>
+    <string name="noTitle_label">&lt;Bez naslova&gt;</string>
 </resources>

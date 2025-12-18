@@ -3,7 +3,7 @@ import { aesDecrypt, aesEncrypt, getKeyLengthBytes, KEY_LENGTH_BYTES_AES_128, KE
 import { bitArrayToUint8Array, fixedIv, uint8ArrayToBitArray } from "../misc/Utils.js"
 import { assertNotNull, concat, hexToUint8Array, uint8ArrayToHex } from "@tutao/tutanota-utils"
 import { hexToRsaPrivateKey, hexToRsaPublicKey, rsaPrivateKeyToHex } from "./Rsa.js"
-import type { RsaX25519KeyPair, RsaKeyPair, RsaPrivateKey } from "./RsaKeyPair.js"
+import type { RsaKeyPair, RsaPrivateKey, RsaX25519KeyPair } from "./RsaKeyPair.js"
 import { bytesToKyberPrivateKey, bytesToKyberPublicKey, KyberPrivateKey, kyberPrivateKeyToBytes } from "./Liboqs/KyberKeyPair.js"
 import { X25519PrivateKey } from "./X25519.js"
 import { AsymmetricKeyPair, KeyPairType } from "./AsymmetricKeyPair.js"
@@ -18,6 +18,7 @@ export type AbstractEncryptedKeyPair = {
 	symEncPrivEccKey: null | Uint8Array
 	symEncPrivKyberKey: null | Uint8Array
 	symEncPrivRsaKey: null | Uint8Array
+	signature: null | object //type PublicKeySignature not available in crypto package
 }
 
 export type EncryptedPqKeyPairs = {
@@ -27,6 +28,7 @@ export type EncryptedPqKeyPairs = {
 	symEncPrivEccKey: Uint8Array
 	symEncPrivKyberKey: Uint8Array
 	symEncPrivRsaKey: null
+	signature: null | object //type PublicKeySignature not available in crypto package
 }
 
 export type EncryptedRsaKeyPairs = {
@@ -36,6 +38,7 @@ export type EncryptedRsaKeyPairs = {
 	symEncPrivEccKey: null
 	symEncPrivKyberKey: null
 	symEncPrivRsaKey: Uint8Array
+	signature: null | object //type PublicKeySignature not available in crypto package
 }
 
 export type EncryptedRsaX25519KeyPairs = {
@@ -45,6 +48,7 @@ export type EncryptedRsaX25519KeyPairs = {
 	symEncPrivEccKey: Uint8Array
 	symEncPrivKyberKey: null
 	symEncPrivRsaKey: Uint8Array
+	signature: null | object //type PublicKeySignature not available in crypto package
 }
 
 export function isEncryptedPqKeyPairs(keyPair: AbstractEncryptedKeyPair): keyPair is EncryptedPqKeyPairs {

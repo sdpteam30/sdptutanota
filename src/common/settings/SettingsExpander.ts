@@ -8,6 +8,7 @@ import Stream from "mithril/stream"
 import { locator } from "../api/main/CommonLocator.js"
 
 export type SettingsExpanderAttrs = {
+	id?: string
 	title: MaybeTranslation
 	buttonText?: MaybeTranslation
 	infoMsg?: MaybeTranslation
@@ -26,9 +27,9 @@ export class SettingsExpander implements Component<SettingsExpanderAttrs> {
 	}
 
 	view(vnode: Vnode<SettingsExpanderAttrs>): Children {
-		const { title, buttonText, infoLinkId, infoMsg, expanded } = vnode.attrs
-		return [
-			m(".flex-space-between.items-center.mb-s.mt-l", [
+		const { title, buttonText, infoLinkId, infoMsg, expanded, id } = vnode.attrs
+		return m("", { id }, [
+			m(".flex-space-between.items-center.mb-8.mt-32", [
 				m(".h4", lang.getTranslationText(title)),
 				m(ExpanderButton, {
 					label: buttonText || "show_action",
@@ -45,6 +46,6 @@ export class SettingsExpander implements Component<SettingsExpanderAttrs> {
 			),
 			infoMsg ? m("small", lang.getTranslationText(infoMsg)) : null,
 			infoLinkId ? ifAllowedTutaLinks(locator.logins, infoLinkId, (link) => m("small.text-break", [m(`a[href=${link}][target=_blank]`, link)])) : null,
-		]
+		])
 	}
 }

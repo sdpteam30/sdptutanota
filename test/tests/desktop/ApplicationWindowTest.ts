@@ -75,8 +75,7 @@ o.spec("ApplicationWindow Test", function () {
 			if (theme == null) {
 				theme = {
 					themeId: "light-fallback",
-					content_bg: "#ffffff",
-					header_bg: "#ffffff",
+					surface: "#ffffff",
 				} as Theme
 			}
 
@@ -413,6 +412,8 @@ o.spec("ApplicationWindow Test", function () {
 			"Control+H",
 			"Control+N",
 			"Control+=",
+			"Control+Plus",
+			"Control+Shift+Plus",
 			"Control+Shift+=",
 			"Control+-",
 			"Control+Shift+-",
@@ -434,6 +435,8 @@ o.spec("ApplicationWindow Test", function () {
 			"Control+H",
 			"Control+N",
 			"Control+=",
+			"Control+Plus",
+			"Control+Shift+Plus",
 			"Control+Shift+=",
 			"Control+-",
 			"Control+Shift+-",

@@ -1,10 +1,10 @@
-import { ResolvableRecipient, ResolveMode } from "../../../src/common/api/main/RecipientsModel.js"
+import { ResolvableRecipient } from "../../../src/common/api/main/RecipientsModel.js"
 import { Recipient, RecipientType } from "../../../src/common/api/common/recipients/Recipient.js"
 import { LazyLoaded } from "@tutao/tutanota-utils"
 import { Contact } from "../../../src/common/api/entities/tutanota/TypeRefs.js"
 import { User } from "../../../src/common/api/entities/sys/TypeRefs.js"
 import { createNewContact, isTutaMailAddress } from "../../../src/common/mailFunctionality/SharedMailUtils.js"
-import { KeyVerificationState } from "../../../src/common/api/common/TutanotaConstants.js"
+import { PresentableKeyVerificationState } from "../../../src/common/api/common/TutanotaConstants"
 
 /**
  * Creating actual ResolvableRecipients is annoying because you have to mock a bunch of stuff in other model classes
@@ -12,7 +12,7 @@ import { KeyVerificationState } from "../../../src/common/api/common/TutanotaCon
 export class ResolvableRecipientMock implements ResolvableRecipient {
 	public name: string
 	public type: RecipientType
-	public verificationState: KeyVerificationState
+	public verificationState: PresentableKeyVerificationState
 
 	private _resolved = false
 	private lazyResolve = new LazyLoaded<Recipient>(async () => {
@@ -29,7 +29,7 @@ export class ResolvableRecipientMock implements ResolvableRecipient {
 			name: this.name,
 			contact: this.contact,
 			type: this.type,
-			verificationState: KeyVerificationState.NO_ENTRY,
+			verificationState: PresentableKeyVerificationState.NONE,
 		}
 	})
 
@@ -42,15 +42,10 @@ export class ResolvableRecipientMock implements ResolvableRecipient {
 		private internalAddresses: string[],
 		/** contacts that should be resolved as though they were found by the contact model */
 		private existingContacts: Contact[],
-		resolveMode: ResolveMode,
 		private user: User,
 	) {
 		this.name = name ?? ""
 		this.type = type ?? (isTutaMailAddress(address) ? RecipientType.INTERNAL : RecipientType.UNKNOWN)
-
-		if (resolveMode === ResolveMode.Eager) {
-			this.lazyResolve.getAsync()
-		}
 	}
 
 	markAsKeyVerificationMismatch(): Promise<void> {
@@ -62,7 +57,7 @@ export class ResolvableRecipientMock implements ResolvableRecipient {
 		return this._resolved
 	}
 
-	resolved(): Promise<Recipient> {
+	resolve(): Promise<Recipient> {
 		return this.lazyResolve.getAsync()
 	}
 
@@ -77,4 +72,6 @@ export class ResolvableRecipientMock implements ResolvableRecipient {
 	whenResolved(onResolved: (resolvedRecipient: Recipient) => void): this {
 		throw new Error("STUB")
 	}
+
+	reset(): void {}
 }

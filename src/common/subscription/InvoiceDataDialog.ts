@@ -8,7 +8,7 @@ import { BadRequestError } from "../api/common/error/RestError"
 import type { AccountingInfo } from "../api/entities/sys/TypeRefs.js"
 import type { InvoiceData } from "../api/common/TutanotaConstants"
 import { ofClass } from "@tutao/tutanota-utils"
-import { asPaymentInterval } from "./PriceUtils.js"
+import { asPaymentInterval } from "./utils/PriceUtils.js"
 
 export function show(
 	businessUse: boolean,
@@ -42,7 +42,7 @@ export function show(
 	const dialog = Dialog.showActionDialog({
 		title: headingId ? headingId : "invoiceData_msg",
 		child: {
-			view: () => m("#changeInvoiceDataDialog", [infoMessageId ? m(".pt", lang.get(infoMessageId)) : null, m(invoiceDataInput)]),
+			view: () => m("#changeInvoiceDataDialog", [infoMessageId ? m(".pt-16", lang.get(infoMessageId)) : null, m(invoiceDataInput)]),
 		},
 		okAction: confirmAction,
 		allowCancel: true,

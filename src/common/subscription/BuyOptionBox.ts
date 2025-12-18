@@ -1,18 +1,17 @@
 import m, { Child, Children, Component, Vnode, VnodeDOM } from "mithril"
-import { px, size } from "../gui/size"
+import { font_size, px, size } from "../gui/size"
 import type { MaybeTranslation } from "../misc/LanguageViewModel"
 import { lang } from "../misc/LanguageViewModel"
 import type { lazy } from "@tutao/tutanota-utils"
 import { Icon } from "../gui/base/Icon"
 import { SegmentControl } from "../gui/base/SegmentControl"
 import { AvailablePlanType, PlanType } from "../api/common/TutanotaConstants"
-import { PaymentInterval } from "./PriceUtils"
+import { PaymentInterval } from "./utils/PriceUtils"
 import Stream from "mithril/stream"
 import { Icons } from "../gui/base/icons/Icons"
 import { BootIcons } from "../gui/base/icons/BootIcons"
 import { InfoIcon } from "../gui/base/InfoIcon.js"
-import { theme } from "../gui/theme.js"
-import { isColorLight } from "../gui/base/Color.js"
+import { isDarkTheme, theme } from "../gui/theme.js"
 import { isIOSApp } from "../api/common/Env.js"
 import { goEuropeanBlue } from "../gui/builtinThemes.js"
 
@@ -54,7 +53,14 @@ export type BuyOptionDetailsAttr = {
 		title: string | null
 		key: string
 		featureCount: { max: number }
-		features: Array<{ text: string; toolTip?: Child; key: string; antiFeature?: boolean; omit: boolean; heart: boolean }>
+		features: Array<{
+			text: string
+			toolTip?: Child
+			key: string
+			antiFeature?: boolean
+			omit: boolean
+			heart: boolean
+		}>
 	}>
 	featuresExpanded?: boolean
 	renderCategoryTitle: boolean
@@ -67,7 +73,7 @@ export function getActiveSubscriptionActionButtonReplacement(): () => Children {
 			".buyOptionBox.content-accent-fg.center-vertically.text-center",
 			{
 				style: {
-					"border-radius": px(size.border_radius_small),
+					"border-radius": px(size.radius_4),
 				},
 			},
 			lang.get("pricing.currentPlan_label"),
@@ -97,7 +103,7 @@ export class BuyOptionDetails implements Component<BuyOptionDetailsAttr> {
 		this.featuresExpanded = attrs.featuresExpanded || false
 
 		return m(
-			".mt.pl",
+			".mt-16.pl-12",
 			attrs.categories.map((fc) => {
 				return [
 					this.renderCategoryTitle(fc, attrs.renderCategoryTitle),
@@ -110,8 +116,11 @@ export class BuyOptionDetails implements Component<BuyOptionDetailsAttr> {
 											icon: BootIcons.Heart,
 											style: attrs.iconStyle,
 										})
-									: m(Icon, { icon: f.antiFeature ? Icons.Cancel : Icons.Checkmark, style: attrs.iconStyle }),
-								m(".small.text-left.align-self-center.pl-s.button-height.flex-grow.min-width-0.break-word", [m("span", f.text)]),
+									: m(Icon, {
+											icon: f.antiFeature ? Icons.Cancel : Icons.Checkmark,
+											style: attrs.iconStyle,
+										}),
+								m(".small.text-left.align-self-center.pl-4.button-height.flex-grow.min-width-0.break-word", [m("span", f.text)]),
 								f.toolTip ? m(InfoIcon, { text: f.toolTip }) : null,
 							]),
 						),
@@ -124,8 +133,8 @@ export class BuyOptionDetails implements Component<BuyOptionDetailsAttr> {
 	private renderCategoryTitle(fc: BuyOptionDetailsAttr["categories"][0], renderCategoryTitle: boolean): Children {
 		if (fc.title && this.featuresExpanded) {
 			return [
-				m(".b.text-left.align-self-center.pl-s.button-height.flex-grow.min-width-0.break-word", ""),
-				m(".b.text-left.align-self-center.pl-s.button-height.flex-grow.min-width-0.break-word", renderCategoryTitle ? fc.title : ""),
+				m(".b.text-left.align-self-center.pl-4.button-height.flex-grow.min-width-0.break-word", ""),
+				m(".b.text-left.align-self-center.pl-4.button-height.flex-grow.min-width-0.break-word", renderCategoryTitle ? fc.title : ""),
 			]
 		} else {
 			return []
@@ -159,10 +168,18 @@ export class BuyOptionBox implements Component<BuyOptionBoxAttr> {
 			}
 
 			if (attrs.isFirstMonthForFree && isPersonalPaidPlan && isYearly) {
-				const isDarkTheme = !isColorLight(theme.content_bg)
 				return m(
 					".ribbon-horizontal.nota",
-					m(".text-center.b", { style: { padding: px(3), color: isDarkTheme ? "#fff" : undefined } }, lang.get("oneMonthTrial_label")),
+					m(
+						".text-center.b",
+						{
+							style: {
+								padding: px(3),
+								color: isDarkTheme() ? "#fff" : undefined,
+							},
+						},
+						lang.get("oneMonthTrial_label"),
+					),
 				)
 			}
 
@@ -205,7 +222,7 @@ export class BuyOptionBox implements Component<BuyOptionBoxAttr> {
 							m("span", attrs.priceHint ? lang.getTranslationText(attrs.priceHint) : lang.get("emptyString_msg")),
 							vnode.attrs.hasPriceFootnote && m("sup", { style: { "font-size": px(8) } }, "1"),
 						),
-						m(".small.text-center.pb-ml", lang.getTranslationText(attrs.helpLabel)),
+						m(".small.text-center.pb-24", lang.getTranslationText(attrs.helpLabel)),
 						this.renderPaymentIntervalControl(attrs.selectedPaymentInterval, !!attrs.hasFirstYearDiscount),
 						attrs.actionButton
 							? m(
@@ -226,15 +243,15 @@ export class BuyOptionBox implements Component<BuyOptionBoxAttr> {
 
 	private renderPrice(price: string, isApplePrice?: boolean, strikethroughPrice?: string) {
 		return m(
-			".flex.flex-wrap.column-gap-s.justify-center.items-center.pt-l.text-center",
+			".flex.flex-wrap.column-gap-4.justify-center.items-center.pt-32.text-center",
 			{ style: { ...(!isApplePrice && { display: "grid", "grid-template-columns": "1fr auto 1fr" }) } },
 			strikethroughPrice != null && strikethroughPrice.trim() !== ""
 				? m(
-						".span.strike",
+						".span.strike.pt-8",
 						{
 							style: {
-								color: theme.content_button,
-								fontSize: px(size.font_size_base),
+								color: theme.on_surface,
+								fontSize: px(font_size.base),
 								...(!isApplePrice && { "justify-self": "end" }),
 							},
 						},
@@ -290,7 +307,7 @@ export class BuyOptionBox implements Component<BuyOptionBoxAttr> {
 	private renderHeading(heading: string): Children {
 		return m(
 			// we need some margin for the discount banner for longer translations shown on the website
-			".h4.text-center.mb-small-line-height.flex.col.center-horizontally.mlr-l.dialog-header",
+			".h4.text-center.mb-small-line-height.flex.col.center-horizontally.mlr-24.dialog-header",
 			{
 				style: {
 					"font-size": heading.length > 20 ? "smaller" : undefined,

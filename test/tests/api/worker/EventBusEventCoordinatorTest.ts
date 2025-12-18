@@ -1,16 +1,17 @@
 import o from "@tutao/otest"
 import { EventBusEventCoordinator } from "../../../../src/common/api/worker/EventBusEventCoordinator.js"
-import { matchers, object, verify, when } from "testdouble"
+import { func, matchers, object, verify, when } from "testdouble"
 import {
+	Group,
 	GroupKeyUpdateTypeRef,
 	GroupMembershipTypeRef,
+	GroupTypeRef,
 	User,
 	UserGroupKeyDistributionTypeRef,
 	UserTypeRef,
-	WebsocketLeaderStatusTypeRef,
 } from "../../../../src/common/api/entities/sys/TypeRefs.js"
-import { createTestEntity, withOverriddenEnv } from "../../TestUtils.js"
-import { AccountType, OperationType } from "../../../../src/common/api/common/TutanotaConstants.js"
+import { createTestEntity } from "../../TestUtils.js"
+import { OperationType, RolloutType } from "../../../../src/common/api/common/TutanotaConstants.js"
 import { UserFacade } from "../../../../src/common/api/worker/facades/UserFacade.js"
 import { EntityClient } from "../../../../src/common/api/common/EntityClient.js"
 import { lazyAsync, lazyMemoized } from "@tutao/tutanota-utils"
@@ -19,12 +20,16 @@ import { EventController } from "../../../../src/common/api/main/EventController
 import { KeyRotationFacade } from "../../../../src/common/api/worker/facades/KeyRotationFacade.js"
 import { CacheManagementFacade } from "../../../../src/common/api/worker/facades/lazy/CacheManagementFacade.js"
 import { EntityUpdateData, PrefetchStatus } from "../../../../src/common/api/common/utils/EntityUpdateUtils"
-import { Mode } from "../../../../src/common/api/common/Env"
+import { RolloutFacade } from "../../../../src/common/api/worker/facades/RolloutFacade"
+import { GroupManagementFacade } from "../../../../src/common/api/worker/facades/lazy/GroupManagementFacade"
+import { SyncTracker } from "../../../../src/common/api/main/SyncTracker"
+import { IdentityKeyCreator } from "../../../../src/common/api/worker/facades/lazy/IdentityKeyCreator"
 
 o.spec("EventBusEventCoordinatorTest", () => {
 	let eventBusEventCoordinator: EventBusEventCoordinator
 	let userId = "userId"
 	let userGroupId = "userGroupId"
+	let userGroupKeyVersion = "1"
 	let user: User
 	let userGroupKeyDistribution
 	let userFacade: UserFacade
@@ -33,6 +38,11 @@ o.spec("EventBusEventCoordinatorTest", () => {
 	let eventController: EventController
 	let keyRotationFacadeMock: KeyRotationFacade
 	let cacheManagementFacade: CacheManagementFacade
+	let rolloutFacadeMock: RolloutFacade
+	let groupManagementFacade: GroupManagementFacade
+	let syncTrackerMock: SyncTracker
+	let identityKeyCreator: IdentityKeyCreator
+	let teamGroupIds: Id[]
 
 	o.beforeEach(function () {
 		user = createTestEntity(UserTypeRef, {
@@ -41,7 +51,12 @@ o.spec("EventBusEventCoordinatorTest", () => {
 		})
 		userFacade = object()
 		when(userFacade.getUser()).thenReturn(user)
+		when(userFacade.getUserGroupId()).thenReturn(userGroupId)
 		entityClient = object()
+		const userGroup: Group = object()
+		userGroup.currentKeys = object()
+		userGroup.groupKeyVersion = userGroupKeyVersion
+		when(entityClient.load(GroupTypeRef, userGroupId)).thenResolve(userGroup)
 		when(entityClient.load(UserTypeRef, userId)).thenResolve(user)
 		userGroupKeyDistribution = createTestEntity(UserGroupKeyDistributionTypeRef, { _id: userGroupId })
 		when(entityClient.load(UserGroupKeyDistributionTypeRef, userGroupId)).thenResolve(userGroupKeyDistribution)
@@ -50,6 +65,12 @@ o.spec("EventBusEventCoordinatorTest", () => {
 		eventController = object()
 		keyRotationFacadeMock = object()
 		cacheManagementFacade = object()
+		rolloutFacadeMock = object()
+		groupManagementFacade = object()
+		syncTrackerMock = object()
+		identityKeyCreator = object()
+		teamGroupIds = ["team"]
+		when(groupManagementFacade.loadTeamGroupIds()).thenResolve(teamGroupIds)
 		eventBusEventCoordinator = new EventBusEventCoordinator(
 			object(),
 			lazyMailFacade,
@@ -61,7 +82,111 @@ o.spec("EventBusEventCoordinatorTest", () => {
 			async () => cacheManagementFacade,
 			async (error: Error) => {},
 			(_) => {},
+			rolloutFacadeMock,
+			async () => groupManagementFacade,
+			async () => identityKeyCreator,
+			syncTrackerMock,
 		)
+	})
+
+	o.spec("onSyncDone", function () {
+		o("sends signal to main thread", async function () {
+			await eventBusEventCoordinator.onSyncDone()
+
+			verify(syncTrackerMock.markSyncAsDone())
+		})
+
+		o("executes rollout onSyncDone", async function () {
+			when(userFacade.isLeader()).thenReturn(true)
+			await eventBusEventCoordinator.onSyncDone()
+			verify(rolloutFacadeMock.configureRollout(RolloutType.UserIdentityKeyCreation, matchers.anything()))
+			verify(rolloutFacadeMock.processRollout(RolloutType.UserIdentityKeyCreation))
+			verify(rolloutFacadeMock.configureRollout(RolloutType.SharedMailboxIdentityKeyCreation, matchers.anything()))
+			verify(rolloutFacadeMock.processRollout(RolloutType.SharedMailboxIdentityKeyCreation))
+			verify(rolloutFacadeMock.processRollout(RolloutType.AdminOrUserGroupKeyRotation))
+			verify(rolloutFacadeMock.processRollout(RolloutType.OtherGroupKeyRotation))
+		})
+
+		o("executes UserIdentityKeyCreation rollout", async function () {
+			when(userFacade.isLeader()).thenReturn(true)
+
+			await eventBusEventCoordinator.onSyncDone()
+
+			const captor = matchers.captor()
+			verify(rolloutFacadeMock.configureRollout(RolloutType.UserIdentityKeyCreation, captor.capture()))
+			verify(rolloutFacadeMock.processRollout(RolloutType.UserIdentityKeyCreation))
+			o(captor.values?.length).equals(1)
+
+			// execute callback
+			await captor.values![0].execute()
+			verify(identityKeyCreator.createIdentityKeyPairForExistingUsers())
+		})
+
+		o("does not stop if UserIdentityKeyCreation rollout throws", async function () {
+			when(userFacade.isLeader()).thenReturn(true)
+
+			const error = object<Error>()
+			when(identityKeyCreator.createIdentityKeyPairForExistingUsers()).thenReject(error)
+
+			await eventBusEventCoordinator.onSyncDone()
+			const captor = matchers.captor()
+			verify(rolloutFacadeMock.configureRollout(RolloutType.UserIdentityKeyCreation, captor.capture()))
+			verify(rolloutFacadeMock.processRollout(RolloutType.UserIdentityKeyCreation))
+
+			o(captor.values?.length).equals(1)
+			// @ts-ignore
+
+			eventBusEventCoordinator.sendError = func<(error: Error) => void>()
+			// execute callback
+			await captor.values![0].execute()
+
+			// @ts-ignore
+			verify(eventBusEventCoordinator.sendError(error))
+		})
+
+		o("does not stop if SharedMailboxIdentityKeyCreation rollout throws", async function () {
+			when(userFacade.isLeader()).thenReturn(true)
+
+			await eventBusEventCoordinator.onSyncDone()
+
+			const captor = matchers.captor()
+			verify(rolloutFacadeMock.configureRollout(RolloutType.SharedMailboxIdentityKeyCreation, captor.capture()))
+			verify(rolloutFacadeMock.processRollout(RolloutType.SharedMailboxIdentityKeyCreation))
+			o(captor.values?.length).equals(1)
+
+			// @ts-ignore
+			eventBusEventCoordinator.sendError = func<(error: Error) => void>()
+
+			// execute callback
+			const error = object<Error>()
+			when(identityKeyCreator.createIdentityKeyPairForExistingTeamGroups(teamGroupIds)).thenReject(error)
+			await captor.values![0].execute()
+
+			// @ts-ignore
+			verify(eventBusEventCoordinator.sendError(error))
+		})
+
+		o("executes SharedMailboxIdentityKeyCreation rollout", async function () {
+			when(userFacade.isLeader()).thenReturn(true)
+
+			await eventBusEventCoordinator.onSyncDone()
+
+			const captor = matchers.captor()
+			verify(rolloutFacadeMock.configureRollout(RolloutType.SharedMailboxIdentityKeyCreation, captor.capture()))
+			verify(rolloutFacadeMock.processRollout(RolloutType.SharedMailboxIdentityKeyCreation))
+			o(captor.values?.length).equals(1)
+
+			// execute callback
+			await captor.values![0].execute()
+			verify(identityKeyCreator.createIdentityKeyPairForExistingTeamGroups(teamGroupIds))
+		})
+
+		o("does not execute rollouts if it is not the leader client", async function () {
+			when(userFacade.isLeader()).thenReturn(false)
+
+			await eventBusEventCoordinator.onSyncDone()
+			verify(rolloutFacadeMock.processRollout(matchers.anything()), { times: 0 })
+		})
 	})
 
 	o("updateUser and UserGroupKeyDistribution", async function () {
@@ -69,7 +194,7 @@ o.spec("EventBusEventCoordinatorTest", () => {
 			{
 				typeRef: UserTypeRef,
 				instanceId: userId,
-				instanceListId: "",
+				instanceListId: null,
 				operation: OperationType.UPDATE,
 				instance: null,
 				patches: null,
@@ -78,7 +203,7 @@ o.spec("EventBusEventCoordinatorTest", () => {
 			{
 				typeRef: UserGroupKeyDistributionTypeRef,
 				instanceId: userGroupId,
-				instanceListId: "",
+				instanceListId: null,
 				operation: OperationType.CREATE,
 				instance: null,
 				patches: null,
@@ -99,7 +224,7 @@ o.spec("EventBusEventCoordinatorTest", () => {
 			{
 				typeRef: UserTypeRef,
 				instanceId: userId,
-				instanceListId: "",
+				instanceListId: null,
 				operation: OperationType.UPDATE,
 				instance: null,
 				patches: null,
@@ -132,44 +257,10 @@ o.spec("EventBusEventCoordinatorTest", () => {
 
 		await eventBusEventCoordinator.onEntityEventsReceived(updates, "batchId", "groupId")
 
-		verify(keyRotationFacadeMock.updateGroupMemberships([[instanceListId, instanceId]]))
+		verify(keyRotationFacadeMock.updateGroupMembershipsInOneList([[instanceListId, instanceId]]))
 		verify(userFacade.updateUser(user), { times: 0 })
 		verify(cacheManagementFacade.tryUpdatingUserGroupKey(), { times: 0 })
 		verify(eventController.onEntityUpdateReceived(updates, "groupId"))
 		verify(mailFacade.entityEventsReceived(updates))
-	})
-
-	o.spec("onLeaderStatusChanged", function () {
-		o("If we are not the leader client, delete the passphrase key", async function () {
-			const leaderStatus = createTestEntity(WebsocketLeaderStatusTypeRef, { leaderStatus: false })
-			await withOverriddenEnv({ mode: Mode.Desktop }, () => {
-				eventBusEventCoordinator.onLeaderStatusChanged(leaderStatus)
-			})
-
-			verify(keyRotationFacadeMock.reset())
-			verify(keyRotationFacadeMock.processPendingKeyRotationsAndUpdates(matchers.anything()), { times: 0 })
-		})
-
-		o("If we are the leader client of an internal user, execute key rotations", async function () {
-			const leaderStatus = createTestEntity(WebsocketLeaderStatusTypeRef, { leaderStatus: true })
-
-			await withOverriddenEnv({ mode: Mode.Desktop }, () => {
-				eventBusEventCoordinator.onLeaderStatusChanged(leaderStatus)
-			})
-
-			verify(keyRotationFacadeMock.processPendingKeyRotationsAndUpdates(user))
-		})
-
-		o("If we are the leader client of an external user, delete the passphrase key", async function () {
-			const leaderStatus = createTestEntity(WebsocketLeaderStatusTypeRef, { leaderStatus: true })
-			user.accountType = AccountType.EXTERNAL
-
-			await withOverriddenEnv({ mode: Mode.Desktop }, () => {
-				eventBusEventCoordinator.onLeaderStatusChanged(leaderStatus)
-			})
-
-			verify(keyRotationFacadeMock.reset())
-			verify(keyRotationFacadeMock.processPendingKeyRotationsAndUpdates(matchers.anything()), { times: 0 })
-		})
 	})
 })

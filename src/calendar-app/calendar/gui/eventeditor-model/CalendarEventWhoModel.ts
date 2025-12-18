@@ -10,9 +10,15 @@ import {
 import { PartialRecipient, Recipient, RecipientType } from "../../../../common/api/common/recipients/Recipient.js"
 import { haveSameId, Stripped } from "../../../../common/api/common/utils/EntityUtils.js"
 import { cleanMailAddress, findRecipientWithAddress } from "../../../../common/api/common/utils/CommonCalendarUtils.js"
-import { assertNotNull, clone, defer, DeferredObject, findAll, lazy, noOp, trisectingDiff } from "@tutao/tutanota-utils"
-import { CalendarAttendeeStatus, ConversationType, KeyVerificationState, ShareCapability } from "../../../../common/api/common/TutanotaConstants.js"
-import { RecipientsModel, ResolveMode } from "../../../../common/api/main/RecipientsModel.js"
+import { assertNotNull, clone, contains, defer, DeferredObject, findAll, lazy, noOp, trisectingDiff } from "@tutao/tutanota-utils"
+import {
+	CalendarAttendeeStatus,
+	ConversationType,
+	getAttendeeStatus,
+	ShareCapability,
+	PresentableKeyVerificationState,
+} from "../../../../common/api/common/TutanotaConstants.js"
+import { RecipientsModel } from "../../../../common/api/main/RecipientsModel.js"
 import { Guest } from "../../view/CalendarInvites.js"
 import { isSecurePassword } from "../../../../common/misc/passwords/PasswordUtils.js"
 import { SendMailModel } from "../../../../common/mailFunctionality/SendMailModel.js"
@@ -115,7 +121,8 @@ export class CalendarEventWhoModel {
 		this.setupAttendees(initialValues)
 		// resolve current recipients so that we know what external passwords to display
 		const resolvePromises = initialValues.attendees?.map((a) => this.resolveAndCacheAddress(a.address)).concat() ?? []
-		if (initialValues.organizer) {
+		// only resolve the organizer if it is not part of the initial attendee list, otherwise we would query the encryption keys multiple times.
+		if (initialValues.organizer && contains(initialValues.attendees || [], initialValues.organizer)) {
 			resolvePromises.push(this.resolveAndCacheAddress(initialValues.organizer))
 		}
 		Promise.all(resolvePromises).then(this.uiUpdateCallback)
@@ -130,9 +137,9 @@ export class CalendarEventWhoModel {
 		 * they can link any of their owned calendars(private or shared) to said event
 		 * even if the event has guests
 		 **/
-		if (!v.userIsOwner && v.shared && this._attendees.size > 0) {
+		if (!v.userIsOwner && v.hasMultipleMembers && this._attendees.size > 0) {
 			throw new ProgrammingError("tried to select shared calendar while there are guests.")
-		} else if (!v.userIsOwner && v.shared && this.isNew && this._organizer != null) {
+		} else if (!v.userIsOwner && v.hasMultipleMembers && this.isNew && this._organizer != null) {
 			// for new events, it's possible to have an organizer but no attendees if you only add yourself.
 			this._organizer = null
 		}
@@ -164,7 +171,9 @@ export class CalendarEventWhoModel {
 		 * if the user is the event's organiser and the owner of its linked calendar, the user can modify the guests freely
 		 **/
 		const userIsOwner = this.eventType === EventType.OWN && this.selectedCalendar.userIsOwner
-		return userIsOwner || !(this.selectedCalendar?.shared || this.eventType === EventType.INVITE || this.operation === CalendarOperation.EditThis)
+		return (
+			userIsOwner || !(this.selectedCalendar?.hasMultipleMembers || this.eventType === EventType.INVITE || this.operation === CalendarOperation.EditThis)
+		)
 	}
 
 	/**
@@ -184,23 +193,31 @@ export class CalendarEventWhoModel {
 			 * they can link any of their owned calendars(private or shared) to said event
 			 * even if the event has guests
 			 **/
-			return calendarArray.filter((calendarInfo) => calendarInfo.userIsOwner || !calendarInfo.shared)
+			return calendarArray.filter((calendarInfo) => calendarInfo.userIsOwner || !calendarInfo.hasMultipleMembers)
 		} else if (this._attendees.size > 0 && this.eventType === EventType.OWN) {
 			return calendarArray.filter((calendarInfo) => calendarInfo.userIsOwner)
 		} else if (this._attendees.size > 0 || this.eventType === EventType.INVITE) {
 			// We don't allow inviting in a shared calendar.
 			// If we have attendees, we cannot select a shared calendar.
 			// We also don't allow accepting invites into shared calendars.
-			return calendarArray.filter((calendarInfo) => !calendarInfo.shared || haveSameId(calendarInfo.group, this.selectedCalendar.group))
+			return calendarArray.filter((calendarInfo) => !calendarInfo.hasMultipleMembers || haveSameId(calendarInfo.group, this.selectedCalendar.group))
 		} else {
 			return calendarArray.filter((calendarInfo) => hasCapabilityOnGroup(this.userController.user, calendarInfo.group, ShareCapability.Write))
+		}
+	}
+
+	resetGuestsStatus() {
+		for (const attendee of this.initialAttendees.values()) {
+			this.removeAttendee(attendee.address.address)
+			this.initialAttendees.delete(attendee.address.address)
+			this.addOtherAttendee(attendee.address)
 		}
 	}
 
 	private async resolveAndCacheAddress(a: PartialRecipient): Promise<void> {
 		if (this.resolvedRecipients.has(a.address)) return
 		this.pendingRecipients = this.pendingRecipients + 1
-		const recipient = await this.recipientsModel.resolve(a, ResolveMode.Eager).resolved()
+		const recipient = await this.recipientsModel.initialize(a).resolve()
 		this.cacheRecipient(recipient)
 		this.pendingRecipients = this.pendingRecipients - 1
 		if (this.pendingRecipients === 0) {
@@ -388,7 +405,7 @@ export class CalendarEventWhoModel {
 				status: a.status as CalendarAttendeeStatus,
 				type: RecipientType.UNKNOWN,
 				contact: null,
-				verificationState: KeyVerificationState.NO_ENTRY,
+				verificationState: PresentableKeyVerificationState.NONE,
 			}
 		}
 	}
@@ -612,6 +629,7 @@ export class CalendarEventWhoModel {
 			responseModel.initWithTemplate({}, "", "")
 		}
 		responseModel.addRecipient(RecipientField.TO, this._organizer.address)
+		responseModel.setEmailTypeFromAttendeeStatus(getAttendeeStatus(this._ownAttendee))
 
 		return responseModel
 	}

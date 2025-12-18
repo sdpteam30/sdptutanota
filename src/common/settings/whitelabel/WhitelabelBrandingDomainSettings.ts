@@ -15,7 +15,7 @@ import { locator } from "../../../common/api/main/CommonLocator"
 import { IconButton } from "../../../common/gui/base/IconButton.js"
 import { ButtonSize } from "../../../common/gui/base/ButtonSize.js"
 import { ProgrammingError } from "../../../common/api/common/error/ProgrammingError.js"
-import { getAvailablePlansWithWhitelabel } from "../../../common/subscription/SubscriptionUtils.js"
+import { getAvailablePlansWithWhitelabel } from "../../subscription/utils/SubscriptionUtils.js"
 
 export type WhitelabelBrandingDomainSettingsAttrs = {
 	customerInfo: CustomerInfo
@@ -36,7 +36,7 @@ export class WhitelabelBrandingDomainSettings implements Component<WhitelabelBra
 			helpLabel: this.renderWhitelabelInfo(certificateInfo),
 			isReadOnly: true,
 			injectionsRight: () =>
-				m(".ml-between-s", [
+				m(".ml-between-4", [
 					whitelabelDomain ? this.renderDeactivateButton(whitelabelDomain) : null,
 					customerInfo ? this._renderEditButton(customerInfo, certificateInfo, isWhitelabelFeatureEnabled) : null,
 				]),
@@ -124,7 +124,7 @@ export class WhitelabelBrandingDomainSettings implements Component<WhitelabelBra
 		return () =>
 			m(
 				".flex",
-				components.map((c) => m(".pr-s", c)),
+				components.map((c) => m(".pr-4", c)),
 			)
 	}
 

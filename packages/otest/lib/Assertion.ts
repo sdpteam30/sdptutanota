@@ -53,7 +53,10 @@ export class Assertion<T> {
 	 */
 	equals(expected: T | null | undefined): AssertionDescriber {
 		if (this.actual !== expected) {
-			return this.addError(`expected "${asString(this.actual)}" to be equal to "${asString(expected)}"`)
+			const left = asString(this.actual)
+			const right = asString(expected)
+			const diffMsg = differ(this.actual, expected) ?? undefined
+			return this.addError(`expected "${left}" to be equal to "${right}"`, diffMsg)
 		}
 		return noop
 	}
@@ -80,7 +83,11 @@ export class Assertion<T> {
 	satisfies(check: (value: T) => { pass: false; message: string } | { pass: true }): AssertionDescriber {
 		const result = check(this.actual)
 		if (!result.pass) {
-			return this.addError(`expected to satisfy condition: "${result.message}"`)
+			return this.addError(`expected
+${this.actual}
+to satisfy condition:
+${result.message}
+`)
 		}
 		return noop
 	}
@@ -96,7 +103,11 @@ export class Assertion<T> {
 	): Promise<AssertionDescriber> {
 		const result = await check(this.actual)
 		if (!result.pass) {
-			return this.addError(`expected to satisfy condition: "${result.message}"`)
+			return this.addError(`expected
+${this.actual}
+to satisfy condition:
+${result.message}
+`)
 		}
 		return noop
 	}
@@ -105,7 +116,10 @@ export class Assertion<T> {
 	notSatisfies(check: (value: T) => { pass: boolean; message: string }): AssertionDescriber {
 		const result = check(this.actual)
 		if (result.pass) {
-			return this.addError(`expected "${asString(this.actual)}" to NOT satisfy condition: "${result.message}"`)
+			return this.addError(`expected
+${asString(this.actual)}
+to NOT satisfy condition:
+${result.message}`)
 		}
 		return noop
 	}
@@ -181,6 +195,21 @@ function deepEqual(a: any, b: any): boolean {
 
 			for (let i = 0; i < aKeys.length; i++) {
 				if (!Object.hasOwn(b, aKeys[i]) || !deepEqual(a[aKeys[i]], b[aKeys[i]])) return false
+			}
+
+			return true
+		}
+
+		if (a instanceof Map && b instanceof Map) {
+			for (const key of a.keys()) {
+				if (!deepEqual(a.get(key), b.get(key))) {
+					return false
+				}
+			}
+			for (const key of b.keys()) {
+				if (!deepEqual(a.get(key), b.get(key))) {
+					return false
+				}
 			}
 
 			return true

@@ -13,10 +13,8 @@ import {
 	SubscriptionType,
 } from "../api/common/TutanotaConstants"
 import { getByAbbreviation } from "../api/common/CountryList"
-import { UpgradeSubscriptionPage, UpgradeSubscriptionPageAttrs } from "./UpgradeSubscriptionPage"
-import m from "mithril"
 import stream from "mithril/stream"
-import { InfoLink, lang, MaybeTranslation, TranslationKey } from "../misc/LanguageViewModel"
+import { InfoLink, lang, MaybeTranslation, Translation, TranslationKey } from "../misc/LanguageViewModel"
 import { createWizardDialog, wizardPageWrapper } from "../gui/base/WizardDialog.js"
 import { InvoiceAndPaymentDataPage, InvoiceAndPaymentDataPageAttrs } from "./InvoiceAndPaymentDataPage"
 import { UpgradeCongratulationsPage, UpgradeCongratulationsPageAttrs } from "./UpgradeCongratulationsPage.js"
@@ -25,18 +23,20 @@ import { assertMainOrNode, isIOSApp } from "../api/common/Env"
 import { locator } from "../api/main/CommonLocator"
 import { StorageBehavior } from "../misc/UsageTestModel"
 import { FeatureListProvider, SelectedSubscriptionOptions } from "./FeatureListProvider"
-import { queryAppStoreSubscriptionOwnership, UpgradeType } from "./SubscriptionUtils"
+import { queryAppStoreSubscriptionOwnership, UpgradeType } from "./utils/SubscriptionUtils"
 import { UpgradeConfirmSubscriptionPage, UpgradeConfirmSubscriptionPageAttrs } from "./UpgradeConfirmSubscriptionPage.js"
-import { asPaymentInterval, PaymentInterval, PriceAndConfigProvider, SubscriptionPrice } from "./PriceUtils"
+import { asPaymentInterval, PaymentInterval, PriceAndConfigProvider, SubscriptionPrice } from "./utils/PriceUtils"
 import { formatNameAndAddress } from "../api/common/utils/CommonFormatter.js"
 import { LoginController } from "../api/main/LoginController.js"
 import { MobilePaymentSubscriptionOwnership } from "../native/common/generatedipc/MobilePaymentSubscriptionOwnership.js"
 import { DialogType } from "../gui/base/Dialog.js"
-import { VariantCSubscriptionPage, VariantCSubscriptionPageAttrs } from "./VariantCSubscriptionPage.js"
+import { SubscriptionPage, SubscriptionPageAttrs } from "./SubscriptionPage.js"
 import { styles } from "../gui/styles.js"
 import { stringToSubscriptionType } from "../misc/LoginUtils.js"
-import { SignupFlowUsageTestController } from "./usagetest/UpgradeSubscriptionWizardUsageTestUtils.js"
-import { VariantBSubscriptionPage, VariantBSubscriptionPageAttrs } from "./VariantBSubscriptionPage.js"
+import { ReferralType, SignupFlowUsageTestController } from "./usagetest/UpgradeSubscriptionWizardUsageTestUtils.js"
+import { isPersonalPlanAvailable } from "./utils/PlanSelectorUtils"
+import { PowSolution } from "../api/common/pow-worker"
+import { windowFacade } from "../misc/WindowFacade"
 
 assertMainOrNode()
 export type SubscriptionParameters = {
@@ -50,11 +50,13 @@ export type NewAccountData = {
 	recoverCode: Hex
 	password: string
 }
+export type ReferralData = { code: string; isCalledBySatisfactionDialog: boolean }
+
 export type UpgradeSubscriptionData = {
 	options: SelectedSubscriptionOptions
 	invoiceData: InvoiceData
 	paymentData: PaymentData
-	type: PlanType
+	targetPlanType: PlanType
 	price: SubscriptionPrice | null
 	nextYearPrice: SubscriptionPrice | null
 	accountingInfo: AccountingInfo | null
@@ -69,18 +71,30 @@ export type UpgradeSubscriptionData = {
 	currentPlan: PlanType | null
 	subscriptionParameters: SubscriptionParameters | null
 	featureListProvider: FeatureListProvider
-	referralCode: string | null
+	referralData: null | ReferralData
 	multipleUsersAllowed: boolean
 	acceptedPlans: readonly AvailablePlanType[]
-	msg: MaybeTranslation | null
+	msg: Translation | null
 	firstMonthForFreeOfferActive: boolean
+	isCalledBySatisfactionDialog: boolean
+	registrationCode?: string
+	powChallengeSolutionPromise?: Promise<PowSolution>
+	emailInputStore?: string
+	passwordInputStore?: string
 }
 
-export async function showUpgradeWizard(
-	logins: LoginController,
-	acceptedPlans: readonly AvailablePlanType[] = NewPaidPlans,
-	msg?: MaybeTranslation,
-): Promise<void> {
+export async function showUpgradeWizard({
+	logins,
+	isCalledBySatisfactionDialog = false,
+	acceptedPlans = NewPaidPlans,
+	msg,
+}: {
+	logins: LoginController
+	isCalledBySatisfactionDialog?: boolean
+	acceptedPlans?: readonly AvailablePlanType[]
+	msg?: Translation
+}): Promise<void> {
+	SignupFlowUsageTestController.invalidateUsageTest() // Invalidates the "signup.flow" usage test, because upgrades and signups should not be mixed in this usage test.
 	const [customer, accountingInfo] = await Promise.all([logins.getUserController().loadCustomer(), logins.getUserController().loadAccountingInfo()])
 
 	const priceDataProvider = await PriceAndConfigProvider.getInitializedInstance(null, locator.serviceExecutor, null)
@@ -90,7 +104,7 @@ export async function showUpgradeWizard(
 	const featureListProvider = await FeatureListProvider.getInitializedInstance(domainConfig)
 	const upgradeData: UpgradeSubscriptionData = {
 		options: {
-			businessUse: stream(prices.business),
+			businessUse: stream(!isPersonalPlanAvailable(acceptedPlans) ? true : prices.business),
 			paymentInterval: stream(asPaymentInterval(accountingInfo.paymentInterval)),
 		},
 		invoiceData: {
@@ -103,7 +117,7 @@ export async function showUpgradeWizard(
 			creditCardData: null,
 		},
 		price: null,
-		type: PlanType.Revolutionary,
+		targetPlanType: SignupFlowUsageTestController.getUsageTestVariant() === 1 ? PlanType.Revolutionary : PlanType.Legend,
 		nextYearPrice: null,
 		accountingInfo: accountingInfo,
 		customer: customer,
@@ -111,22 +125,23 @@ export async function showUpgradeWizard(
 		registrationDataId: null,
 		priceInfoTextId: priceDataProvider.getPriceInfoMessage(),
 		upgradeType: UpgradeType.Initial,
-		// Free used to be always selected here for current plan, but resulted in it displaying "free" as current plan for legacy users
-		currentPlan: logins.getUserController().isFreeAccount() ? PlanType.Free : null,
+		currentPlan: await logins.getUserController().getPlanType(),
 		subscriptionParameters: null,
 		planPrices: priceDataProvider,
 		featureListProvider: featureListProvider,
-		referralCode: null,
+		referralData: null,
 		multipleUsersAllowed: false,
 		acceptedPlans,
-		msg: msg != null ? msg : null,
+		msg: msg ?? null,
 		firstMonthForFreeOfferActive: prices.firstMonthForFreeForYearlyPlan,
+		isCalledBySatisfactionDialog,
 	}
 
+	let { pageClass: planPageClass, attrs: planPageAttrs } = initPlansPages(upgradeData)
 	const wizardPages = [
-		wizardPageWrapper(UpgradeSubscriptionPage, new UpgradeSubscriptionPageAttrs(upgradeData)),
+		wizardPageWrapper(planPageClass, planPageAttrs),
 		wizardPageWrapper(InvoiceAndPaymentDataPage, new InvoiceAndPaymentDataPageAttrs(upgradeData)),
-		wizardPageWrapper(UpgradeConfirmSubscriptionPage, new InvoiceAndPaymentDataPageAttrs(upgradeData)),
+		wizardPageWrapper(UpgradeConfirmSubscriptionPage, new UpgradeConfirmSubscriptionPageAttrs(upgradeData)),
 	]
 	if (isIOSApp()) {
 		wizardPages.splice(1, 1) // do not show this page on AppStore payment since we are only able to show this single payment method on iOS
@@ -154,7 +169,7 @@ export function getPlanSelectorTest() {
 export async function loadSignupWizard(
 	subscriptionParameters: SubscriptionParameters | null,
 	registrationDataId: string | null,
-	referralCode: string | null,
+	referralData: null | ReferralData,
 	acceptedPlans: readonly AvailablePlanType[] = AvailablePlans,
 ): Promise<void> {
 	const usageTestModel = locator.usageTestModel
@@ -162,7 +177,7 @@ export async function loadSignupWizard(
 	usageTestModel.setStorageBehavior(StorageBehavior.Ephemeral)
 	locator.usageTestController.setTests(await usageTestModel.loadActiveUsageTests())
 
-	const priceDataProvider = await PriceAndConfigProvider.getInitializedInstance(registrationDataId, locator.serviceExecutor, referralCode)
+	const priceDataProvider = await PriceAndConfigProvider.getInitializedInstance(registrationDataId, locator.serviceExecutor, referralData?.code ?? null)
 	const prices = priceDataProvider.getRawPricingData()
 	const domainConfig = locator.domainConfigProvider().getCurrentDomainConfig()
 	const featureListProvider = await FeatureListProvider.getInitializedInstance(domainConfig)
@@ -201,7 +216,7 @@ export async function loadSignupWizard(
 		},
 		price: null,
 		nextYearPrice: null,
-		type: PlanType.Free,
+		targetPlanType: PlanType.Free,
 		accountingInfo: null,
 		customer: null,
 		newAccountData: null,
@@ -212,22 +227,24 @@ export async function loadSignupWizard(
 		currentPlan: null,
 		subscriptionParameters,
 		featureListProvider,
-		referralCode,
+		referralData,
 		multipleUsersAllowed: false,
 		acceptedPlans,
 		msg: message,
 		firstMonthForFreeOfferActive: prices.firstMonthForFreeForYearlyPlan,
+		isCalledBySatisfactionDialog: false,
 	}
 
 	const invoiceAttrs = new InvoiceAndPaymentDataPageAttrs(signupData)
 	const confirmSubscriptionAttrs = new UpgradeConfirmSubscriptionPageAttrs(signupData)
 	const plansPage = initPlansPages(signupData)
+	const loginViewModelFactory = await locator.loginViewModelFactory()
 	const wizardPages = [
 		wizardPageWrapper(plansPage.pageClass, plansPage.attrs),
 		wizardPageWrapper(SignupPage, new SignupPageAttrs(signupData)),
 		wizardPageWrapper(InvoiceAndPaymentDataPage, invoiceAttrs), // this page will login the user after signing up with newaccount data
 		wizardPageWrapper(UpgradeConfirmSubscriptionPage, confirmSubscriptionAttrs), // this page will login the user if they are not login for iOS payment through AppStore
-		wizardPageWrapper(UpgradeCongratulationsPage, new UpgradeCongratulationsPageAttrs(signupData)),
+		wizardPageWrapper(UpgradeCongratulationsPage, new UpgradeCongratulationsPageAttrs(signupData, loginViewModelFactory)),
 	]
 
 	if (isIOSApp()) {
@@ -241,17 +258,13 @@ export async function loadSignupWizard(
 			if (locator.logins.isUserLoggedIn()) {
 				// this ensures that all created sessions during signup process are closed
 				// either by clicking on `cancel`, closing the window, or confirm on the UpgradeCongratulationsPage
-				await locator.logins.logout(false)
+				await locator.logins.logout(true)
 			}
 
+			// ensure that we reload the client in order to reset any state of the client that has been set when creating a session during signup.
 			if (signupData.newAccountData) {
-				m.route.set("/login", {
-					noAutoLogin: true,
-					loginWith: signupData.newAccountData.mailAddress,
-				})
-			} else {
-				m.route.set("/login", {
-					noAutoLogin: true,
+				await windowFacade.reload({
+					noAutoLogin: false,
 				})
 			}
 		},
@@ -259,41 +272,19 @@ export async function loadSignupWizard(
 	})
 
 	// for signup specifically, we only want the invoice and payment page as well as the confirmation page to show up if signing up for a paid account (and the user did not go back to the first page!)
-	invoiceAttrs.setEnabledFunction(() => signupData.type !== PlanType.Free && wizardBuilder.attrs.currentPage !== wizardPages[0])
-	confirmSubscriptionAttrs.setEnabledFunction(() => signupData.type !== PlanType.Free && wizardBuilder.attrs.currentPage !== wizardPages[0])
+	invoiceAttrs.setEnabledFunction(() => signupData.targetPlanType !== PlanType.Free && wizardBuilder.attrs.currentPage !== wizardPages[0])
+	confirmSubscriptionAttrs.setEnabledFunction(() => signupData.targetPlanType !== PlanType.Free && wizardBuilder.attrs.currentPage !== wizardPages[0])
 
 	wizardBuilder.dialog.show()
 }
 
 function initPlansPages(signupData: UpgradeSubscriptionData): {
-	pageClass: Class<UpgradeSubscriptionPage> | Class<VariantBSubscriptionPage> | Class<VariantCSubscriptionPage>
-	attrs: UpgradeSubscriptionPageAttrs | VariantBSubscriptionPageAttrs | VariantCSubscriptionPageAttrs
+	pageClass: Class<SubscriptionPage>
+	attrs: SubscriptionPageAttrs
 } {
-	const pricingData = signupData.planPrices.getRawPricingData()
-	const firstYearDiscount = Number(pricingData.legendaryPrices.firstYearDiscount)
-	const bonusMonth = Number(pricingData.bonusMonthsForYearlyPlan)
-	const hasDiscount =
-		pricingData.legendaryPrices.monthlyPrice !== pricingData.legendaryPrices.monthlyReferencePrice ||
-		pricingData.revolutionaryPrices.monthlyPrice !== pricingData.revolutionaryPrices.monthlyReferencePrice
-	const hasMessage = !!pricingData.messageTextId
-
-	// Any type of discounts other than global first year discount use old subscription page.
-	if (!pricingData.hasGlobalFirstYearDiscount && (firstYearDiscount !== 0 || bonusMonth !== 0 || hasDiscount || hasMessage)) {
-		SignupFlowUsageTestController.invalidateUsageTest()
-		return { pageClass: UpgradeSubscriptionPage, attrs: new UpgradeSubscriptionPageAttrs(signupData) }
-	}
-	SignupFlowUsageTestController.initSignupFlowUsageTest()
-
-	switch (SignupFlowUsageTestController.getUsageTestVariant()) {
-		case 1:
-			return { pageClass: UpgradeSubscriptionPage, attrs: new UpgradeSubscriptionPageAttrs(signupData) }
-		case 2:
-			return { pageClass: VariantBSubscriptionPage, attrs: new VariantBSubscriptionPageAttrs(signupData) }
-		case 3:
-			return { pageClass: VariantCSubscriptionPage, attrs: new VariantCSubscriptionPageAttrs(signupData) }
-		default:
-			SignupFlowUsageTestController.invalidateUsageTest()
-			console.error("Received an unexpected usage test variant: ", SignupFlowUsageTestController.getUsageTestVariant())
-			return { pageClass: UpgradeSubscriptionPage, attrs: new UpgradeSubscriptionPageAttrs(signupData) }
-	}
+	let referralConversion: ReferralType = "not_referred"
+	if (signupData.referralData && signupData.referralData.isCalledBySatisfactionDialog) referralConversion = "satisfactiondialog_referral"
+	else if (signupData.referralData && !signupData.referralData.isCalledBySatisfactionDialog) referralConversion = "organic_referral"
+	SignupFlowUsageTestController.initSignupFlowUsageTest(referralConversion)
+	return { pageClass: SubscriptionPage, attrs: new SubscriptionPageAttrs(signupData) }
 }

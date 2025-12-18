@@ -24,13 +24,14 @@ includeArch() {
     fi
 }
 
-createFolderStructure() {
-    if [ -d "${SRC_ROOT}/target/combined" ]; then
-        rm -r "${SRC_ROOT}/target/combined"
-    fi
+ARCHS=( "$@" )
 
-    mkdir "${SRC_ROOT}/target/combined/"
-    mkdir "${SRC_ROOT}/target/combined/${RELFLAG}"
+RUST_TRIPLES=$(bash "$SRC_ROOT/tuta-sdk/ios/build-scripts/rust-triple.sh" $IS_SIMULATOR ${ARCHS[@]})
+COMBINED_DIR=$(tr '\n' '_' <<<"$RUST_TRIPLES")
+
+createFolderStructure() {
+    mkdir -p "${SRC_ROOT}/target/${COMBINED_DIR}/"
+    mkdir -p "${SRC_ROOT}/target/${COMBINED_DIR}/${RELFLAG}"
 
     if [ -d "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src" ]; then
         rm -r "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src"
@@ -42,18 +43,32 @@ createFolderStructure() {
 }
 
 generateLibrary() {
-    lipo -create $ARCH_LIST -output "${SRC_ROOT}/target/combined/${RELFLAG}/libtutasdk.a"
+    for arch in $ARCH_LIST; do
+      if [ $arch -nt "${SRC_ROOT}/target/${COMBINED_DIR}/${RELFLAG}/libtutasdk.a" ]; then
+        echo "$arch is newer!"
+        echo $(date -r $arch)
+        echo $(date -r "${SRC_ROOT}/target/${COMBINED_DIR}/${RELFLAG}/libtutasdk.a" || echo "output of lipo doesn't exist")
+        lipo -create $ARCH_LIST -output "${SRC_ROOT}/target/${COMBINED_DIR}/${RELFLAG}/libtutasdk.a"
+        break
+      fi
+    done
 
-    cp "${SRC_ROOT}/target/combined/${RELFLAG}/libtutasdk.a" "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src/tutasdk.a"
+    cp -p "${SRC_ROOT}/target/${COMBINED_DIR}/${RELFLAG}/libtutasdk.a" "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src/tutasdk.a"
 
-    mv $SRC_ROOT/bindings/*.h "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src/headers/"
-    mv $SRC_ROOT/bindings/*.modulemap "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src/headers/"
-    mv $SRC_ROOT/bindings/*.swift "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src/Sources/"
+    cp -p $SRC_ROOT/bindings/*.h "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src/headers/"
+    cp -p $SRC_ROOT/bindings/*.modulemap "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src/headers/"
+    cp -p $SRC_ROOT/bindings/*.swift "${SRC_ROOT}/tuta-sdk/ios/tutasdk/generated-src/Sources/"
+}
+
+genSwiftIfNeeded() {
+  if [ "${SRC_ROOT}/target/$1/${RELFLAG}/libtutasdk.dylib" -nt "$SRC_ROOT/bindings/tutasdk.swift" ]; then
+    cargo run --package uniffi-bindgen -- generate --library "${SRC_ROOT}/target/$1/${RELFLAG}/libtutasdk.dylib" --out-dir "$SRC_ROOT/bindings" --language=swift
+  else
+    echo "File $SRC_ROOT/bindings/tutasdk.swift is up to date, no need to rengenerate"
+  fi
 }
 
 cd $SRC_ROOT
-
-ARCHS=( "$@" )
 
 echo "ARCHS: $ARCHS"
 
@@ -66,18 +81,18 @@ for arch in $ARCHS; do
       fi
 
       # Intel iOS simulator
-    cargo run --package uniffi-bindgen -- generate --library "${SRC_ROOT}/target/x86_64-apple-ios/${RELFLAG}/libtutasdk.dylib" --out-dir "$SRC_ROOT/bindings" --language=swift
+    genSwiftIfNeeded x86_64-apple-ios
     includeArch "${SRC_ROOT}/target/x86_64-apple-ios/${RELFLAG}/libtutasdk.a";
       ;;
 
     arm64)
       if [ $IS_SIMULATOR -eq 0 ]; then
         # Hardware iOS targets
-        cargo run --package uniffi-bindgen -- generate --library "${SRC_ROOT}/target/aarch64-apple-ios/${RELFLAG}/libtutasdk.dylib" --out-dir "$SRC_ROOT/bindings" --language=swift
+        genSwiftIfNeeded aarch64-apple-ios
         includeArch "${SRC_ROOT}/target/aarch64-apple-ios/${RELFLAG}/libtutasdk.a";
       else
         # M1 iOS simulator
-        cargo run --package uniffi-bindgen -- generate --library "${SRC_ROOT}/target/aarch64-apple-ios-sim/${RELFLAG}/libtutasdk.dylib" --out-dir "$SRC_ROOT/bindings" --language=swift
+        genSwiftIfNeeded aarch64-apple-ios-sim
         includeArch "${SRC_ROOT}/target/aarch64-apple-ios-sim/${RELFLAG}/libtutasdk.a";
       fi
   esac

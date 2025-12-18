@@ -7,9 +7,9 @@ import m from "mithril"
 import { Checkbox } from "../gui/base/Checkbox.js"
 import { Button, ButtonType } from "../gui/base/Button.js"
 import { ExpanderButton, ExpanderPanel } from "../gui/base/Expander"
-import { downcast, ErrorInfo, errorToString, neverNull, typedKeys, uint8ArrayToString } from "@tutao/tutanota-utils"
+import { downcast, ErrorInfo, errorToString, neverNull, newPromise, typedKeys, uint8ArrayToString } from "@tutao/tutanota-utils"
 import { locator } from "../api/main/CommonLocator"
-import { AccountType, ConversationType, Keys, KeyVerificationState, MailMethod } from "../api/common/TutanotaConstants"
+import { AccountType, ConversationType, Keys, MailMethod, PresentableKeyVerificationState } from "../api/common/TutanotaConstants"
 import { copyToClipboard } from "./ClipboardUtils"
 import { px } from "../gui/size"
 import { isApp, isDesktop, Mode } from "../api/common/Env"
@@ -23,8 +23,6 @@ import { ErrorReportClientType } from "./ClientConstants.js"
 import { client } from "./ClientDetector.js"
 import { BubbleButton } from "../gui/base/buttons/BubbleButton.js"
 import { getTimeZone } from "../calendar/date/CalendarUtils.js"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 type FeedbackContent = {
 	message: string
@@ -167,7 +165,7 @@ function showReportDialog(
 					{
 						expanded: detailsExpanded,
 					},
-					m(".selectable", [m(".selectable", subject), message.split("\n").map((l) => (l.trim() === "" ? m(".pb", "") : m("", l)))]),
+					m(".selectable", [m(".selectable", subject), message.split("\n").map((l) => (l.trim() === "" ? m(".pb-16", "") : m("", l)))]),
 				),
 			]
 		},
@@ -209,7 +207,7 @@ async function showLogDialog(heading: string, text: string) {
 			middle: lang.makeTranslation("heading", heading),
 		},
 		{
-			view: () => m(".white-space-pre.pt.pb.selectable", text),
+			view: () => m(".white-space-pre.pt-16.pb-16.selectable", text),
 		},
 	)
 		.addShortcut({
@@ -228,7 +226,7 @@ export async function showErrorDialogNotLoggedIn(e: ErrorInfo): Promise<void> {
 
 	const info = () => [
 		m(
-			".flex.col.items-end.plr",
+			".flex.col.items-end.plr-12",
 			{
 				style: {
 					marginTop: "-16px",
@@ -236,7 +234,7 @@ export async function showErrorDialogNotLoggedIn(e: ErrorInfo): Promise<void> {
 			},
 			[
 				m(
-					"div.mr-negative-xs",
+					"div.mr-negative-4",
 					m(ExpanderButton, {
 						expanded: expanded(),
 						onExpandedChange: expanded,
@@ -252,7 +250,7 @@ export async function showErrorDialogNotLoggedIn(e: ErrorInfo): Promise<void> {
 			},
 			[
 				m(
-					".flex-end.plr",
+					".flex-end.plr-12",
 					m(Button, {
 						label: "copy_action",
 						click: () => copyToClipboard(message),
@@ -260,7 +258,7 @@ export async function showErrorDialogNotLoggedIn(e: ErrorInfo): Promise<void> {
 					}),
 				),
 				m(
-					".plr.selectable.pb.scroll.text-pre",
+					".plr-12.selectable.pb-16.scroll.text-pre",
 					{
 						style: {
 							height: px(200),
@@ -309,7 +307,7 @@ export async function sendFeedbackMail(content: FeedbackContent): Promise<void> 
 				address: mailAddress,
 				type: RecipientType.INTERNAL,
 				contact: null,
-				verificationState: KeyVerificationState.NO_ENTRY,
+				verificationState: PresentableKeyVerificationState.NONE,
 			},
 		],
 		"de",

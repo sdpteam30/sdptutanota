@@ -1,12 +1,12 @@
-import o from "../../../../packages/otest/dist/otest"
+import o from "@tutao/otest"
 import { MailListModel } from "../../../../src/mail-app/mail/model/MailListModel"
 import {
 	createMailSetEntry,
 	Mail,
 	MailboxGroupRootTypeRef,
 	MailBoxTypeRef,
-	MailFolder,
-	MailFolderTypeRef,
+	MailSet,
+	MailSetTypeRef,
 	MailSetEntry,
 	MailSetEntryTypeRef,
 	MailTypeRef,
@@ -15,7 +15,6 @@ import { matchers, object, verify, when } from "testdouble"
 import { ConversationPrefProvider } from "../../../../src/mail-app/mail/view/ConversationViewModel"
 import { EntityClient } from "../../../../src/common/api/common/EntityClient"
 import { MailModel } from "../../../../src/mail-app/mail/model/MailModel"
-import { InboxRuleHandler } from "../../../../src/mail-app/mail/model/InboxRuleHandler"
 import { ExposedCacheStorage } from "../../../../src/common/api/worker/rest/DefaultEntityRestCache"
 import { MailSetKind, OperationType } from "../../../../src/common/api/common/TutanotaConstants"
 import {
@@ -31,7 +30,6 @@ import {
 } from "../../../../src/common/api/common/utils/EntityUtils"
 import { PageSize } from "../../../../src/common/gui/base/ListUtils"
 import { createTestEntity } from "../../TestUtils"
-import { tutaDunkel, tutaRed } from "../../../../src/common/gui/builtinThemes"
 import { EntityUpdateData, PrefetchStatus } from "../../../../src/common/api/common/utils/EntityUpdateUtils"
 import { MailboxDetail } from "../../../../src/common/mailFunctionality/MailboxModel"
 import { GroupInfoTypeRef, GroupTypeRef } from "../../../../src/common/api/entities/sys/TypeRefs"
@@ -39,6 +37,10 @@ import { ConnectionError } from "../../../../src/common/api/common/error/RestErr
 import { clamp, pad } from "@tutao/tutanota-utils"
 import { LoadedMail } from "../../../../src/mail-app/mail/model/MailSetListModel"
 import { getMailFilterForType, MailFilterType } from "../../../../src/mail-app/mail/view/MailViewerUtils"
+import { theme } from "../../../../src/common/gui/theme.js"
+import { ProcessInboxHandler } from "../../../../src/mail-app/mail/model/ProcessInboxHandler"
+import { FolderSystem } from "../../../../src/common/api/common/mail/FolderSystem"
+import { WebsocketConnectivityModel } from "../../../../src/common/misc/WebsocketConnectivityModel"
 
 o.spec("MailListModel", () => {
 	let model: MailListModel
@@ -57,32 +59,33 @@ o.spec("MailListModel", () => {
 	const mailSetEntriesListId = "entries"
 	const _ownerGroup = "me"
 
-	const labels: MailFolder[] = [
-		createTestEntity(MailFolderTypeRef, {
-			_id: ["mailFolderList", "tutaRed"],
-			color: tutaRed,
+	const labels: MailSet[] = [
+		createTestEntity(MailSetTypeRef, {
+			_id: ["mailFolderList", "tutaPrimary"],
+			color: theme.primary,
 			folderType: MailSetKind.LABEL,
-			name: "Tuta Red Label",
+			name: "Tuta Primary Label",
 			parentFolder: null,
 		}),
-		createTestEntity(MailFolderTypeRef, {
-			_id: ["mailFolderList", "tutaDunkel"],
-			color: tutaDunkel,
+		createTestEntity(MailSetTypeRef, {
+			_id: ["mailFolderList", "tutaSecondary"],
+			color: theme.secondary,
 			folderType: MailSetKind.LABEL,
-			name: "Tuta Dunkel Label",
+			name: "Tuta Secondary Label",
 			parentFolder: null,
 		}),
 	]
 
-	let mailSet: MailFolder
+	let mailSet: MailSet
 	let conversationPrefProvider: ConversationPrefProvider
 	let entityClient: EntityClient
 	let mailModel: MailModel
-	let inboxRuleHandler: InboxRuleHandler
+	let processInboxHandler: ProcessInboxHandler
 	let cacheStorage: ExposedCacheStorage
+	let connectivityModel: WebsocketConnectivityModel
 
 	o.beforeEach(() => {
-		mailSet = createTestEntity(MailFolderTypeRef, {
+		mailSet = createTestEntity(MailSetTypeRef, {
 			_id: ["mailFolderList", "mailFolderId"],
 			folderType: MailSetKind.CUSTOM,
 			name: "My Folder",
@@ -93,10 +96,14 @@ o.spec("MailListModel", () => {
 		conversationPrefProvider = object()
 		entityClient = object()
 		mailModel = object()
-		inboxRuleHandler = object()
+		processInboxHandler = object()
 		cacheStorage = object()
-		model = new MailListModel(mailSet, conversationPrefProvider, entityClient, mailModel, inboxRuleHandler, cacheStorage)
+		connectivityModel = object()
+		when(connectivityModel.isLeader()).thenReturn(true)
+		model = new MailListModel(mailSet, conversationPrefProvider, entityClient, mailModel, processInboxHandler, cacheStorage, connectivityModel)
 		when(mailModel.getMailboxDetailsForMailFolder(mailSet)).thenResolve(mailboxDetail)
+		const folderSystem: FolderSystem = object()
+		when(mailModel.getFolderSystemByGroupId(matchers.anything())).thenReturn(folderSystem)
 	})
 
 	// Care has to be ensured for generating mail set entry IDs as we depend on real mail set ID decoding, thus we have
@@ -116,7 +123,7 @@ o.spec("MailListModel", () => {
 
 	async function setUpTestData(
 		count: number,
-		initialLabels: MailFolder[],
+		initialLabels: MailSet[],
 		offline: boolean,
 		mailTemplate: (idx: number) => Mail = (idx) =>
 			createTestEntity(MailTypeRef, {
@@ -144,7 +151,7 @@ o.spec("MailListModel", () => {
 		}
 
 		when(mailModel.getLabelsForMail(matchers.anything())).thenDo((mail: Mail) => {
-			const sets: MailFolder[] = []
+			const sets: MailSet[] = []
 			for (const set of mail.sets) {
 				const setToAdd = labels.find((label) => isSameId(label._id, set))
 				if (setToAdd) {
@@ -204,7 +211,8 @@ o.spec("MailListModel", () => {
 		verify(mailModel.getMailboxDetailsForMailFolder(matchers.anything()), {
 			times: 0,
 		})
-		verify(inboxRuleHandler.findAndApplyMatchingRule(mailboxDetail, matchers.anything(), true, false), {
+
+		verify(processInboxHandler.handleIncomingMail(matchers.anything(), matchers.anything(), matchers.anything(), matchers.anything(), true), {
 			times: 0,
 		})
 	})
@@ -222,7 +230,7 @@ o.spec("MailListModel", () => {
 		verify(mailModel.getMailboxDetailsForMailFolder(matchers.anything()), {
 			times: 0,
 		})
-		verify(inboxRuleHandler.findAndApplyMatchingRule(mailboxDetail, matchers.anything(), true, false), {
+		verify(processInboxHandler.handleIncomingMail(matchers.anything(), matchers.anything(), matchers.anything(), matchers.anything(), true), {
 			times: 0,
 		})
 	})
@@ -230,15 +238,25 @@ o.spec("MailListModel", () => {
 	o.test("applies inbox rules if inbox", async () => {
 		mailSet.folderType = MailSetKind.INBOX
 
-		// make one item have a rule
 		when(
-			inboxRuleHandler.findAndApplyMatchingRule(
-				mailboxDetail,
+			processInboxHandler.handleIncomingMail(
 				matchers.argThat((mail: Mail) => isSameId(mail._id, makeMailId(25))),
+				matchers.anything(),
+				matchers.anything(),
+				matchers.anything(),
 				true,
-				false,
 			),
-		).thenResolve({})
+		).thenResolve({ folderType: MailSetKind.SPAM })
+
+		when(
+			processInboxHandler.handleIncomingMail(
+				matchers.argThat((mail: Mail) => !isSameId(mail._id, makeMailId(25))),
+				matchers.anything(),
+				matchers.anything(),
+				matchers.anything(),
+				true,
+			),
+		).thenResolve({ folderType: MailSetKind.INBOX })
 
 		await setUpTestData(PageSize, labels, false)
 		await model.loadInitial()
@@ -252,7 +270,8 @@ o.spec("MailListModel", () => {
 		verify(mailModel.getMailboxDetailsForMailFolder(matchers.anything()), {
 			times: 1,
 		})
-		verify(inboxRuleHandler.findAndApplyMatchingRule(mailboxDetail, matchers.anything(), true, false), {
+
+		verify(processInboxHandler.handleIncomingMail(matchers.anything(), matchers.anything(), matchers.anything(), matchers.anything(), true), {
 			times: 100,
 		})
 	})
@@ -351,8 +370,8 @@ o.spec("MailListModel", () => {
 			o(model.getLabelsForMail(someMail.mail)[1]).notDeepEquals(labels[1])
 
 			const entityUpdateData: EntityUpdateData = {
-				typeRef: MailFolderTypeRef,
-				instanceListId: getListId(labels[1]),
+				typeRef: MailSetTypeRef,
+				instanceListId: getListId(labels[1]) as NonEmptyString,
 				instanceId: getElementId(labels[1]),
 				operation: OperationType.DELETE,
 				...noPatchesAndInstance,
@@ -373,8 +392,8 @@ o.spec("MailListModel", () => {
 			await model.loadInitial()
 
 			const entityUpdateData: EntityUpdateData = {
-				typeRef: MailFolderTypeRef,
-				instanceListId: getListId(labels[1]),
+				typeRef: MailSetTypeRef,
+				instanceListId: getListId(labels[1]) as NonEmptyString,
 				instanceId: getElementId(labels[1]),
 				operation: OperationType.DELETE,
 				...noPatchesAndInstance,
@@ -394,7 +413,7 @@ o.spec("MailListModel", () => {
 
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailSetEntryTypeRef,
-				instanceListId: listIdPart(someMail.mailSetEntryId),
+				instanceListId: listIdPart(someMail.mailSetEntryId) as NonEmptyString,
 				instanceId: elementIdPart(someMail.mailSetEntryId),
 				operation: OperationType.DELETE,
 				...noPatchesAndInstance,
@@ -415,7 +434,7 @@ o.spec("MailListModel", () => {
 			mail: Mail
 			mailSetEntry: MailSetEntry
 			entityUpdateData: EntityUpdateData
-			mailLabels: MailFolder[]
+			mailLabels: MailSet[]
 		} {
 			const newMail = createTestEntity(MailTypeRef, {
 				_id: ["new mail!!!", "the mail!!!"],
@@ -429,7 +448,7 @@ o.spec("MailListModel", () => {
 
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailSetEntryTypeRef,
-				instanceListId: getListId(newEntry),
+				instanceListId: getListId(newEntry) as NonEmptyString,
 				instanceId: getElementId(newEntry),
 				operation: OperationType.CREATE,
 				...noPatchesAndInstance,
@@ -485,7 +504,7 @@ o.spec("MailListModel", () => {
 
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailTypeRef,
-				instanceListId: getListId(mail),
+				instanceListId: getListId(mail) as NonEmptyString,
 				instanceId: getElementId(mail),
 				operation: OperationType.UPDATE,
 				...noPatchesAndInstance,
@@ -505,7 +524,7 @@ o.spec("MailListModel", () => {
 			const mail = { ...model.items[2] }
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailTypeRef,
-				instanceListId: getListId(mail),
+				instanceListId: getListId(mail) as NonEmptyString,
 				instanceId: getElementId(mail),
 				operation: OperationType.UPDATE,
 				...noPatchesAndInstance,

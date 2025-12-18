@@ -1,8 +1,7 @@
 import type { LoginController } from "../api/main/LoginController"
 import { Dialog } from "../gui/base/Dialog"
 import { generatedIdToTimestamp } from "../api/common/utils/EntityUtils"
-import type { MaybeTranslation } from "./LanguageViewModel"
-import { lang } from "./LanguageViewModel"
+import { lang, LanguageCode, languageCodeToTag, LanguageNames, MaybeTranslation } from "./LanguageViewModel"
 import {
 	AccessBlockedError,
 	AccessDeactivatedError,
@@ -22,8 +21,6 @@ import {
 	getCustomerApprovalStatus,
 	KdfType,
 	NewBusinessPlans,
-	NewPaidPlans,
-	NewPersonalPlans,
 	SubscriptionType,
 } from "../api/common/TutanotaConstants"
 import type { ResetAction } from "../login/recover/RecoverLoginDialog"
@@ -31,12 +28,20 @@ import { showProgressDialog } from "../gui/dialogs/ProgressDialog"
 import { UserError } from "../api/main/UserError"
 import { noOp, ofClass } from "@tutao/tutanota-utils"
 import { showUserError } from "./ErrorHandlerImpl"
-import type { SubscriptionParameters } from "../subscription/UpgradeSubscriptionWizard"
+import type { ReferralData, SubscriptionParameters } from "../subscription/UpgradeSubscriptionWizard"
 import { locator } from "../api/main/CommonLocator"
 import { CredentialAuthenticationError } from "../api/common/error/CredentialAuthenticationError"
 import { Params } from "mithril"
 import { LoginState } from "../login/LoginViewModel.js"
 import { showApprovalNeededMessageDialog } from "./ApprovalNeededMessageDialog.js"
+import { Customer } from "../api/entities/sys/TypeRefs"
+import { deviceConfig } from "./DeviceConfig"
+
+function getAccountAgeInMs(customer: Customer) {
+	return new Date().getTime() - generatedIdToTimestamp(customer._id)
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
 /**
  * Shows warnings if the invoices are not paid or the registration is not approved yet.
@@ -64,7 +69,7 @@ export function checkApprovalStatus(logins: LoginController, includeInvoiceNotPa
 			) {
 				return showApprovalNeededMessageDialog().then(() => false)
 			} else if (status === ApprovalStatus.DELAYED_AND_INITIALLY_ACCESSED) {
-				if (new Date().getTime() - generatedIdToTimestamp(customer._id) > 2 * 24 * 60 * 60 * 1000) {
+				if (getAccountAgeInMs(customer) > ONE_DAY_MS) {
 					return Dialog.message("requestApproval_msg").then(() => true)
 				} else {
 					return showApprovalNeededMessageDialog().then(() => false)
@@ -95,7 +100,7 @@ export function checkApprovalStatus(logins: LoginController, includeInvoiceNotPa
 				const message = lang.get("upgradeNeeded_msg")
 				return Dialog.upgradeReminder(lang.get("upgradeReminderTitle_msg"), message).then((confirmed) => {
 					if (confirmed) {
-						import("../subscription/UpgradeSubscriptionWizard").then((m) => m.showUpgradeWizard(logins))
+						import("../subscription/UpgradeSubscriptionWizard").then((m) => m.showUpgradeWizard({ logins }))
 					}
 
 					return false
@@ -178,18 +183,26 @@ export function getLoginErrorStateAndMessage(error: Error): { errorMessage: Mayb
 }
 
 export async function showSignupDialog(urlParams: Params) {
-	const { canSubscribeToPlan } = await import("../subscription/SubscriptionUtils")
+	const { canSubscribeToPlan } = await import("../subscription/utils/SubscriptionUtils")
 
 	const subscriptionParams = getSubscriptionParameters(urlParams)
 	const registrationDataId = getRegistrationDataIdFromParams(urlParams)
-	const referralCode = getReferralCodeFromParams(urlParams)
+	const referralData = getReferralCodeFromParams(urlParams)
 	const availablePlans = getAvailablePlansFromSubscriptionParameters(subscriptionParams).filter(canSubscribeToPlan)
+	// We assume that if a user comes from our website for signup, the language selected on the website should take precedence over the browser language.
+	// As we initialize the language with the browser's one in the app.ts already, we try to overwrite it by the website language here.
+	const websiteLang = getWebsiteLangFromParams(urlParams)
+	if (websiteLang) {
+		// need to set the language in LanguageViewModel *and* deviceConfig, to keep app language and language dropdown view in sync
+		lang.setLanguage(websiteLang)
+		deviceConfig.setLanguage(websiteLang.code)
+	}
 
 	await showProgressDialog(
 		"loading_msg",
 		locator.worker.initialized.then(async () => {
 			const { loadSignupWizard } = await import("../subscription/UpgradeSubscriptionWizard")
-			await loadSignupWizard(subscriptionParams, registrationDataId, referralCode, availablePlans)
+			await loadSignupWizard(subscriptionParams, registrationDataId, referralData, availablePlans)
 		}),
 	).catch(
 		ofClass(UserError, async (e) => {
@@ -201,6 +214,13 @@ export async function showSignupDialog(urlParams: Params) {
 	)
 }
 
+function getWebsiteLangFromParams(urlParams: Params): { code: LanguageCode; languageTag: string } | null {
+	if (typeof urlParams.websiteLang !== "string") return null
+	const code = urlParams.websiteLang
+	if (!Object.keys(LanguageNames).includes(code)) return null
+	return { code, languageTag: languageCodeToTag(code) }
+}
+
 function getAvailablePlansFromSubscriptionParameters(params: SubscriptionParameters | null): readonly AvailablePlanType[] {
 	// Default to all available plans if the params do not have the needed information
 	if (params == null || params.type == null) return AvailablePlans
@@ -208,12 +228,13 @@ function getAvailablePlansFromSubscriptionParameters(params: SubscriptionParamet
 	try {
 		const type = stringToSubscriptionType(params.type)
 		switch (type) {
+			// We don't want to display private plans as these are not permitted for business purposes
 			case SubscriptionType.Business:
 				return NewBusinessPlans
+			// But we can provide a business plan for private customers who want to use the larger plans
 			case SubscriptionType.Personal:
-				return NewPersonalPlans
 			case SubscriptionType.PaidPersonal:
-				return NewPaidPlans.filter((paidPlan) => NewPersonalPlans.includes(paidPlan))
+				return AvailablePlans
 		}
 	} catch (e) {
 		// If params.type is not a valid subscription type, return the default value
@@ -249,11 +270,9 @@ function getSubscriptionParameters(hashParams: Params): SubscriptionParameters |
 	}
 }
 
-export function getReferralCodeFromParams(urlParams: Params): string | null {
-	if (typeof urlParams.ref === "string") {
-		return urlParams.ref
-	}
-	return null
+export function getReferralCodeFromParams(urlParams: Params): ReferralData | null {
+	if (typeof urlParams.ref !== "string") return null
+	return { code: urlParams.ref, isCalledBySatisfactionDialog: urlParams.s === "1" }
 }
 
 export function getRegistrationDataIdFromParams(hashParams: Params): string | null {

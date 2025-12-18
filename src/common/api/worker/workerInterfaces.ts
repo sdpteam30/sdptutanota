@@ -31,6 +31,9 @@ import { ContactFacade } from "./facades/lazy/ContactFacade.js"
 import { SyncTracker } from "../main/SyncTracker.js"
 import { KeyVerificationFacade } from "./facades/lazy/KeyVerificationFacade"
 import { ApplicationTypesFacade } from "./facades/ApplicationTypesFacade"
+import { PublicEncryptionKeyProvider } from "./facades/PublicEncryptionKeyProvider"
+import { IdentityKeyCreator } from "./facades/lazy/IdentityKeyCreator"
+import { PublicIdentityKeyProvider } from "./facades/PublicIdentityKeyProvider"
 
 export interface WorkerRandomizer {
 	generateRandomNumber(numBytes: number): Promise<number>
@@ -67,6 +70,8 @@ export interface CommonWorkerInterface {
 	readonly bookingFacade: BookingFacade
 	readonly mailAddressFacade: MailAddressFacade
 	readonly keyVerificationFacade: KeyVerificationFacade
+	readonly publicEncryptionKeyProvider: PublicEncryptionKeyProvider
+	readonly publicIdentityKeyProvider: PublicIdentityKeyProvider
 	readonly blobAccessTokenFacade: BlobAccessTokenFacade
 	readonly blobFacade: BlobFacade
 	readonly userManagementFacade: UserManagementFacade
@@ -82,4 +87,5 @@ export interface CommonWorkerInterface {
 	readonly workerFacade: WorkerFacade
 	readonly contactFacade: ContactFacade
 	readonly applicationTypesFacade: ApplicationTypesFacade
+	readonly identityKeyCreator: IdentityKeyCreator
 }

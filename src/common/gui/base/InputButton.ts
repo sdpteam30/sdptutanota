@@ -58,7 +58,7 @@ export class InputButton implements ClassComponent<InputButtonAttributes> {
 				class: this.resolveContainerClasses(attrs.variant, attrs.classes, attrs.disabled),
 				tabIndex: attrs.tabIndex,
 				style: {
-					borderColor: theme.content_message_bg,
+					borderColor: theme.outline,
 					padding: 0,
 					...attrs.containerStyle,
 				},
@@ -111,7 +111,7 @@ export class InputButton implements ClassComponent<InputButtonAttributes> {
 						onfocus: attrs.onfocus,
 						classes: this.resolveInputClasses(attrs.variant),
 						style: {
-							padding: `${px(size.vpad_small)} 0`,
+							padding: `${px(size.spacing_8)} 0`,
 						},
 						type: TextFieldType.Text,
 					}),
@@ -121,7 +121,7 @@ export class InputButton implements ClassComponent<InputButtonAttributes> {
 					{
 						style: {
 							display: this.isFocused ? "none" : "block",
-							padding: `${px(size.vpad_small)} 0`,
+							padding: `${px(size.spacing_8)} 0`,
 							...attrs.displayStyle,
 						},
 					},

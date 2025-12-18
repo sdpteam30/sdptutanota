@@ -16,6 +16,7 @@ import { domainConfigs } from "./DomainConfigs.js"
 import { visualizer } from "rollup-plugin-visualizer"
 import { rollupWasmLoader } from "@tutao/tuta-wasm-loader"
 import replace from "@rollup/plugin-replace"
+import { copyCryptoPrimitiveCrateIntoWasmDir } from "./cryptoPrimitivesUtils.js"
 
 /**
  * Builds the web app for production.
@@ -26,10 +27,11 @@ import replace from "@rollup/plugin-replace"
  * @param minify Boolean. Set to true to perform minification.
  * @param projectDir Path to the tutanota root directory.
  * @param app App to build, 'mail' for mail app and 'calendar' for calendar app
+ * @param mobileBuild Whether the current build is for the mobile app.
  * @returns Nothing meaningful.
  */
 
-export async function buildWebapp({ version, stage, host, measure, minify, projectDir, app }) {
+export async function buildWebapp({ version, stage, host, measure, minify, projectDir, app, mobileBuild = false }) {
 	const isCalendarApp = app === "calendar"
 	const tsConfig = isCalendarApp ? "tsconfig-calendar-app.json" : "tsconfig.json"
 	const buildDir = isCalendarApp ? "build-calendar-app" : "build"
@@ -43,6 +45,13 @@ export async function buildWebapp({ version, stage, host, measure, minify, proje
 
 	console.log("started cleaning", measure())
 	await fs.emptyDir(buildDir)
+
+	// using native versions for mobile app
+	if (!mobileBuild) {
+		// we know which wasm need to be included in the project, instead of running branches condition on each and every file of the project we do some
+		// transformation AOT for our three files (currently only crypto-primitives but argon2 and liboqs will follow
+		await copyCryptoPrimitiveCrateIntoWasmDir({ wasmOutputDir: resolvedBuildDir })
+	}
 
 	console.log("bundling polyfill", measure())
 	const polyfillBundle = await rollup({
@@ -98,29 +107,20 @@ export async function buildWebapp({ version, stage, host, measure, minify, proje
 				preferBuiltins: true,
 				resolveOnly: [/^@tutao\/.*$/],
 			}),
+			// should also not be included based on mobileApp param but currently the code imports it
 			rollupWasmLoader({
 				webassemblyLibraries: [
 					{
 						name: "liboqs.wasm",
 						command: "make -f Makefile_liboqs build",
 						workingDir: "libs/webassembly/",
-						outputPath: path.join(resolvedBuildDir, "wasm/liboqs.wasm"),
-						fallback: {
-							command: "make -f Makefile_liboqs fallback",
-							workingDir: "libs/webassembly/",
-							outputPath: path.join(resolvedBuildDir, "wasm/liboqs.js"),
-						},
+						outputPath: path.join(resolvedBuildDir, "liboqs.wasm"),
 					},
 					{
 						name: "argon2.wasm",
-						command: "make -f Makefile_argon2 build fallback",
+						command: "make -f Makefile_argon2 build",
 						workingDir: "libs/webassembly/",
-						outputPath: path.join(resolvedBuildDir, "wasm/argon2.wasm"),
-						fallback: {
-							command: "make -f Makefile_argon2 fallback",
-							workingDir: "libs/webassembly/",
-							outputPath: path.join(resolvedBuildDir, "wasm/argon2.js"),
-						},
+						outputPath: path.join(resolvedBuildDir, "argon2.wasm"),
 					},
 				],
 			}),
@@ -184,7 +184,17 @@ import "./${builtWorkerFile}"`,
 		app,
 	)
 	if (stage !== "release") {
-		await createHtml(env.create({ staticUrl: restUrl, version, mode: "App", dist: true, domainConfigs, networkDebugging }), app)
+		await createHtml(
+			env.create({
+				staticUrl: restUrl,
+				version,
+				mode: "App",
+				dist: true,
+				domainConfigs,
+				networkDebugging,
+			}),
+			app,
+		)
 	}
 
 	await bundleServiceWorker(chunks, version, minify, buildDir, tsConfig)
@@ -221,7 +231,7 @@ async function bundleServiceWorker(bundles, version, minify, buildDir, tsConfig)
 			{
 				name: "sw-banner",
 				banner() {
-					return `function filesToCache() { return ${JSON.stringify(filesToCache)} }
+					return `function filesToCache() { return ${JSON.stringify(filesToCache.sort())} }
 					function version() { return "${version}" }
 					function customDomainCacheExclusions() { return ${JSON.stringify(customDomainFileExclusions)} }`
 				},

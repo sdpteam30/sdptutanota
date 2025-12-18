@@ -1,6 +1,6 @@
 import { AccountType, FeatureType, GroupType, LegacyPlans, OperationType, PlanType } from "../common/TutanotaConstants"
 import type { Base64Url } from "@tutao/tutanota-utils"
-import { assertNotNull, downcast, first, mapAndFilterNull, neverNull, ofClass } from "@tutao/tutanota-utils"
+import { assertNotNull, downcast, first, mapAndFilterNull, newPromise, ofClass } from "@tutao/tutanota-utils"
 import { MediaType } from "../common/EntityFunctions"
 import { assertMainOrNode, getApiBaseUrl, isDesktop } from "../common/Env"
 
@@ -45,8 +45,6 @@ import { isCustomizationEnabledForCustomer } from "../common/utils/CustomerUtils
 import { EntityUpdateData, isUpdateForTypeRef } from "../common/utils/EntityUpdateUtils.js"
 import { isGlobalAdmin, isInternalUser } from "../common/utils/UserUtils.js"
 import { CacheMode } from "../worker/rest/EntityRestClient.js"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 assertMainOrNode()
 
@@ -216,13 +214,13 @@ export class UserController {
 
 	async entityEventsReceived(updates: ReadonlyArray<EntityUpdateData>, eventOwnerGroupId: Id): Promise<void> {
 		for (const update of updates) {
-			const { instanceListId, instanceId, operation } = update
+			const { instanceId, operation } = update
 			if (this.isUpdateForLoggedInUserInstance(update, eventOwnerGroupId)) {
 				this.user = await this.entityClient.load(UserTypeRef, this.user._id)
 			} else if (
 				operation === OperationType.UPDATE &&
 				isUpdateForTypeRef(GroupInfoTypeRef, update) &&
-				isSameId(this.userGroupInfo._id, [neverNull(instanceListId), instanceId])
+				isSameId(this.userGroupInfo._id, [update.instanceListId, instanceId])
 			) {
 				this._userGroupInfo = await this.entityClient.load(GroupInfoTypeRef, this._userGroupInfo._id)
 			} else if (isUpdateForTypeRef(TutanotaPropertiesTypeRef, update) && operation === OperationType.UPDATE) {
@@ -395,6 +393,7 @@ export async function initUserController({
 							timeFormat: "0",
 							groupSettings: [],
 							usageDataOptedIn: null,
+							birthdayCalendarColor: null,
 						}),
 					)
 					.then(() => entityClient.load(UserSettingsGroupRootTypeRef, user.userGroup.group)),

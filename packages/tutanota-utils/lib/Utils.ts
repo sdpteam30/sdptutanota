@@ -143,6 +143,17 @@ export function assertNotNull<T>(value: T | null | undefined, message: string = 
 }
 
 /**
+ * throws if the value is not null.
+ * @param value the value to check
+ * @param message optional error message
+ */
+export function assertNull<T>(value: T | null | undefined, message: string = "not null") {
+	if (value != null) {
+		throw new Error("AssertNull failed : " + message)
+	}
+}
+
+/**
  * assertion function that only returns if the argument is non-null
  * (acts as a type guard)
  * @param value the value to check
@@ -233,7 +244,6 @@ export function debounce<F extends (...args: any) => void>(timeout: number, toTh
 		if (timeoutId) {
 			clearTimeout(timeoutId)
 		}
-
 		toInvoke = toThrottle.bind(null, ...args)
 		timeoutId = setTimeout(toInvoke, timeout)
 	})
@@ -275,21 +285,80 @@ export function debounceStart<F extends (...args: any) => void>(timeout: number,
  * amount of time. Unlike {@link debounce}, it will get called after {@param periodMs} even if it
  * is being called repeatedly.
  */
-export function throttle<F extends (...args: any[]) => void>(periodMs: number, toThrottle: F): F {
-	let lastArgs: any[] | null = null
-	return ((...args: any[]) => {
-		if (lastArgs) {
-			return
-		} else {
-			setTimeout(() => {
+export function throttle<F extends (...args: any) => void>(periodMs: number, toThrottle: F): F {
+	let timeoutId: ReturnType<typeof setTimeout> | null | undefined
+	let lastArgs: any[]
+
+	return ((...args: any) => {
+		lastArgs = args
+
+		if (timeoutId == null) {
+			if (timeoutId) clearTimeout(timeoutId)
+			timeoutId = setTimeout(() => {
 				try {
-					toThrottle.apply(null, args)
+					toThrottle.apply(null, lastArgs)
 				} finally {
-					lastArgs = null
+					timeoutId = null
 				}
 			}, periodMs)
 		}
 	}) as F
+}
+
+/**
+ * Returns a throttled function. On the first call it is called immediately. For subsequent calls if the next call
+ * happens after {@param periodMs} it is invoked immediately. For subsequent calls it will schedule the function to
+ * run after {@param periodMs} after the last run of {@param toThrottle}. Only one invocation is scheduled, with the
+ * latest arguments.
+ *
+ * 1--2-34
+ * 1---2---4
+ *
+ * In this case, the first invocation happens immediately. 2 happens shortly before the interval expires
+ * so it is run at the end of the interval. Within the next interval, both 3 and 4 are called so at the end of the
+ * interval only 4 is called.
+ */
+export function throttleStart<F extends (...args: any[]) => Promise<any>>(periodMs: number, toThrottle: F): F {
+	let lastArgs: any[] | null = null
+	let scheduledTimeout: TimeoutID | null = null
+	let scheduledDefer: DeferredObject<ReturnType<F>> | null = null
+	return ((...args: any[]) => {
+		if (scheduledTimeout == null) {
+			const result = toThrottle(...args)
+			scheduledDefer = defer<ReturnType<F>>()
+			scheduledTimeout = setTimeout(() => {
+				scheduledTimeout = null
+				if (lastArgs != null) {
+					toThrottle(...args).then(
+						(result) => scheduledDefer?.resolve(result),
+						(error) => scheduledDefer?.reject(error),
+					)
+				}
+			}, periodMs)
+			return result
+		} else {
+			lastArgs = args
+			return assertNotNull(scheduledDefer).promise
+		}
+	}) as F
+}
+
+/**
+ * Returns an async function that will only be executed once until it has settled. Subsequent calls will return the
+ * original promise if it hasn't yet resolved.
+ *
+ * If the function throws before it can be awaited, it will not be caught.
+ */
+export function singleAsync<T, R>(fn: () => Promise<R>): () => Promise<R> {
+	let promise: Promise<R> | null = null
+	return async () => {
+		if (promise != null) {
+			return promise
+		} else {
+			promise = fn().finally(() => (promise = null))
+			return promise
+		}
+	}
 }
 
 export function randomIntFromInterval(min: number, max: number): number {
@@ -591,21 +660,16 @@ export type Nullable<T> = T | null
 /**
  * Factory method to allow tracing unresolved promises.
  */
-export function newPromise<T>(
-	executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: any) => void) => void,
-	callerArgs: any = "dummy caller",
-) {
-	// @ts-ignore
+export function newPromise<T>(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: any) => void) => void, tag?: string) {
 	const promise = new Promise(executor)
 
 	// only to be enabled for local debugging purposes
-	// traceUnresolvedPromises(promise)
+	// traceUnresolvedPromises(promise, tag)
 
 	return promise
 }
 
-// @ts-ignore
-function traceUnresolvedPromises<T>(promise: Promise<T>, callerArgs: any = "dummy caller") {
+function traceUnresolvedPromises<T>(promise: Promise<T>, tag?: string) {
 	let pending = true
 	promise.then(
 		() => (pending = false),
@@ -616,7 +680,19 @@ function traceUnresolvedPromises<T>(promise: Promise<T>, callerArgs: any = "dumm
 	const stack = ""
 	setTimeout(() => {
 		if (pending) {
-			console.trace(">>> Programming error: Promise not done after 60s", callerArgs, stack)
+			console.trace(">>> Programming error: Promise not done after 60s", tag, stack)
 		}
 	}, 60000)
+}
+
+export function isSessionStorageAvailable(): boolean {
+	try {
+		return typeof sessionStorage !== "undefined"
+	} catch (e) {
+		return false
+	}
+}
+
+export function isAsciiChar(char: string): boolean {
+	return char.charCodeAt(0) <= 0x7f
 }

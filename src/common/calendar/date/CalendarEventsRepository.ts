@@ -9,19 +9,35 @@ import {
 	createRepeatRuleWithValues,
 	extractYearFromBirthday,
 	generateUid,
+	getAllDayDatesUTCFromIso,
 	getEventEnd,
 	getEventStart,
 	getMonthRange,
+	isBirthdayCalendar,
 	isBirthdayEvent,
-	isClientOnlyCalendar,
 } from "./CalendarUtils.js"
-import { Birthday, CalendarEvent, CalendarEventTypeRef, Contact, ContactTypeRef, createCalendarEvent } from "../../api/entities/tutanota/TypeRefs.js"
+import {
+	Birthday,
+	CalendarEvent,
+	CalendarEventTypeRef,
+	Contact,
+	ContactTypeRef,
+	createCalendarEvent,
+	UserSettingsGroupRoot,
+	UserSettingsGroupRootTypeRef,
+} from "../../api/entities/tutanota/TypeRefs.js"
 import { elementIdPart, getElementId, getListId, isSameId, listIdPart } from "../../api/common/utils/EntityUtils.js"
 import { DateTime } from "luxon"
 import { CalendarFacade } from "../../api/worker/facades/lazy/CalendarFacade.js"
 import { EntityClient } from "../../api/common/EntityClient.js"
-import { deepEqual, findAllAndRemove, incrementDate, mapAndFilterNull, stringToBase64 } from "@tutao/tutanota-utils"
-import { CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID, OperationType, RepeatPeriod } from "../../api/common/TutanotaConstants.js"
+import { deepEqual, findAllAndRemove, isNotEmpty, mapAndFilterNull, stringToBase64 } from "@tutao/tutanota-utils"
+import {
+	BIRTHDAY_CALENDAR_BASE_ID,
+	DEFAULT_BIRTHDAY_CALENDAR_COLOR,
+	DEFAULT_CALENDAR_COLOR,
+	OperationType,
+	RepeatPeriod,
+} from "../../api/common/TutanotaConstants.js"
 import { NotAuthorizedError, NotFoundError } from "../../api/common/error/RestError.js"
 import { EventController } from "../../api/main/EventController.js"
 import { EntityUpdateData, isUpdateForTypeRef } from "../../api/common/utils/EntityUpdateUtils.js"
@@ -29,14 +45,14 @@ import { generateLocalEventElementId } from "../../api/common/utils/CommonCalend
 import { ContactModel } from "../../contactsFunctionality/ContactModel.js"
 import { LoginController } from "../../api/main/LoginController.js"
 import { isoDateToBirthday } from "../../api/common/utils/BirthdayUtils.js"
-import { UserTypeRef } from "../../api/entities/sys/TypeRefs.js"
+import { EventWrapper } from "../../../calendar-app/calendar/view/CalendarViewModel.js"
 
 const LIMIT_PAST_EVENTS_YEARS = 100
 
 const TAG = "[CalendarEventRepository]"
 
 /** Map from timestamp of beginnings of days to events that occur on those days. */
-export type DaysToEvents = ReadonlyMap<number, ReadonlyArray<CalendarEvent>>
+export type DaysToEvents = ReadonlyMap<number, ReadonlyArray<EventWrapper>>
 
 /** Object holding the year of birth if available and the corresponding event */
 export type BirthdayEventRegistry = {
@@ -56,10 +72,10 @@ interface ContactWrapper {
  */
 export class CalendarEventsRepository {
 	/** timestamps of the beginning of months that we already loaded */
-	private readonly loadedMonths = new Map<number, string[]>()
+	private readonly loadedMonths: Map<number, string[]> = new Map() // First day of the month at midnight -> CalendarID
 	private daysToEvents: Stream<DaysToEvents> = stream(new Map())
 	private pendingLoadRequest: Promise<void> = Promise.resolve()
-	private clientOnlyEvents: Map<number, BirthdayEventRegistry[]> = new Map()
+	private monthsToBirthdayEvents: Map<number, BirthdayEventRegistry[]> = new Map()
 	private calendarMemberships: string[]
 
 	constructor(
@@ -92,11 +108,11 @@ export class CalendarEventsRepository {
 	}
 
 	getBirthdayEvents(): Map<number, BirthdayEventRegistry[]> {
-		return this.clientOnlyEvents
+		return this.monthsToBirthdayEvents
 	}
 
 	async canLoadBirthdaysCalendar(): Promise<boolean> {
-		return await this.logins.getUserController().isNewPaidPlan()
+		return this.logins.getUserController().isInternalUser() && (await this.logins.getUserController().isNewPaidPlan())
 	}
 
 	async forceLoadEventsAt(daysInMonths: Array<Date>): Promise<void> {
@@ -134,7 +150,8 @@ export class CalendarEventsRepository {
 					try {
 						let calendarInfos = await this.calendarModel.getCalendarInfos()
 
-						if (!this.loadedMonths.has(monthRange.start)) {
+						const loadedMonth = this.loadedMonths.get(monthRange.start)
+						if (!loadedMonth || (calendarToLoad && !loadedMonth.includes(calendarToLoad))) {
 							this.loadedMonths.set(monthRange.start, Array.from(calendarInfos.keys()))
 						}
 
@@ -162,40 +179,40 @@ export class CalendarEventsRepository {
 		await promiseForThisLoadRequest
 	}
 
-	private isCalendarLoadedForRange(range: number, calendarId: string | null | undefined): boolean {
+	private isCalendarLoadedForRange(rangeStart: number, calendarId: string | null | undefined): boolean {
 		if (calendarId == null) {
 			return false
 		}
 
-		return this.loadedMonths.get(range)?.includes(calendarId) ?? false
+		return this.loadedMonths.get(rangeStart)?.includes(calendarId) ?? false
 	}
 
-	private async addOrUpdateEvent(calendarInfo: CalendarInfo | null, event: CalendarEvent) {
+	private async addOrUpdateEvent(calendarInfo: CalendarInfo | null, eventWrapper: EventWrapper) {
 		if (calendarInfo == null) {
 			return
 		}
-		const eventListId = getListId(event)
+		const eventListId = getListId(eventWrapper.event)
 		if (isSameId(calendarInfo.groupRoot.shortEvents, eventListId)) {
 			// to prevent unnecessary churn, we only add the event if we have the months it covers loaded.
-			const eventStartMonth = getMonthRange(getEventStart(event, this.zone), this.zone)
-			const eventEndMonth = getMonthRange(getEventEnd(event, this.zone), this.zone)
-			if (this.isCalendarLoadedForRange(eventStartMonth.start, event._ownerGroup)) {
-				await this.addDaysForEvent(event, eventStartMonth)
+			const eventStartMonth = getMonthRange(getEventStart(eventWrapper.event, this.zone), this.zone)
+			const eventEndMonth = getMonthRange(getEventEnd(eventWrapper.event, this.zone), this.zone)
+			if (this.isCalendarLoadedForRange(eventStartMonth.start, eventWrapper.event._ownerGroup)) {
+				await this.addDaysForEvent(eventWrapper, eventStartMonth)
 			}
 			// no short event covers more than two months, so this should cover everything.
-			if (eventEndMonth.start !== eventStartMonth.start && this.isCalendarLoadedForRange(eventEndMonth.start, event._ownerGroup)) {
-				await this.addDaysForEvent(event, eventEndMonth)
+			if (eventEndMonth.start !== eventStartMonth.start && this.isCalendarLoadedForRange(eventEndMonth.start, eventWrapper.event._ownerGroup)) {
+				await this.addDaysForEvent(eventWrapper, eventEndMonth)
 			}
 		} else if (isSameId(calendarInfo.groupRoot.longEvents, eventListId)) {
-			this.removeExistingEvent(event)
+			this.removeExistingEvent(eventWrapper.event)
 
 			for (const [firstDayTimestamp, _] of this.loadedMonths) {
 				const loadedMonth = getMonthRange(new Date(firstDayTimestamp), this.zone)
 
-				if (event.repeatRule != null) {
-					await this.addDaysForRecurringEvent(event, loadedMonth)
+				if (eventWrapper.event.repeatRule != null) {
+					await this.addDaysForRecurringEvent(eventWrapper, loadedMonth)
 				} else {
-					await this.addDaysForEvent(event, loadedMonth)
+					await this.addDaysForEvent(eventWrapper, loadedMonth)
 				}
 			}
 		}
@@ -208,15 +225,15 @@ export class CalendarEventsRepository {
 		this.daysToEvents(newMap)
 	}
 
-	private cloneEvents(): Map<number, Array<CalendarEvent>> {
+	private cloneEvents(): Map<number, Array<EventWrapper>> {
 		return new Map(Array.from(this.daysToEvents().entries()).map(([day, events]) => [day, events.slice()]))
 	}
 
 	private removeEventForCalendar(calendarId: string) {
 		const isValidEvent = (ev: CalendarEvent) => !(ev._ownerGroup === calendarId)
-		const mapExistingEvents = ([day, events]: [number, CalendarEvent[]]): [number, CalendarEvent[]] => [
+		const mapExistingEvents = ([day, events]: [number, EventWrapper[]]): [number, EventWrapper[]] => [
 			day,
-			events.slice().filter((ev) => isValidEvent(ev)),
+			events.slice().filter((ev) => isValidEvent(ev.event)),
 		]
 
 		let filtered_events = new Map(Array.from(this.daysToEvents().entries()).map(mapExistingEvents))
@@ -228,9 +245,9 @@ export class CalendarEventsRepository {
 		const isValidEvent = (ev: CalendarEvent) => {
 			return !(isBirthdayEvent(ev.uid) && elementIdPart(ev._id)?.includes(encodedContactId))
 		}
-		const mapExistingEvents = ([day, events]: [number, CalendarEvent[]]): [number, CalendarEvent[]] => [
+		const mapExistingEvents = ([day, events]: [number, EventWrapper[]]): [number, EventWrapper[]] => [
 			day,
-			events.slice().filter((ev) => isValidEvent(ev)),
+			events.slice().filter((ev) => isValidEvent(ev.event)),
 		]
 
 		let filtered_events = new Map(Array.from(this.daysToEvents().entries()).map(mapExistingEvents))
@@ -239,7 +256,7 @@ export class CalendarEventsRepository {
 		let monthToSearch = month ?? 0
 		while (monthToSearch < 12) {
 			let found = false
-			let clientOnlyEventsOfThisMonth = (this.clientOnlyEvents.get(monthToSearch) ?? []).filter((ev) => {
+			let clientOnlyEventsOfThisMonth = (this.monthsToBirthdayEvents.get(monthToSearch) ?? []).filter((ev) => {
 				const isContactEvent = elementIdPart(ev.event._id).includes(encodedContactId)
 				if (isContactEvent) {
 					found = true
@@ -248,15 +265,15 @@ export class CalendarEventsRepository {
 				return !isContactEvent
 			})
 
-			this.clientOnlyEvents.set(monthToSearch, clientOnlyEventsOfThisMonth)
+			this.monthsToBirthdayEvents.set(monthToSearch, clientOnlyEventsOfThisMonth)
 
 			if (found) break
 			monthToSearch += 1
 		}
 	}
 
-	private addDaysForRecurringEvent(event: CalendarEvent, month: CalendarTimeRange): void {
-		if (!isClientOnlyCalendar(listIdPart(event._id)) && -DateTime.fromJSDate(event.startTime).diffNow("year").years > LIMIT_PAST_EVENTS_YEARS) {
+	private addDaysForRecurringEvent(event: EventWrapper, month: CalendarTimeRange): void {
+		if (!isBirthdayCalendar(listIdPart(event.event._id)) && -DateTime.fromJSDate(event.event.startTime).diffNow("year").years > LIMIT_PAST_EVENTS_YEARS) {
 			console.log("repeating event is too far into the past", event)
 			return
 		}
@@ -272,7 +289,7 @@ export class CalendarEventsRepository {
 		const newMap = this.cloneEvents()
 
 		for (const dayEvents of newMap.values()) {
-			findAllAndRemove(dayEvents, (e) => isSameId(e._id, id))
+			findAllAndRemove(dayEvents, (e) => isSameId(e.event._id, id))
 		}
 
 		this.replaceEvents(newMap)
@@ -285,13 +302,13 @@ export class CalendarEventsRepository {
 		const newMap = this.cloneEvents()
 
 		for (const dayEvents of newMap.values()) {
-			findAllAndRemove(dayEvents, (e) => isSameId(e._id, eventToRemove._id))
+			findAllAndRemove(dayEvents, (e) => isSameId(e.event._id, eventToRemove._id))
 		}
 
 		this.replaceEvents(newMap)
 	}
 
-	private async addDaysForEvent(event: CalendarEvent, month: CalendarTimeRange) {
+	private async addDaysForEvent(event: EventWrapper, month: CalendarTimeRange) {
 		const { addDaysForEventInstance } = await import("./CalendarUtils.js")
 		const newMap = this.cloneEvents()
 		addDaysForEventInstance(newMap, event, month, this.zone)
@@ -302,23 +319,74 @@ export class CalendarEventsRepository {
 		const calendarInfos = await this.calendarModel.getCalendarInfos()
 		for (const update of updates) {
 			if (isUpdateForTypeRef(CalendarEventTypeRef, update)) {
-				if (update.operation === OperationType.CREATE || update.operation === OperationType.UPDATE) {
-					try {
-						const event = await this.entityClient.load(CalendarEventTypeRef, [update.instanceListId, update.instanceId])
-						await this.addOrUpdateEvent(calendarInfos.get(eventOwnerGroupId) ?? null, event)
-					} catch (e) {
-						if (e instanceof NotFoundError || e instanceof NotAuthorizedError) {
-							console.log(TAG, e.name, "updated event is not accessible anymore")
-						}
-						throw e
-					}
-				} else if (update.operation === OperationType.DELETE) {
-					this.removeDaysForEvent([update.instanceListId, update.instanceId])
-				}
-			} else if (isUpdateForTypeRef(UserTypeRef, update) && update.operation === OperationType.UPDATE) {
+				await this.handleCalendarEventUpdate(update, eventOwnerGroupId, calendarInfos)
+			} else if (this.logins.getUserController().isUpdateForLoggedInUserInstance(update, eventOwnerGroupId)) {
 				// Possible accepting/leaving a shared calendar, check if memberships has changed
 				await this.handleMembershipChanges()
+			} else if (isUpdateForTypeRef(UserSettingsGroupRootTypeRef, update)) {
+				await this.handleCalendarGroupSettingsUpdate(update, calendarInfos)
 			}
+		}
+	}
+
+	private async handleCalendarGroupSettingsUpdate(update: EntityUpdateData<UserSettingsGroupRoot>, calendarInfos: ReadonlyMap<Id, CalendarInfo>) {
+		const userSettingsGroupRoot = await this.entityClient.load(UserSettingsGroupRootTypeRef, update.instanceId)
+		//get all loaded events and update them with new event wrappers that have the new color passed in
+		const newDayToEventsMap = new Map<number, ReadonlyArray<EventWrapper>>()
+		const dayToEventsEntries = Array.from(this.daysToEvents().entries())
+		for (const entry of dayToEventsEntries) {
+			const [day, events] = entry
+			const newEventWrapperList = events.map((eventWrapper) => {
+				return this.updateEventWrapperColor(eventWrapper, userSettingsGroupRoot)
+			})
+			newDayToEventsMap.set(day, newEventWrapperList)
+		}
+
+		this.daysToEvents(newDayToEventsMap)
+	}
+
+	private updateEventWrapperColor(eventWrapper: EventWrapper, userSettingsGroupRoot: UserSettingsGroupRoot) {
+		let updatedCalendarColor = DEFAULT_CALENDAR_COLOR
+		if (eventWrapper.event._ownerGroup) {
+			if (eventWrapper.flags.isBirthdayEvent) {
+				updatedCalendarColor = this.calendarModel.getBirthdayCalendarInfo().color
+			} else {
+				const groupSettings = userSettingsGroupRoot.groupSettings.find((groupSettings) => groupSettings.group === eventWrapper.event._ownerGroup)
+				if (groupSettings && groupSettings.color) {
+					updatedCalendarColor = groupSettings.color
+				}
+			}
+		}
+		const newEventWrapper: EventWrapper = {
+			event: eventWrapper.event,
+			flags: eventWrapper.flags,
+			color: updatedCalendarColor,
+		}
+		return newEventWrapper
+	}
+
+	private async handleCalendarEventUpdate(update: EntityUpdateData<CalendarEvent>, eventOwnerGroupId: string, calendarInfos: ReadonlyMap<Id, CalendarInfo>) {
+		if (update.operation === OperationType.CREATE || update.operation === OperationType.UPDATE) {
+			try {
+				const event = await this.entityClient.load(CalendarEventTypeRef, [update.instanceListId, update.instanceId])
+				const wrapper: EventWrapper = {
+					event,
+					flags: {
+						isGhost: false,
+						hasAlarms: isNotEmpty(event.alarmInfos),
+						isAlteredInstance: Boolean(event.recurrenceId),
+					},
+					color: calendarInfos.get(eventOwnerGroupId)?.color ?? DEFAULT_CALENDAR_COLOR,
+				}
+				await this.addOrUpdateEvent(calendarInfos.get(eventOwnerGroupId) ?? null, wrapper)
+			} catch (e) {
+				if (e instanceof NotFoundError || e instanceof NotAuthorizedError) {
+					console.log(TAG, e.name, "updated event is not accessible anymore")
+				}
+				throw e
+			}
+		} else if (update.operation === OperationType.DELETE) {
+			this.removeDaysForEvent([update.instanceListId, update.instanceId])
 		}
 	}
 
@@ -339,33 +407,28 @@ export class CalendarEventsRepository {
 	}
 
 	public pushClientOnlyEvent(month: number, newEvent: CalendarEvent, baseYear: number | null) {
-		let clientOnlyEventsOfThisMonth = this.clientOnlyEvents.get(month) ?? []
+		let clientOnlyEventsOfThisMonth = this.monthsToBirthdayEvents.get(month) ?? []
 		const index = clientOnlyEventsOfThisMonth.findIndex((ev) => getElementId(ev.event) === getElementId(newEvent))
 		if (index === -1) {
 			clientOnlyEventsOfThisMonth.push({ baseYear, event: newEvent })
 		} else {
 			clientOnlyEventsOfThisMonth[index] = { baseYear, event: newEvent }
 		}
-		this.clientOnlyEvents.set(month, clientOnlyEventsOfThisMonth)
+		this.monthsToBirthdayEvents.set(month, clientOnlyEventsOfThisMonth)
 	}
 
 	private createClientOnlyBirthdayEvent(contact: Contact, userId: Id) {
+		if (!contact.birthdayIso) {
+			console.warn("Skipping birthday event creation. Trying to create a birthday event for an invalid contact.")
+			return null
+		}
+
 		const encodedContactId = stringToBase64(contact._id.join("/"))
-		const calendarId = `${userId}#${CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID}`
+		const calendarId = `${userId}#${BIRTHDAY_CALENDAR_BASE_ID}`
 		const uid = generateUid(calendarId, Date.now())
 
 		const eventTitle = this.calendarModel.getBirthdayEventTitle(contact.firstName)
-
-		let fullDateIso = contact.birthdayIso!
-		// Set the year because we can have birthdays without year
-		if (contact.birthdayIso?.startsWith("--")) {
-			fullDateIso = contact.birthdayIso.replace("-", "1970")
-		}
-
-		// Set up start and end date base on UTC.
-		// Also increments a copy of startDate by one day and set it as endDate
-		const startDate = new Date(fullDateIso!) // Uses fullDateIso as UTC value, therefore it creates a new Date applying the local timezone on top of fullDateIso
-		const endDate = incrementDate(new Date(startDate), 1)
+		const { startDate, endDate } = getAllDayDatesUTCFromIso(contact.birthdayIso!, this.zone)
 
 		const newEvent = createCalendarEvent({
 			sequence: "0",
@@ -390,7 +453,7 @@ export class CalendarEventsRepository {
 	}
 
 	async loadContactsBirthdays(): Promise<{ valid: ContactWrapper[]; invalid: Contact[] } | undefined> {
-		if (this.clientOnlyEvents.size) {
+		if (this.monthsToBirthdayEvents.size) {
 			// After a first load we don't need to load it again because we handle contact entity events in the CalendarViewModel
 			console.info("Birthdays already loaded, skipping new load attempt.")
 			return
@@ -420,7 +483,9 @@ export class CalendarEventsRepository {
 
 		for (const { contact } of filteredContacts) {
 			const newEvent = this.createClientOnlyBirthdayEvent(contact, this.logins.getUserController().userId)
-			this.pushClientOnlyEvent(newEvent.startTime.getMonth(), newEvent, extractYearFromBirthday(contact.birthdayIso))
+			if (newEvent) {
+				this.pushClientOnlyEvent(newEvent.startTime.getMonth(), newEvent, extractYearFromBirthday(contact.birthdayIso))
+			}
 		}
 
 		console.info(`Birthday events loaded - ${filteredContacts.length} Valid contacts / ${invalidContacts.length} Invalid contacts`)
@@ -443,6 +508,11 @@ export class CalendarEventsRepository {
 		const contact = await this.contactModel.loadContactFromId(contactId)
 
 		const newEvent = this.createClientOnlyBirthdayEvent(contact, this.logins.getUserController().userId)
+
+		if (!newEvent) {
+			return
+		}
+
 		const currentBirthdayDate = new Date(newEvent.startTime)
 		currentBirthdayDate.setFullYear(new Date().getFullYear())
 
@@ -469,7 +539,7 @@ export class CalendarEventsRepository {
 	}
 
 	addBirthdaysEventsIfNeeded(selectedDate: Date, monthRangeForRecurrence: CalendarTimeRange, removeEventOccurrences = false) {
-		const clientOnlyEventsThisMonth = this.clientOnlyEvents.get(selectedDate.getMonth())
+		const clientOnlyEventsThisMonth: Array<BirthdayEventRegistry> | undefined = this.monthsToBirthdayEvents.get(selectedDate.getMonth())
 		const birthdaysOfThisMonth = clientOnlyEventsThisMonth?.filter((birthdayEvent) => isBirthdayEvent(birthdayEvent.event.uid))
 		if (birthdaysOfThisMonth) {
 			for (const calendarEvent of birthdaysOfThisMonth) {
@@ -481,8 +551,16 @@ export class CalendarEventsRepository {
 				}
 				this.addDaysForRecurringEvent(
 					{
-						...calendarEvent.event,
-						summary: `${calendarEvent.event.summary} ${ageString}`,
+						event: {
+							...calendarEvent.event,
+							summary: `${calendarEvent.event.summary} ${ageString}`,
+						},
+						color: this.logins.getUserController().userSettingsGroupRoot.birthdayCalendarColor ?? DEFAULT_BIRTHDAY_CALENDAR_COLOR,
+						flags: {
+							isBirthdayEvent: true,
+							isAlteredInstance: false,
+							hasAlarms: false,
+						},
 					},
 					monthRangeForRecurrence,
 				)

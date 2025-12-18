@@ -22,11 +22,11 @@ export class ContactCardViewer implements Component<ContactCardAttrs> {
 		const { contact, onWriteMail, editAction, deleteAction, extendedActions, highlightedStrings } = attrs
 		return [
 			m(
-				".border-radius-big.rel",
+				".border-radius-12.rel",
 				{
 					class: responsiveCardHMargin(),
 					style: {
-						backgroundColor: theme.content_bg,
+						backgroundColor: theme.surface,
 						...attrs.style,
 					},
 				},
@@ -39,7 +39,7 @@ export class ContactCardViewer implements Component<ContactCardAttrs> {
 					highlightedStrings,
 				}),
 			),
-			m(".mt-l"),
+			m(".mt-32"),
 		]
 	}
 }

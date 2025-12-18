@@ -9,7 +9,7 @@ import { aes256RandomKey, fixedIv, uint8ArrayToKey } from "@tutao/tutanota-crypt
 import { ScheduledPeriodicId, ScheduledTimeoutId, Scheduler } from "../../src/common/api/common/utils/Scheduler.js"
 import { matchers, object, when } from "testdouble"
 import { Entity, ModelValue, ParsedInstance, TypeModel } from "../../src/common/api/common/EntityTypes.js"
-import { create } from "../../src/common/api/common/utils/EntityUtils.js"
+import { create, generatedIdToTimestamp, timestampToGeneratedId } from "../../src/common/api/common/utils/EntityUtils.js"
 import { ClientModelInfo, ServerModelInfo, ServerModels, TypeModelResolver } from "../../src/common/api/common/EntityFunctions.js"
 import { type fetch as undiciFetch, type Response } from "undici"
 import { Cardinality, ValueType } from "../../src/common/api/common/EntityConstants.js"
@@ -17,11 +17,13 @@ import { InstancePipeline } from "../../src/common/api/worker/crypto/InstancePip
 import { ModelMapper } from "../../src/common/api/worker/crypto/ModelMapper"
 import { dummyResolver } from "./api/worker/crypto/InstancePipelineTestUtils"
 import { EncryptedDbWrapper } from "../../src/common/api/worker/search/EncryptedDbWrapper"
+import { ClientPlatform } from "../../src/common/misc/ClientDetector"
 
 export const browserDataStub: BrowserData = {
 	needsMicrotaskHack: false,
 	needsExplicitIDBIds: false,
 	indexedDbSupported: true,
+	clientPlatform: ClientPlatform.UNKNOWN,
 }
 
 export function makeCore(
@@ -258,8 +260,8 @@ export function mockFetchRequest(mock: typeof undiciFetch, url: string, headers:
 	return jsonDefer.promise
 }
 
-export function textIncludes(match: string): (text: string) => { pass: true } | { pass: false; message: string } {
-	return (text) => (text.includes(match) ? { pass: true } : { pass: false, message: `should include: "${match}"` })
+export function textIncludes(match: string): (text: string) => { pass: boolean; message: string } {
+	return (text) => ({ pass: text.includes(match), message: `should include: "${match}"` })
 }
 
 export function equalToArray<A extends any[]>(
@@ -366,5 +368,19 @@ export async function withOverriddenEnv<F extends (...args: any[]) => any>(overr
 		for (const key of Object.keys(override)) {
 			env[key] = previousEnv[key]
 		}
+	}
+}
+
+function incrementId(id: Id, ms: number) {
+	const timestamp = generatedIdToTimestamp(id)
+	return timestampToGeneratedId(timestamp + ms)
+}
+
+export class IdGenerator {
+	constructor(private currentId: Id) {}
+
+	getNext(incrementByMs: number = 60000): Id {
+		this.currentId = incrementId(this.currentId, incrementByMs)
+		return this.currentId
 	}
 }

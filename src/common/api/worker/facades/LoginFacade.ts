@@ -28,7 +28,7 @@ import {
 	TakeOverDeletedAddressService,
 	VerifierTokenService,
 } from "../../entities/sys/Services"
-import { AccountType, asKdfType, CloseEventBusOption, Const, DEFAULT_KDF_TYPE, KdfType } from "../../common/TutanotaConstants"
+import { asKdfType, CloseEventBusOption, Const, DeactivationReason, DEFAULT_KDF_TYPE, KdfType, RolloutType } from "../../common/TutanotaConstants"
 import {
 	Challenge,
 	createChangeKdfPostIn,
@@ -53,7 +53,7 @@ import {
 } from "../../entities/sys/TypeRefs.js"
 import { TutanotaPropertiesTypeRef } from "../../entities/tutanota/TypeRefs.js"
 import { HttpMethod, MediaType, TypeModelResolver } from "../../common/EntityFunctions"
-import { assertWorkerOrNode, isAdminClient } from "../../common/Env"
+import { assertWorkerOrNode } from "../../common/Env"
 import { ConnectMode, EventBusClient } from "../EventBusClient"
 import { CacheMode, EntityRestClient, typeModelToRestPath } from "../rest/EntityRestClient"
 import { AccessExpiredError, ConnectionError, LockedError, NotAuthenticatedError, NotFoundError, SessionExpiredError } from "../../common/error/RestError"
@@ -88,7 +88,6 @@ import { SessionType } from "../../common/SessionType"
 import { CacheStorageLateInitializer } from "../rest/CacheStorageProxy"
 import { AuthDataProvider, UserFacade } from "./UserFacade"
 import { LoginFailReason } from "../../main/PageContextLoginListener.js"
-import { LoginIncompleteError } from "../../common/error/LoginIncompleteError.js"
 import { EntropyFacade } from "./EntropyFacade.js"
 import { BlobAccessTokenFacade } from "./BlobAccessTokenFacade.js"
 import { ProgrammingError } from "../../common/error/ProgrammingError.js"
@@ -96,12 +95,14 @@ import { DatabaseKeyFactory } from "../../../misc/credentials/DatabaseKeyFactory
 import { ExternalUserKeyDeriver } from "../../../misc/LoginUtils.js"
 import { Argon2idFacade } from "./Argon2idFacade.js"
 import { CredentialType } from "../../../misc/credentials/CredentialType.js"
-import { KeyRotationFacade } from "./KeyRotationFacade.js"
-import { encryptString } from "../crypto/CryptoWrapper.js"
+import { KeyRotationFacade, KeyRotationRolloutAction } from "./KeyRotationFacade.js"
+import { _encryptString } from "../crypto/CryptoWrapper.js"
 import { CacheManagementFacade } from "./lazy/CacheManagementFacade.js"
 import { InstancePipeline } from "../crypto/InstancePipeline"
 import { AttributeModel } from "../../common/AttributeModel"
 import { ServerModelUntypedInstance } from "../../common/EntityTypes"
+import { RolloutFacade } from "./RolloutFacade"
+import { LoginIncompleteError } from "../../common/error/LoginIncompleteError"
 
 assertWorkerOrNode()
 
@@ -171,6 +172,7 @@ export interface LoginListener {
 	 * Partial login reached (offline or online login), user can be accessed but network requests might fail.
 	 */
 	onPartialLoginSuccess(sessionType: SessionType, cacheInfo: CacheInfo, credentials: Credentials): Promise<void>
+
 	/**
 	 * Full login reached: any network requests can be made
 	 */
@@ -202,6 +204,9 @@ export class LoginFacade {
 	/** On platforms with offline cache we do the actual login asynchronously and we can retry it. This is the state of such async login. */
 	asyncLoginState: AsyncLoginState = { state: "idle" }
 
+	/** Keep track of the session type of the last partial/full log in */
+	private lastLoginSessionType: SessionType | null = null
+
 	constructor(
 		private readonly restClient: RestClient,
 		private readonly entityClient: EntityClient,
@@ -225,6 +230,7 @@ export class LoginFacade {
 		private readonly sendError: (error: Error) => Promise<void>,
 		private readonly cacheManagementFacade: lazyAsync<CacheManagementFacade>,
 		private readonly typeModelResolver: TypeModelResolver,
+		private readonly rolloutFacade: RolloutFacade,
 	) {}
 
 	init(eventBusClient: EventBusClient) {
@@ -246,6 +252,7 @@ export class LoginFacade {
 		clientIdentifier: string,
 		sessionType: SessionType,
 		databaseKey: Uint8Array | null,
+		skipPostLoginActions: boolean = false,
 	): Promise<NewSessionData> {
 		if (this.userFacade.isPartiallyLoggedIn()) {
 			// do not reset here because the event bus client needs to be kept if the same user is logged in as before
@@ -297,18 +304,19 @@ export class LoginFacade {
 		const credentials = {
 			login: mailAddress,
 			accessToken,
-			encryptedPassword: sessionType === SessionType.Persistent ? uint8ArrayToBase64(encryptString(neverNull(accessKey), passphrase)) : null,
+			encryptedPassword: sessionType === SessionType.Persistent ? uint8ArrayToBase64(_encryptString(neverNull(accessKey), passphrase)) : null,
 			encryptedPassphraseKey: sessionType === SessionType.Persistent ? encryptKey(neverNull(accessKey), userPassphraseKey) : null,
 			userId: sessionData.userId,
 			type: CredentialType.Internal,
 		}
-		this.loginListener
-			.onPartialLoginSuccess(sessionType, cacheInfo, credentials)
-			.finally(() => this.loginListener.onFullLoginSuccess(sessionType, cacheInfo, credentials))
 
-		if (!isAdminClient()) {
-			await this.keyRotationFacade.initialize(userPassphraseKey, modernKdfType)
+		if (!skipPostLoginActions) {
+			this.triggerPartialLoginSuccess(sessionType, cacheInfo, credentials).finally(() =>
+				this.triggerFullLoginSuccess(sessionType, cacheInfo, credentials),
+			)
 		}
+
+		await this.initializeKeyRotationRollouts(userPassphraseKey, modernKdfType, sessionType)
 
 		return {
 			user,
@@ -318,6 +326,21 @@ export class LoginFacade {
 			// we always try to make a persistent cache with a key for persistent session, but this
 			// falls back to ephemeral cache in browsers. no point storing the key then.
 			databaseKey: cacheInfo.isPersistent ? databaseKey : null,
+		}
+	}
+
+	private async initializeKeyRotationRollouts(userPassphraseKey: AesKey, modernKdfType: boolean, sessionType: SessionType) {
+		// configure key rotation rollouts. For admin group key or user group key rotation we need access to the password key.
+		// We bind this here to the rollout action. The actual key rotation is then executed after the client is synchronized.
+		const rollouts = await this.rolloutFacade.getScheduledRolloutTypes()
+		for (const rolloutType of rollouts) {
+			// the server will schedule either one or the other, but not both at the same time
+			if (rolloutType === RolloutType.AdminOrUserGroupKeyRotation || rolloutType === RolloutType.OtherGroupKeyRotation) {
+				await this.rolloutFacade.configureRollout(
+					rolloutType,
+					new KeyRotationRolloutAction(this.keyRotationFacade, this.userFacade, rolloutType, userPassphraseKey, modernKdfType, sessionType),
+				)
+			}
 		}
 	}
 
@@ -483,14 +506,14 @@ export class LoginFacade {
 		const credentials = {
 			login: userId,
 			accessToken,
-			encryptedPassword: accessKey ? uint8ArrayToBase64(encryptString(accessKey, passphrase)) : null,
+			encryptedPassword: accessKey ? uint8ArrayToBase64(_encryptString(accessKey, passphrase)) : null,
 			encryptedPassphraseKey: accessKey ? encryptKey(accessKey, userPassphraseKey) : null,
 			userId,
 			type: CredentialType.External,
 		}
-		this.loginListener
-			.onPartialLoginSuccess(SessionType.Login, cacheInfo, credentials)
-			.finally(() => this.loginListener.onFullLoginSuccess(SessionType.Login, cacheInfo, credentials))
+		this.triggerPartialLoginSuccess(SessionType.Login, cacheInfo, credentials).finally(() =>
+			this.triggerFullLoginSuccess(SessionType.Login, cacheInfo, credentials),
+		)
 
 		return {
 			user,
@@ -579,14 +602,10 @@ export class LoginFacade {
 		})
 		const sessionId = this.getSessionId(credentials)
 		try {
-			// using offline, free, have connection         -> sync login
-			// using offline, free, no connection           -> indicate that offline login is not for free customers
-			// using offline, premium, have connection      -> async login
-			// using offline, premium, no connection        -> async login w/ later retry
-			// no offline, free, have connection            -> sync login
-			// no offline, free, no connection              -> sync login, fail with connection error
-			// no offline, premium, have connection         -> sync login
-			// no offline, premium, no connection           -> sync login, fail with connection error
+			// using offline, have connection      -> async login
+			// using offline, no connection        -> async login w/ later retry
+			// no offline, have connection         -> sync login
+			// no offline, no connection           -> sync login, fail with connection error
 
 			// If a user enables offline storage for the first time, after already having saved credentials
 			// then upon their next login, they won't have an offline database available, meaning we have to do
@@ -594,26 +613,10 @@ export class LoginFacade {
 			// the next time they log in they will be able to do asynchronous login
 			if (cacheInfo?.isPersistent && !cacheInfo.isNewOfflineDb) {
 				const user = await this.entityClient.load(UserTypeRef, credentials.userId)
-				if (user.accountType !== AccountType.PAID) {
-					// if account is free do not start offline login/async login workflow.
-					// await before return to catch errors here
-					return await this.finishResumeSession(credentials, externalUserKeyDeriver, cacheInfo).catch(
-						ofClass(ConnectionError, async () => {
-							await this.resetSession()
-							return {
-								type: "error",
-								reason: ResumeSessionErrorReason.OfflineNotAvailableForFree,
-								asyncResumeCompleted: null,
-							}
-						}),
-					)
-				}
 				this.userFacade.setUser(user)
 
-				// Temporary workaround for the transitional period
 				// Before offline login was enabled (in 3.96.4) we didn't use cache for the login process, only afterwards.
 				// This could lead to a situation where we never loaded or saved user groupInfo but would try to use it now.
-				// We can remove this after a few versions when the bulk of people who enabled offline will upgrade.
 				let userGroupInfo: GroupInfo
 				try {
 					userGroupInfo = await this.entityClient.load(GroupInfoTypeRef, user.userGroup.groupInfo)
@@ -636,7 +639,7 @@ export class LoginFacade {
 					sessionId,
 				}
 
-				await this.loginListener.onPartialLoginSuccess(SessionType.Persistent, cacheInfo, credentials)
+				await this.triggerPartialLoginSuccess(SessionType.Persistent, cacheInfo, credentials)
 				return { type: "success", data, asyncResumeCompleted: env.mode === "Test" ? asyncResumeSession : null }
 			} else {
 				return await this.finishResumeSession(credentials, externalUserKeyDeriver, cacheInfo)
@@ -649,6 +652,25 @@ export class LoginFacade {
 			await this.resetSession()
 			throw e
 		}
+	}
+
+	private async triggerPartialLoginSuccess(sessionType: SessionType, cacheInfo: CacheInfo, credentials: Credentials): Promise<void> {
+		this.lastLoginSessionType = sessionType
+		await this.loginListener.onPartialLoginSuccess(sessionType, cacheInfo, credentials)
+	}
+
+	private async triggerFullLoginSuccess(sessionType: SessionType, cacheInfo: CacheInfo, credentials: Credentials): Promise<void> {
+		this.lastLoginSessionType = sessionType
+		await this.loginListener.onFullLoginSuccess(sessionType, cacheInfo, credentials)
+	}
+
+	public async getSessionType(): Promise<SessionType | null> {
+		// Consider the information invalid if we do not have an active session
+		if (!this.userFacade.isPartiallyLoggedIn()) {
+			return null
+		}
+
+		return this.lastLoginSessionType
 	}
 
 	private getSessionId(credentials: Credentials): IdTuple {
@@ -712,11 +734,11 @@ export class LoginFacade {
 		let partialLoginPromise: Promise<void>
 		if (previousUser == null) {
 			// user was not set which means partial login could not have been called earlier, call it here
-			partialLoginPromise = this.loginListener.onPartialLoginSuccess(SessionType.Persistent, cacheInfo, credentialsWithPassphraseKey)
+			partialLoginPromise = this.triggerPartialLoginSuccess(SessionType.Persistent, cacheInfo, credentialsWithPassphraseKey)
 		} else {
 			partialLoginPromise = Promise.resolve()
 		}
-		partialLoginPromise.finally(() => this.loginListener.onFullLoginSuccess(SessionType.Persistent, cacheInfo, credentialsWithPassphraseKey))
+		partialLoginPromise.finally(() => this.triggerFullLoginSuccess(SessionType.Persistent, cacheInfo, credentialsWithPassphraseKey))
 
 		this.asyncLoginState = { state: "idle" }
 
@@ -732,12 +754,8 @@ export class LoginFacade {
 			const passphrase = utf8Uint8ArrayToString(aesDecrypt(accessKey, base64ToUint8Array(credentials.encryptedPassword)))
 			await this.migrateKdfType(KdfType.Argon2id, passphrase, user)
 		}
-		if (!isExternalUser && !isAdminClient()) {
-			// We trigger group key rotation only for internal users.
-			// If we have not migrated to argon2 we postpone key rotation until next login
-			// instead of reloading the pwKey, which would be updated by the KDF migration.
-			await this.keyRotationFacade.initialize(userPassphraseKey, modernKdfType)
-		}
+
+		await this.initializeKeyRotationRollouts(userPassphraseKey, modernKdfType, SessionType.Persistent)
 
 		return { type: "success", data, asyncResumeCompleted: null }
 	}
@@ -996,7 +1014,7 @@ export class LoginFacade {
 		const sessionData = await this.loadSessionData(accessToken)
 		if (sessionData.accessKey != null) {
 			// if we have an accessKey, this means we are storing the encrypted password locally, in which case we need to store the new one
-			const newEncryptedPassphrase = uint8ArrayToBase64(encryptString(sessionData.accessKey, newPasswordKeyDataTemplate.passphrase))
+			const newEncryptedPassphrase = uint8ArrayToBase64(_encryptString(sessionData.accessKey, newPasswordKeyDataTemplate.passphrase))
 			const newEncryptedPassphraseKey = encryptKey(sessionData.accessKey, newUserPassphraseKey)
 			return { newEncryptedPassphrase, newEncryptedPassphraseKey }
 		} else {
@@ -1015,11 +1033,13 @@ export class LoginFacade {
 		const passwordKey = await this.deriveUserPassphraseKey(passphraseKeyData)
 		const deleteCustomerData = createDeleteCustomerData({
 			authVerifier: createAuthVerifier(passwordKey),
-			reason: null,
+			reason: DeactivationReason.UserRequest.toString(),
+			formattedReason: null,
 			takeoverMailAddress: null,
 			undelete: false,
 			customer: neverNull(neverNull(this.userFacade.getLoggedInUser()).customer),
 			surveyData: surveyData,
+			abuseDeactivationInfos: [],
 		})
 
 		if (takeover !== "") {

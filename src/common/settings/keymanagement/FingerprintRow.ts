@@ -4,13 +4,23 @@ import { IconButton } from "../../gui/base/IconButton"
 import { Icons } from "../../gui/base/icons/Icons"
 import { ButtonSize } from "../../gui/base/ButtonSize"
 import { MonospaceTextDisplay } from "../../gui/base/MonospaceTextDisplay"
-import { PublicKeyFingerprint } from "../../api/worker/facades/lazy/KeyVerificationFacade"
-import { Icon, IconSize } from "../../gui/base/Icon"
 
+import { AllIcons, Icon, IconSize } from "../../gui/base/Icon"
+import { Hex } from "@tutao/tutanota-utils"
+import { MaybeTranslation } from "../../misc/LanguageViewModel"
+import { theme } from "../../gui/theme"
+
+type Action = {
+	onClick: (mailAddress: string) => void
+	icon: AllIcons
+	tooltip: MaybeTranslation
+}
 type FingerprintRowAttrs = {
 	mailAddress: string
-	publicKeyFingerprint: PublicKeyFingerprint
-	onRemoveFingerprint?: (mailAddress: string) => void
+	publicKeyVersion: number
+	publicKeyType: number
+	publicKeyFingerprint: Hex
+	action?: Action
 }
 
 /**
@@ -21,11 +31,7 @@ type FingerprintRowAttrs = {
 // Hack because right now we cannot import enum KeyPairType
 function getProtocolName(keyPairType: number): string {
 	if (keyPairType === 0) {
-		return "RSA"
-	} else if (keyPairType === 1) {
-		return "RSA and ECC"
-	} else if (keyPairType === 2) {
-		return "TutaCrypt"
+		return "Ed25519"
 	} else {
 		return "unknown protocol"
 	}
@@ -33,38 +39,36 @@ function getProtocolName(keyPairType: number): string {
 
 export class FingerprintRow implements Component<FingerprintRowAttrs> {
 	view(vnode: Vnode<FingerprintRowAttrs>): Children {
-		const { mailAddress, publicKeyFingerprint, onRemoveFingerprint } = vnode.attrs
-
-		const protocol = getProtocolName(publicKeyFingerprint.keyPairType)
-		const version = publicKeyFingerprint.keyVersion
+		const { mailAddress, publicKeyFingerprint, action, publicKeyVersion, publicKeyType } = vnode.attrs
 
 		return m(Card, [
-			m(".flex.items-center.selectable.pl-vpad-s.mb-s.gap-vpad-xs", [
+			m(".flex.items-center.selectable.pl-8.mb-8.gap-4", [
 				m(Icon, {
 					icon: Icons.Shield,
-					size: IconSize.Large,
+					size: IconSize.PX20,
+					style: { fill: theme.success },
 				}),
 				m(".text-break.b.selectable", mailAddress),
 				m(".flex-grow"),
-				onRemoveFingerprint
+				action
 					? m(IconButton, {
-							title: "keyManagement.verifyMailAddress_action",
+							title: action.tooltip,
 							click: async () => {
-								onRemoveFingerprint(mailAddress)
+								action.onClick(mailAddress)
 							},
-							icon: Icons.Trash,
+							icon: action.icon,
 							size: ButtonSize.Compact,
 						})
 					: null,
 			]),
 			m(MonospaceTextDisplay, {
-				text: publicKeyFingerprint.fingerprint,
+				text: publicKeyFingerprint,
 				chunkSize: 4,
 				chunksPerLine: 8,
-				classes: ".small.flex-start.lh-l.pl-vpad-s.mb-s",
+				classes: ".small.flex-start.lh-l.pl-8.mb-8",
 				border: false,
 			}),
-			m(".small.pl-vpad-s.mb-s", m("", `v${version}, via ${protocol}`)),
+			m(".small.pl-8.mb-8", m("", `v${publicKeyVersion}, via ${getProtocolName(publicKeyType)}`)),
 		])
 	}
 }

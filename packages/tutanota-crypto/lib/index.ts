@@ -23,7 +23,24 @@ export {
 	generateX25519KeyPair,
 	x25519Encapsulate,
 	x25519Decapsulate,
+	deriveX25519PublicKey,
 } from "./encryption/X25519.js"
+export {
+	Ed25519PrivateKey,
+	Ed25519PublicKey,
+	Ed25519KeyPair,
+	Ed25519Signature,
+	generateEd25519KeyPair,
+	signWithEd25519,
+	verifyEd25519Signature,
+	initEd25519,
+	bytesToEd25519PublicKey,
+	ed25519PublicKeyToBytes,
+	bytesToEd25519PrivateKey,
+	ed25519PrivateKeyToBytes,
+	bytesToEd25519Signature,
+	ed25519SignatureToBytes,
+} from "./encryption/Ed25519.js"
 export { generateRandomSalt, generateKeyFromPassphrase as generateKeyFromPassphraseBcrypt } from "./hashes/Bcrypt.js"
 export {
 	LibOQSExports,
@@ -43,6 +60,7 @@ export {
 	kyberPublicKeyToBytes,
 	kyberPrivateKeyToBytes,
 	bytesToKyberPublicKey,
+	extractKyberPublicKeyFromKyberPrivateKey,
 } from "./encryption/Liboqs/KyberKeyPair.js"
 export {
 	Argon2IDExports,
@@ -70,8 +88,18 @@ export {
 	aes256DecryptWithRecoveryKey,
 } from "./encryption/KeyEncryption.js"
 export { Randomizer, random } from "./random/Randomizer.js"
-export { encode, hexToRsaPublicKey, rsaDecrypt, hexToRsaPrivateKey, rsaPrivateKeyToHex, rsaPublicKeyToHex, rsaEncrypt } from "./encryption/Rsa.js"
-export { RsaKeyPair, RsaX25519KeyPair, RsaPrivateKey, RsaPublicKey, RsaX25519PublicKey } from "./encryption/RsaKeyPair.js"
+export {
+	encode,
+	hexToRsaPublicKey,
+	rsaDecrypt,
+	hexToRsaPrivateKey,
+	rsaPrivateKeyToHex,
+	rsaPublicKeyToHex,
+	rsaEncrypt,
+	extractRawPublicRsaKeyFromPrivateRsaKey,
+	rsaPublicKeyToBytes,
+} from "./encryption/Rsa.js"
+export { RsaKeyPair, RsaX25519KeyPair, RsaPrivateKey, RawRsaPublicKey, RsaPublicKey, RsaX25519PublicKey } from "./encryption/RsaKeyPair.js"
 export {
 	KeyPairType,
 	AsymmetricKeyPair,
@@ -85,6 +113,7 @@ export {
 	isVersionedRsaX25519PublicKey,
 	isVersionedPqPublicKey,
 	isVersionedRsaOrRsaX25519PublicKey,
+	isRsaX25519PublicKey,
 } from "./encryption/AsymmetricKeyPair.js"
 export { PQKeyPairs, PQPublicKeys, pqKeyPairsToPublicKeys } from "./encryption/PQKeyPairs.js"
 export { sha1Hash } from "./hashes/Sha1.js"

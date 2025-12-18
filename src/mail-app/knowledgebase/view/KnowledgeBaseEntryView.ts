@@ -2,7 +2,7 @@ import m, { Children, Component, Vnode } from "mithril"
 import type { KnowledgeBaseEntry } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { TemplateGroupRootTypeRef } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { memoized, neverNull, noOp, ofClass, startsWith } from "@tutao/tutanota-utils"
-import { htmlSanitizer } from "../../../common/misc/HtmlSanitizer.js"
+import { getHtmlSanitizer, HtmlSanitizer } from "../../../common/misc/HtmlSanitizer.js"
 import { Icons } from "../../../common/gui/base/icons/Icons.js"
 import { locator } from "../../../common/api/main/CommonLocator.js"
 import { getConfirmation } from "../../../common/gui/base/GuiUtils.js"
@@ -19,6 +19,8 @@ type KnowledgeBaseEntryViewAttrs = {
  *  Renders one knowledgeBase entry
  */
 export class KnowledgeBaseEntryView implements Component<KnowledgeBaseEntryViewAttrs> {
+	private readonly htmlSanitizer: HtmlSanitizer = getHtmlSanitizer()
+
 	_sanitizedEntry: (arg0: KnowledgeBaseEntry) => {
 		content: string
 	}
@@ -26,7 +28,7 @@ export class KnowledgeBaseEntryView implements Component<KnowledgeBaseEntryViewA
 	constructor() {
 		this._sanitizedEntry = memoized((entry) => {
 			return {
-				content: htmlSanitizer.sanitizeHTML(entry.description, {
+				content: this.htmlSanitizer.sanitizeHTML(entry.description, {
 					blockExternalContent: true,
 				}).html,
 			}
@@ -48,17 +50,17 @@ export class KnowledgeBaseEntryView implements Component<KnowledgeBaseEntryViewA
 			},
 			[
 				m(
-					".flex.mt-l.center-vertically.selectable",
+					".flex.mt-32.center-vertically.selectable",
 					m(".h4.text-ellipsis", entry.title),
 					!readonly ? [m(".flex.flex-grow.justify-end", [this.renderEditButton(entry), this.renderRemoveButton(entry)])] : null,
 				),
 				m("", [
-					m(".mt-s.flex.mt-s.wrap", [
+					m(".mt-8.flex.mt-8.wrap", [
 						entry.keywords.map((entryKeyword) => {
 							return m(".keyword-bubble.selectable", entryKeyword.keyword)
 						}),
 					]),
-					m(".flex.flex-column.mt-s", [m(".editor-border.text-break.selectable", m.trust(this._sanitizedEntry(entry).content))]),
+					m(".flex.flex-column.mt-8", [m(".editor-border.text-break.selectable", m.trust(this._sanitizedEntry(entry).content))]),
 				]),
 			],
 		)

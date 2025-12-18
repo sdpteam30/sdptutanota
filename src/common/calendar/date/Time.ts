@@ -8,12 +8,18 @@ export class Time {
 	private _hour: number = 0
 	private _minute: number = 0
 
+	constructor(hour: number, minute: number) {
+		this.hour = hour
+		this.minute = minute
+	}
+
 	get hour() {
 		return this._hour
 	}
 
 	private set hour(h: number) {
-		this._hour = Math.abs(Math.floor(h) % 24)
+		const hour = Math.abs(h)
+		this._hour = Math.floor(hour) % 24
 	}
 
 	get minute() {
@@ -21,12 +27,8 @@ export class Time {
 	}
 
 	private set minute(m: number) {
-		this._minute = Math.abs(Math.floor(m) % 60)
-	}
-
-	constructor(hour: number, minute: number) {
-		this.hour = hour
-		this.minute = minute
+		const minutes = Math.abs(m)
+		this._minute = Math.floor(minutes) % 60
 	}
 
 	/**
@@ -110,10 +112,7 @@ export class Time {
 	 */
 	toDate(baseDate?: Date): Date {
 		const date = baseDate ? new Date(baseDate) : new Date()
-		date.setHours(this._hour)
-		date.setMinutes(this._minute)
-		date.setSeconds(0)
-		date.setMilliseconds(0)
+		date.setHours(this._hour, this._minute)
 		return date
 	}
 
@@ -125,21 +124,21 @@ export class Time {
 		return this._hour === otherTime._hour && this._minute === otherTime._minute
 	}
 
-	toString(amPmFormat: boolean): string {
-		return amPmFormat ? this.to12HourString() : this.to24HourString()
+	toString(amPmFormat?: { withAmPmSuffix: boolean }): string {
+		return amPmFormat ? this.to12HourString(amPmFormat.withAmPmSuffix) : this.to24HourString()
 	}
 
-	to12HourString(): string {
+	to12HourString(withAmPmSuffix: boolean): string {
 		const minutesString = pad(this._minute, 2)
 
 		if (this._hour === 0) {
-			return `12:${minutesString} am`
+			return `12:${minutesString}${withAmPmSuffix ? " am" : ""}`
 		} else if (this._hour === 12) {
-			return `12:${minutesString} pm`
+			return `12:${minutesString}${withAmPmSuffix ? " pm" : ""}`
 		} else if (this._hour > 12) {
-			return `${this._hour - 12}:${minutesString} pm`
+			return `${this._hour - 12}:${minutesString}${withAmPmSuffix ? " pm" : ""}`
 		} else {
-			return `${this._hour}:${minutesString} am`
+			return `${this._hour}:${minutesString}${withAmPmSuffix ? " am" : ""}`
 		}
 	}
 
@@ -164,13 +163,17 @@ export class Time {
 	}
 
 	/**
-	 * Finds the difference in minutes between this and the param.
-	 * @param timeB
+	 * Finds the forward difference in minutes from this time to timeB,
+	 * in the range [0, 24*60-1]. Same times => 0.
+	 * Examples:
+	 *  - 23:30.diff(00:15) => 45
+	 *  - 10:00.diff(09:00) => 1380
 	 */
-	diff(timeB: Time) {
-		const timeBAsMinutes = timeB.asMinutes() === 0 ? 24 * 60 : timeB.asMinutes()
-		const timeAAsMinutes = this.asMinutes()
-		return timeAAsMinutes > timeBAsMinutes ? 24 * 60 - timeAAsMinutes + timeBAsMinutes : timeBAsMinutes - timeAAsMinutes
+	diff(timeB: Time): number {
+		const minutesA = this.asMinutes()
+		const minutesB = timeB.asMinutes()
+		const day = 24 * 60
+		return (minutesB - minutesA + day) % day
 	}
 
 	/**
@@ -234,5 +237,11 @@ export class Time {
 	 */
 	isBefore(timeB: Time) {
 		return this.asMinutes() < timeB.asMinutes()
+	}
+
+	static fromMinutes(minutes: number) {
+		const hour = minutes / 60
+		const restMinutes = minutes % 60
+		return new Time(hour, restMinutes)
 	}
 }

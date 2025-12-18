@@ -5,7 +5,7 @@ import type { BuyOptionBoxAttr, BuyOptionDetailsAttr } from "./BuyOptionBox"
 import { BOX_MARGIN, BuyOptionBox, BuyOptionDetails, getActiveSubscriptionActionButtonReplacement } from "./BuyOptionBox"
 import type { SegmentControlItem } from "../gui/base/SegmentControl"
 import { SegmentControl } from "../gui/base/SegmentControl"
-import { formatMonthlyPrice, PaymentInterval, PriceAndConfigProvider, PriceType } from "./PriceUtils"
+import { formatMonthlyPrice, PaymentInterval, PriceAndConfigProvider, PriceType } from "./utils/PriceUtils"
 import {
 	FeatureCategory,
 	FeatureListItem,
@@ -34,7 +34,7 @@ import { px, size } from "../gui/size.js"
 import { LoginButton, LoginButtonAttrs } from "../gui/base/buttons/LoginButton.js"
 import { isIOSApp } from "../api/common/Env"
 import { locator } from "../api/main/CommonLocator.js"
-import { getApplePriceStr, getPriceStr, hasAppleIntroOffer, shouldHideBusinessPlans, shouldShowApplePrices, UpgradeType } from "./SubscriptionUtils.js"
+import { getApplePriceStr, getPriceStr, hasAppleIntroOffer, shouldHideBusinessPlans, shouldShowApplePrices, UpgradeType } from "./utils/SubscriptionUtils.js"
 import { AccountingInfo } from "../api/entities/sys/TypeRefs.js"
 
 const BusinessUseItems: SegmentControlItem<boolean>[] = [
@@ -123,7 +123,7 @@ export class SubscriptionSelector implements Component<SubscriptionSelectorAttr>
 		}
 
 		if (isFirstMonthForFree) {
-			return wrapInDiv(lang.get("firstMonthForFree_msg"), { marginTop: px(size.vpad), marginBottom: px(size.vpad) })
+			return wrapInDiv(lang.get("firstMonthForFree_msg"), { marginTop: px(size.spacing_16), marginBottom: px(size.spacing_16) })
 		}
 
 		if (isCampaign && !isBusiness && (isIOSApp() ? priceAndConfigProvider.getIosIntroOfferEligibility() : true)) {
@@ -192,7 +192,7 @@ export class SubscriptionSelector implements Component<SubscriptionSelectorAttr>
 				if (!revoRefPriceStr || !legendRefPriceStr) return
 
 				return m(
-					".flex.column-gap-s",
+					".flex.column-gap-4",
 					m("span", m("sup", "1")),
 					m(
 						"span",
@@ -205,7 +205,7 @@ export class SubscriptionSelector implements Component<SubscriptionSelectorAttr>
 			}
 
 			if (priceAndConfigProvider.getRawPricingData().firstMonthForFreeForYearlyPlan && isYearly && (!currentPlan || currentPlan === PlanType.Free)) {
-				return m(".flex.column-gap-s", m("span", m("sup", "1")), m("span", lang.get("firstMonthForFreeDetail_msg")))
+				return m(".flex.column-gap-4", m("span", m("sup", "1")), m("span", lang.get("firstMonthForFreeDetail_msg")))
 			}
 
 			return undefined
@@ -215,8 +215,8 @@ export class SubscriptionSelector implements Component<SubscriptionSelectorAttr>
 
 		additionalInfo = m(".flex.flex-column", [
 			featureExpander.All, // global feature expander
-			m(".smaller.mb", subscriptionPeriodInfoMsg),
-			footnoteElement && m(".smaller.mb", footnoteElement),
+			m(".smaller.mb-16", subscriptionPeriodInfoMsg),
+			footnoteElement && m(".smaller.mb-16", footnoteElement),
 		])
 
 		const buyBoxesViewPlacement = plans

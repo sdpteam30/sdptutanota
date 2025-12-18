@@ -1,6 +1,6 @@
 import o from "@tutao/otest"
 import { aes256RandomKey, AesKey } from "@tutao/tutanota-crypto"
-import { encryptKeyWithVersionedKey, VersionedEncryptedKey, VersionedKey } from "../../../../../src/common/api/worker/crypto/CryptoWrapper"
+import { _encryptKeyWithVersionedKey, VersionedEncryptedKey, VersionedKey } from "../../../../../src/common/api/worker/crypto/CryptoWrapper"
 import { instance, object, when } from "testdouble"
 import { KeyLoaderFacade } from "../../../../../src/common/api/worker/facades/KeyLoaderFacade"
 import { CryptoFacade } from "../../../../../src/common/api/worker/crypto/CryptoFacade"
@@ -10,11 +10,9 @@ import { ServiceExecutor } from "../../../../../src/common/api/worker/rest/Servi
 import { OwnerEncSessionKeysUpdateQueue } from "../../../../../src/common/api/worker/crypto/OwnerEncSessionKeysUpdateQueue"
 import { CacheStorage, DefaultEntityRestCache } from "../../../../../src/common/api/worker/rest/DefaultEntityRestCache"
 import { AsymmetricCryptoFacade } from "../../../../../src/common/api/worker/crypto/AsymmetricCryptoFacade"
-import { KeyVerificationFacade } from "../../../../../src/common/api/worker/facades/lazy/KeyVerificationFacade"
-import { PublicKeyProvider } from "../../../../../src/common/api/worker/facades/PublicKeyProvider"
 import { KeyRotationFacade } from "../../../../../src/common/api/worker/facades/KeyRotationFacade"
 import { Entity, ModelValue, ServerModelParsedInstance } from "../../../../../src/common/api/common/EntityTypes"
-import { assertNotNull, downcast, Nullable } from "@tutao/tutanota-utils/dist/Utils"
+import { assertNotNull, downcast, noOp, Nullable, stringToBase64 } from "@tutao/tutanota-utils"
 import { RestClient } from "../../../../../src/common/api/worker/rest/RestClient"
 import {
 	clientInitializedTypeModelResolver,
@@ -24,6 +22,9 @@ import {
 	removeFinalIvs,
 } from "../../../TestUtils"
 import {
+	CalendarEvent,
+	CalendarEventTypeRef,
+	CalendarRepeatRuleTypeRef,
 	createOutOfOfficeNotificationRecipientList,
 	Mail,
 	MailAddress,
@@ -31,12 +32,9 @@ import {
 	MailBox,
 	MailboxGroupRoot,
 	MailboxGroupRootTypeRef,
-	MailBoxTypeRef,
 	MailDetailsBlob,
 	MailDetailsBlobTypeRef,
 	MailDetailsTypeRef,
-	MailFolderRefTypeRef,
-	MailFolderTypeRef,
 	MailTypeRef,
 	OutOfOfficeNotificationRecipientListTypeRef,
 	RecipientsTypeRef,
@@ -53,6 +51,7 @@ import { encryptValue } from "../../../../../src/common/api/worker/crypto/Crypto
 import { PatchOperationError } from "../../../../../src/common/api/common/error/PatchOperationError"
 import { assertThrows } from "@tutao/tutanota-test-utils"
 import { EncryptionAuthStatus } from "../../../../../src/common/api/common/TutanotaConstants"
+import { PublicEncryptionKeyProvider } from "../../../../../src/common/api/worker/facades/PublicEncryptionKeyProvider"
 
 o.spec("PatchMergerTest", () => {
 	let sk: AesKey
@@ -79,10 +78,12 @@ o.spec("PatchMergerTest", () => {
 			instance(DefaultEntityRestCache),
 			keyLoaderFacadeMock,
 			instance(AsymmetricCryptoFacade),
-			async () => instance(KeyVerificationFacade),
-			instance(PublicKeyProvider),
+			instance(PublicEncryptionKeyProvider),
 			() => instance(KeyRotationFacade),
 			typeModelResolver,
+			async () => {
+				noOp()
+			},
 		)
 		cryptoFacadePartialStub.resolveSessionKey = async (instance: Entity): Promise<Nullable<AesKey>> => {
 			return sk
@@ -95,7 +96,7 @@ o.spec("PatchMergerTest", () => {
 
 		sk = aes256RandomKey()
 		ownerGroupKey = { object: aes256RandomKey(), version: 0 }
-		encryptedSessionKey = encryptKeyWithVersionedKey(ownerGroupKey, sk)
+		encryptedSessionKey = _encryptKeyWithVersionedKey(ownerGroupKey, sk)
 		when(keyLoaderFacadeMock.loadSymGroupKey(ownerGroupId, ownerGroupKey.version)).thenResolve(ownerGroupKey.object)
 		patchMerger = new PatchMerger(storage, instancePipeline, typeModelResolver, () => cryptoFacadePartialStub)
 	})
@@ -105,7 +106,7 @@ o.spec("PatchMergerTest", () => {
 	}
 
 	o.spec("Path traverse", () => {
-		o.test("when_incorrect_path_is_supplied_path_traversal_throws", async () => {
+		o.test("when_incorrect_path_is_supplied_path_traversal_returns_null", async () => {
 			const testMail = createSystemMail({
 				_id: ["listId", "elementId"],
 				_ownerEncSessionKey: encryptedSessionKey.key,
@@ -123,7 +124,33 @@ o.spec("PatchMergerTest", () => {
 				}),
 			]
 
-			await assertThrows(PatchOperationError, async () => await patchMerger.getPatchedInstanceParsed(MailTypeRef, "listId", "elementId", patches))
+			o(await patchMerger.getPatchedInstanceParsed(MailTypeRef, "listId", "elementId", patches)).equals(null)
+		})
+
+		o.test("when_attribute_not_existing_in_parsed_instance_but_in_server_model_is_supplied_path_patch_applies", async () => {
+			const testMail: any = createSystemMail({
+				_id: ["listId", "elementId"],
+				_ownerEncSessionKey: encryptedSessionKey.key,
+				_ownerKeyVersion: encryptedSessionKey.encryptingKeyVersion.toString(),
+				_ownerGroup: ownerGroupId,
+			}) as unknown
+
+			// remove unread to make it a partial mail, leading to addition of the unread flag with the patch
+			delete testMail.unread
+			const partialMail = testMail as Mail
+
+			await storage.put(MailTypeRef, await toStorableInstance(partialMail))
+			const unreadAttributeId = 109
+			const patches: Array<Patch> = [
+				createPatch({
+					attributePath: unreadAttributeId.toString(),
+					value: "0",
+					patchOperation: PatchOperationType.REPLACE,
+				}),
+			]
+
+			const parsedInstance = assertNotNull(await patchMerger.getPatchedInstanceParsed(MailTypeRef, "listId", "elementId", patches))
+			o(Object.keys(parsedInstance).find((attribute) => attribute === unreadAttributeId.toString())).equals("109")
 		})
 	})
 
@@ -462,36 +489,32 @@ o.spec("PatchMergerTest", () => {
 		})
 
 		o.test("apply_replace_on_ZeroOrOne_aggregation_works", async () => {
-			const mailbox = createTestEntity(MailBoxTypeRef, {
-				_id: "elementId",
-				_ownerEncSessionKey: encryptedSessionKey.key,
-				_ownerKeyVersion: encryptedSessionKey.encryptingKeyVersion.toString(),
-				_ownerGroup: ownerGroupId,
-				folders: null,
-				sentAttachments: "attachmentsId",
-				receivedAttachments: "attachmentsId",
-				importedAttachments: "attachmentsId",
-				mailImportStates: "importStatesId",
+			const eventElementId = stringToBase64("elementId")
+			const calendarEvent = createTestEntity(CalendarEventTypeRef, {
+				_id: ["listId", eventElementId],
+				repeatRule: null,
 			})
 
-			await storage.put(MailBoxTypeRef, await toStorableInstance(mailbox))
+			await storage.put(CalendarEventTypeRef, await toStorableInstance(calendarEvent))
 
-			const mailBoxTypeModel = await typeModelResolver.resolveClientTypeReference(MailBoxTypeRef)
-			const mailFolderRefAttributeId = assertNotNull(AttributeModel.getAttributeId(mailBoxTypeModel, "folders"))
-			const mailFolderRefToAdd = createTestEntity(MailFolderRefTypeRef, { folders: "mailFolderId" })
-			const untypedMailFolderRef = await instancePipeline.mapAndEncrypt(MailFolderRefTypeRef, mailFolderRefToAdd, sk)
+			const calendarEventTypeModel = await typeModelResolver.resolveClientTypeReference(CalendarEventTypeRef)
+			const repeatRuleAttributeId = assertNotNull(AttributeModel.getAttributeId(calendarEventTypeModel, "repeatRule"))
+			const repeatRuleToAdd = createTestEntity(CalendarRepeatRuleTypeRef, { _id: "added-by-patch" })
+			const untypedRepeatRule = await instancePipeline.mapAndEncrypt(CalendarRepeatRuleTypeRef, repeatRuleToAdd, sk)
 
 			const patches: Array<Patch> = [
 				createPatch({
-					attributePath: mailFolderRefAttributeId.toString(),
-					value: JSON.stringify([untypedMailFolderRef]),
+					attributePath: repeatRuleAttributeId.toString(),
+					value: JSON.stringify([untypedRepeatRule]),
 					patchOperation: PatchOperationType.REPLACE,
 				}),
 			]
-			o(mailbox.folders).equals(null)
-			const testMailBoxPatchedParsed = assertNotNull(await patchMerger.getPatchedInstanceParsed(MailBoxTypeRef, null, "elementId", patches))
-			const testMailBoxPatched = await instancePipeline.modelMapper.mapToInstance<MailBox>(MailBoxTypeRef, testMailBoxPatchedParsed)
-			o(testMailBoxPatched.folders?.folders).equals("mailFolderId")
+			o(calendarEvent.repeatRule).equals(null)
+			const patchedInstance = await instancePipeline.modelMapper.mapToInstance<CalendarEvent>(
+				CalendarEventTypeRef,
+				assertNotNull(await patchMerger.getPatchedInstanceParsed(CalendarEventTypeRef, "listId", eventElementId, patches)),
+			)
+			o(patchedInstance.repeatRule?._id).equals("added-by-patch")
 		})
 
 		o.test("apply_replace_on_Any_aggregation_works", async () => {

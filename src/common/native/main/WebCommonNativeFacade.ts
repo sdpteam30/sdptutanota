@@ -1,6 +1,6 @@
 import { CommonNativeFacade } from "../common/generatedipc/CommonNativeFacade.js"
 import { lang, MaybeTranslation, TranslationKey } from "../../misc/LanguageViewModel.js"
-import { decodeBase64, lazyAsync, noOp, ofClass } from "@tutao/tutanota-utils"
+import { decodeBase64, lazyAsync, newPromise, noOp, ofClass } from "@tutao/tutanota-utils"
 import { CancelledError } from "../../api/common/error/CancelledError.js"
 import { UserError } from "../../api/main/UserError.js"
 import m from "mithril"
@@ -18,8 +18,6 @@ import { ContactTypeRef } from "../../api/entities/tutanota/TypeRefs.js"
 import { isDesktop } from "../../api/common/Env"
 import { HighestTierPlans } from "../../api/common/TutanotaConstants.js"
 import { CalendarOpenAction } from "../common/generatedipc/CalendarOpenAction.js"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 export class WebCommonNativeFacade implements CommonNativeFacade {
 	constructor(
@@ -83,14 +81,11 @@ export class WebCommonNativeFacade implements CommonNativeFacade {
 		const signatureModule = await import("../../../mail-app/mail/signature/Signature")
 		await this.logins.waitForPartialLogin()
 		const mailboxDetails = await this.mailboxModel.getUserMailboxDetails()
-		let editor
 
 		try {
 			if (mailToUrlString) {
-				editor = await newMailtoUrlMailEditor(mailToUrlString, false, mailboxDetails).catch(ofClass(CancelledError, noOp))
-				if (!editor) return
-
-				editor.show()
+				const editor = await newMailtoUrlMailEditor(mailToUrlString, false, mailboxDetails).catch(ofClass(CancelledError, noOp))
+				editor?.show()
 			} else {
 				const fileApp = await this.fileApp()
 				const files = await fileApp.getFilesMetaData(filesUris)
@@ -153,7 +148,7 @@ export class WebCommonNativeFacade implements CommonNativeFacade {
 								],
 							}
 						: {}
-					editor = await newMailEditorFromTemplate(
+					const editor = await newMailEditorFromTemplate(
 						mailboxDetails,
 						recipients,
 						subject || (files.length > 0 ? files[0].name : ""),
@@ -164,7 +159,7 @@ export class WebCommonNativeFacade implements CommonNativeFacade {
 						true, // we want emails created in this method to always default to saving changes
 					)
 
-					editor.show()
+					editor?.show()
 				}
 			}
 		} catch (e) {

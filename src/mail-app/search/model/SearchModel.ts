@@ -4,7 +4,7 @@ import { CalendarEvent, CalendarEventTypeRef, MailTypeRef } from "../../../commo
 import { NOTHING_INDEXED_TIMESTAMP } from "../../../common/api/common/TutanotaConstants"
 import { DbError } from "../../../common/api/common/error/DbError"
 import type { SearchIndexStateInfo, SearchRestriction, SearchResult } from "../../../common/api/worker/search/SearchTypes"
-import { arrayEquals, assertNonNull, assertNotNull, incrementMonth, isSameTypeRef, lazyAsync, ofClass, tokenize } from "@tutao/tutanota-utils"
+import { arrayEquals, assertNonNull, assertNotNull, incrementMonth, isEmpty, isSameTypeRef, lazyAsync, ofClass, tokenize } from "@tutao/tutanota-utils"
 import { assertMainOrNode } from "../../../common/api/common/Env"
 import { listIdPart } from "../../../common/api/common/utils/EntityUtils.js"
 import { IProgressMonitor } from "../../../common/api/common/utils/ProgressMonitor.js"
@@ -189,32 +189,32 @@ export class SearchModel {
 				// that's a smaller savings than one might think because for the vast majority of
 				// events we're probably not matching and looking into the description anyway.
 				for (const [startOfDay, eventsOnDay] of eventsForDays) {
-					eventLoop: for (const event of eventsOnDay) {
+					eventLoop: for (const wrapper of eventsOnDay) {
 						if (!(startOfDay >= restriction.start && startOfDay <= restriction.end)) {
 							continue
 						}
 
-						const key = idToKey(event._id)
+						const key = idToKey(wrapper.event._id)
 
-						if (!followCommonRestrictions(key, event)) {
+						if (!followCommonRestrictions(key, wrapper.event)) {
 							continue
 						}
 
 						for (const token of tokens) {
-							if (event.summary.toLowerCase().includes(token)) {
+							if (wrapper.event.summary.toLowerCase().includes(token)) {
 								alreadyAdded.add(key)
-								calendarResult.results.push(event._id)
+								calendarResult.results.push(wrapper.event._id)
 								continue eventLoop
 							}
 						}
 
 						// checking the summary was cheap, now we store the sanitized description to check it against
 						// all tokens.
-						const descriptionToSearch = event.description.replaceAll(/(<[^>]+>)/gi, " ").toLowerCase()
+						const descriptionToSearch = wrapper.event.description.replaceAll(/(<[^>]+>)/gi, " ").toLowerCase()
 						for (const token of tokens) {
 							if (descriptionToSearch.includes(token)) {
 								alreadyAdded.add(key)
-								calendarResult.results.push(event._id)
+								calendarResult.results.push(wrapper.event._id)
 								continue eventLoop
 							}
 						}
@@ -339,7 +339,8 @@ export function areResultsForTheSameQuery(a: SearchResult, b: SearchResult) {
 
 export function hasMoreResults(searchResult: SearchResult): boolean {
 	return (
-		searchResult.moreResults.length > 0 ||
-		(searchResult.lastReadSearchIndexRow.length > 0 && searchResult.lastReadSearchIndexRow.every(([word, id]) => id !== 0))
+		!isEmpty(searchResult.moreResults) ||
+		!isEmpty(searchResult.moreResultsEntries) ||
+		(!isEmpty(searchResult.lastReadSearchIndexRow) && searchResult.lastReadSearchIndexRow.every(([word, id]) => id !== 0))
 	)
 }

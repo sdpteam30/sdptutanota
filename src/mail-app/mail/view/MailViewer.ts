@@ -1,4 +1,4 @@
-import { px, size } from "../../../common/gui/size"
+import { component_size, font_size, px, size } from "../../../common/gui/size"
 import m, { Children, Component, Vnode } from "mithril"
 import stream from "mithril/stream"
 import { windowFacade, windowSizeListener } from "../../../common/misc/WindowFacade"
@@ -6,17 +6,17 @@ import { FeatureType, InboxRuleType, Keys, MailSetKind, SpamRuleFieldType, SpamR
 import { File as TutanotaFile, Mail } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { lang } from "../../../common/misc/LanguageViewModel"
 import { assertMainOrNode } from "../../../common/api/common/Env"
-import { assertNonNull, assertNotNull, defer, DeferredObject, noOp, ofClass } from "@tutao/tutanota-utils"
+import { assertNonNull, assertNotNull, createResizeObserver, defer, DeferredObject, memoized, noOp, ofClass } from "@tutao/tutanota-utils"
 import { IconMessageBox } from "../../../common/gui/base/ColumnEmptyMessageBox"
 import type { Shortcut } from "../../../common/misc/KeyManager"
 import { keyManager } from "../../../common/misc/KeyManager"
 import { Icon, progressIcon } from "../../../common/gui/base/Icon"
 import { Icons } from "../../../common/gui/base/icons/Icons"
-import { theme } from "../../../common/gui/theme"
+import { isDarkTheme, theme } from "../../../common/gui/theme"
 import { client } from "../../../common/misc/ClientDetector"
 import { styles } from "../../../common/gui/styles"
 import { DropdownButtonAttrs, showDropdownAtPosition } from "../../../common/gui/base/Dropdown.js"
-import { isTutanotaTeamMail, replaceCidsWithInlineImages } from "./MailGuiUtils"
+import { applyDarkThemeFix, isTutanotaTeamMail, replaceCidsWithInlineImages } from "./MailGuiUtils"
 import { getCoordsOfMouseOrTouchEvent } from "../../../common/gui/base/GuiUtils"
 import { copyToClipboard } from "../../../common/misc/ClipboardUtils"
 import { ContentBlockingStatus, MailViewerViewModel } from "./MailViewerViewModel"
@@ -33,7 +33,6 @@ import { responsiveCardHMargin, responsiveCardHPadding } from "../../../common/g
 import { Dialog } from "../../../common/gui/base/Dialog.js"
 import { createNewContact } from "../../../common/mailFunctionality/SharedMailUtils.js"
 import { getExistingRuleForType } from "../model/MailUtils.js"
-import { createResizeObserver } from "@tutao/tutanota-utils/dist/Utils"
 import { SearchToken } from "../../../common/api/common/utils/QueryTokenUtils"
 import { highlightTextInQueryAsChildren } from "../../../common/gui/TextHighlightViewUtils"
 import { MailViewModel } from "./MailViewModel"
@@ -115,6 +114,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 	}
 
 	onremove({ attrs }: Vnode<MailViewerAttrs>) {
+		this.loadAllListener.end(true)
 		windowFacade.removeResizeListener(this.resizeListener)
 		if (this.resizeObserverZoomable) {
 			this.resizeObserverZoomable.disconnect()
@@ -157,13 +157,14 @@ export class MailViewer implements Component<MailViewerAttrs> {
 
 	view(vnode: Vnode<MailViewerAttrs>): Children {
 		this.handleContentBlockingOnRender()
+		const forceWhiteBackground = isDarkTheme() && !this.shouldViewInDarkMode()
 
 		return [
 			m(".mail-viewer.overflow-x-hidden", [
 				this.renderMailHeader(vnode.attrs),
 				this.renderMailSubject(vnode.attrs),
 				m(
-					".flex-grow.scroll-x.pt.pb.border-radius-big" + (this.viewModel.isContrastFixNeeded() ? ".bg-white.content-black" : " "),
+					".flex-grow.scroll-x.pt-16.pb-16.border-radius-12" + (forceWhiteBackground ? ".bg-white.content-black" : ""),
 					{
 						class: responsiveCardHPadding(),
 						oncreate: (vnode) => {
@@ -179,7 +180,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 
 	private renderMailSubject(attrs: MailViewerAttrs) {
 		return m(
-			"h4.font-weight-600.mt.mb.text-break.selectable." + responsiveCardHMargin(),
+			"h4.font-weight-600.mt-16.mb-16.text-break.selectable." + responsiveCardHMargin(),
 			{
 				"data-testid": `h:${lang.getTestId("subject_label")}`,
 			},
@@ -214,8 +215,8 @@ export class MailViewer implements Component<MailViewerAttrs> {
 				{
 					style: {
 						borderRadius: "25%",
-						border: `1px solid ${theme.list_border}`,
-						backgroundColor: theme.content_bg,
+						border: `1px solid ${theme.outline_variant}`,
+						backgroundColor: theme.surface,
 					},
 				},
 				m(ToggleButton, {
@@ -228,7 +229,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 					},
 					style: {
 						height: "24px",
-						width: px(size.button_height_compact),
+						width: px(component_size.button_height_compact),
 					},
 				}),
 			),
@@ -273,7 +274,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 			return m(IconMessageBox, {
 				message: "corrupted_msg",
 				icon: Icons.Warning,
-				color: theme.content_message_bg,
+				color: theme.on_surface_variant,
 			})
 		}
 
@@ -283,13 +284,25 @@ export class MailViewer implements Component<MailViewerAttrs> {
 		if (this.viewModel.shouldDelayRendering()) {
 			return null
 		} else if (sanitizedMailBody != null) {
-			return this.renderMailBody(sanitizedMailBody, attrs)
+			if (this.shouldViewInDarkMode()) {
+				return this.renderMailBody(this.applyDarkThemeFixToBody(sanitizedMailBody), attrs)
+			} else {
+				return this.renderMailBody(sanitizedMailBody, attrs)
+			}
 		} else if (this.viewModel.isLoading()) {
 			return this.renderLoadingIcon()
 		} else {
 			// The body failed to load, just show blank body because there is a banner
 			return null
 		}
+	}
+
+	private readonly applyDarkThemeFixToBody: (sanitizedMailBody: DocumentFragment) => DocumentFragment = memoized((sanitizedMailBody) => {
+		return applyDarkThemeFix(sanitizedMailBody)
+	})
+
+	private shouldViewInDarkMode(): boolean {
+		return isDarkTheme() && !this.viewModel.getForceLightMode()
 	}
 
 	private renderMailBody(sanitizedMailBody: DocumentFragment, attrs: MailViewerAttrs): Children {
@@ -346,7 +359,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 				}
 			},
 			style: {
-				"line-height": this.bodyLineHeight ? this.bodyLineHeight.toString() : size.line_height,
+				"line-height": this.bodyLineHeight ? this.bodyLineHeight.toString() : font_size.line_height,
 				"transform-origin": "top left",
 			},
 		})
@@ -398,7 +411,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 		wrapNode.id = "shadow-mail-body"
 		wrapNode.className = "drag selectable touch-callout break-word-links" + (client.isMobileDevice() ? " break-pre" : "")
 		wrapNode.setAttribute("data-testid", "mailBody_label")
-		wrapNode.style.lineHeight = String(this.bodyLineHeight ? this.bodyLineHeight.toString() : size.line_height)
+		wrapNode.style.lineHeight = String(this.bodyLineHeight ? this.bodyLineHeight.toString() : font_size.line_height)
 		wrapNode.style.transformOrigin = "0px 0px"
 
 		// Remove "align" property from the top-level content as it causes overflow.
@@ -519,17 +532,17 @@ export class MailViewer implements Component<MailViewerAttrs> {
 
 		const quoteIndicator = document.createElement("div")
 		quoteIndicator.classList.add("flex")
-		quoteIndicator.style.borderLeft = `2px solid ${theme.content_border}`
+		quoteIndicator.style.borderLeft = `2px solid ${theme.outline}`
 		quoteIndicator.style.display = expanded ? "none" : ""
 
 		m.render(
 			quoteIndicator,
 			m(Icon, {
 				icon: Icons.More,
-				class: "icon-xl mlr",
+				class: "icon-32 mlr-12",
 				container: "div",
 				style: {
-					fill: theme.navigation_menu_icon,
+					fill: theme.on_surface_variant,
 				},
 			}),
 		)
@@ -644,11 +657,11 @@ export class MailViewer implements Component<MailViewerAttrs> {
 		const width = dom.offsetWidth
 
 		if (width > 900) {
-			this.bodyLineHeight = size.line_height_l
+			this.bodyLineHeight = font_size.line_height_l
 		} else if (width > 600) {
-			this.bodyLineHeight = size.line_height_m
+			this.bodyLineHeight = font_size.line_height_m
 		} else {
-			this.bodyLineHeight = size.line_height
+			this.bodyLineHeight = font_size.line_height
 		}
 
 		dom.style.lineHeight = String(this.bodyLineHeight)
@@ -770,7 +783,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 					// disable new mails for external users.
 					import("../editor/MailEditor").then(({ newMailtoUrlMailEditor }) => {
 						newMailtoUrlMailEditor(href, !locator.logins.getUserController().props.defaultUnconfidential)
-							.then((editor) => editor.show())
+							.then((editor) => editor?.show())
 							.catch(ofClass(CancelledError, noOp))
 					})
 				}

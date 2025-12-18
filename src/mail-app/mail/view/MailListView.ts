@@ -1,19 +1,19 @@
 import m, { Children, Component, Vnode } from "mithril"
 import { lang } from "../../../common/misc/LanguageViewModel"
 
-import { Keys, MailSetKind, MailState } from "../../../common/api/common/TutanotaConstants"
+import { Keys, MailSetKind, MailState, SystemFolderType } from "../../../common/api/common/TutanotaConstants"
 import type { Mail } from "../../../common/api/entities/tutanota/TypeRefs.js"
-import { size } from "../../../common/gui/size"
+import { component_size } from "../../../common/gui/size"
 import { styles } from "../../../common/gui/styles"
 import { Icon } from "../../../common/gui/base/Icon"
 import { Icons } from "../../../common/gui/base/icons/Icons"
 import type { ButtonAttrs } from "../../../common/gui/base/Button.js"
 import { Button, ButtonColor, ButtonType } from "../../../common/gui/base/Button.js"
 import { Dialog } from "../../../common/gui/base/Dialog"
-import { assertNotNull, AsyncResult, downcast, neverNull, promiseMap } from "@tutao/tutanota-utils"
+import { assertNotNull, AsyncResult, downcast, neverNull, newPromise, promiseMap } from "@tutao/tutanota-utils"
 import { locator } from "../../../common/api/main/CommonLocator"
 import { getElementId, getLetId, haveSameId } from "../../../common/api/common/utils/EntityUtils"
-import { moveMailsToSystemFolder, promptAndDeleteMails, trashMails } from "./MailGuiUtils"
+import { promptAndDeleteMails } from "./MailGuiUtils"
 import { MailRow } from "./MailRow"
 import { makeTrackedProgressMonitor } from "../../../common/api/common/utils/ProgressMonitor"
 import { generateMailFile, getMailExportMode } from "../export/Exporter"
@@ -35,8 +35,6 @@ import { DropType } from "../../../common/gui/base/GuiUtils"
 import { ListElementListModel } from "../../../common/misc/ListElementListModel"
 import { generateExportFileName } from "../export/emlUtils.js"
 
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
-
 assertMainOrNode()
 
 export interface MailListViewAttrs {
@@ -48,6 +46,8 @@ export interface MailListViewAttrs {
 	onSingleInclusiveSelection: ListElementListModel<Mail>["onSingleInclusiveSelection"]
 	onRangeSelectionTowards: ListElementListModel<Mail>["selectRangeTowards"]
 	onSingleExclusiveSelection: ListElementListModel<Mail>["onSingleExclusiveSelection"]
+	onTrashSwipe: (ownerGroup: Id, mails: readonly IdTuple[]) => unknown
+	onMoveSwipe: (targetFolderType: SystemFolderType, mails: readonly IdTuple[]) => Promise<boolean>
 }
 
 export class MailListView implements Component<MailListViewAttrs> {
@@ -74,7 +74,7 @@ export class MailListView implements Component<MailListViewAttrs> {
 	}
 
 	private readonly renderConfig: RenderConfig<Mail, MailRow> = {
-		itemHeight: size.list_row_height,
+		itemHeight: component_size.list_row_height,
 		multiselectionAllowed: MultiselectMode.Enabled,
 		createElement: (dom: HTMLElement) => {
 			const mailRow = new MailRow(
@@ -137,8 +137,8 @@ export class MailListView implements Component<MailListViewAttrs> {
 
 			this._doExportDrag(draggedMails)
 		} else if (styles.isDesktopLayout()) {
-			// Desktop layout only because it doesn't make sense to drag mails to folders when the folder list and mail list aren't visible at the same time
-			neverNull(event.dataTransfer).setData(DropType.Mail, getLetId(neverNull(mailUnderCursor))[1])
+			// Desktop layout only because it doesn't make sense to drag mails to mailSets when the folder list and mail list aren't visible at the same time
+			event.dataTransfer?.setData(DropType.Mail, getElementId(mailUnderCursor))
 		} else {
 			event.preventDefault()
 		}
@@ -163,8 +163,8 @@ export class MailListView implements Component<MailListViewAttrs> {
 
 			this._doExportDrag(draggedMails)
 		} else if (styles.isDesktopLayout()) {
-			// Desktop layout only because it doesn't make sense to drag mails to folders when the folder list and mail list aren't visible at the same time
-			neverNull(event.dataTransfer).setData(DropType.Mail, getLetId(neverNull(mailUnderCursor))[1])
+			// Desktop layout only because it doesn't make sense to drag mails to mailSets when the folder list and mail list aren't visible at the same time
+			event.dataTransfer?.setData(DropType.Mail, getElementId(mailUnderCursor))
 		} else {
 			event.preventDefault()
 		}
@@ -268,13 +268,15 @@ export class MailListView implements Component<MailListViewAttrs> {
 			notDownloaded.map((f) => f.fileName),
 			new Set(downloaded.map((f) => f.fileName)),
 		)
+
+		const { getHtmlSanitizer } = await import("../../../common/misc/HtmlSanitizer")
+		const htmlSanitizer = getHtmlSanitizer()
 		const [newFiles, existingFiles] = await Promise.all([
 			// Download all the files that need downloading, wait for them, and then return the filename
 			promiseMap(notDownloaded, async ({ mail, fileName }) => {
 				const name = assertNotNull(deduplicatedNames[fileName].shift())
 				const key = mapKey(mail)
 				const downloadPromise = Promise.resolve().then(async () => {
-					const { htmlSanitizer } = await import("../../../common/misc/HtmlSanitizer")
 					const bundle = await downloadMailBundle(
 						mail,
 						locator.mailFacade,
@@ -302,6 +304,18 @@ export class MailListView implements Component<MailListViewAttrs> {
 		return newFiles.concat(existingFiles)
 	}
 
+	// listeners to indicate the when mod key is held, dragging will do something
+	private readonly onKeyDown = (event: KeyboardEvent) => {
+		if (isDragAndDropModifierHeld(event)) {
+			this._listDom?.classList.add("drag-mod-key")
+		}
+	}
+
+	private readonly onKeyUp = (event: KeyboardEvent) => {
+		// The event doesn't have a
+		this._listDom?.classList.remove("drag-mod-key")
+	}
+
 	view(vnode: Vnode<MailListViewAttrs>): Children {
 		this.attrs = vnode.attrs
 
@@ -316,18 +330,6 @@ export class MailListView implements Component<MailListViewAttrs> {
 			},
 		}
 
-		// listeners to indicate the when mod key is held, dragging will do something
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (isDragAndDropModifierHeld(event)) {
-				this._listDom?.classList.add("drag-mod-key")
-			}
-		}
-
-		const onKeyUp = (event: KeyboardEvent) => {
-			// The event doesn't have a
-			this._listDom?.classList.remove("drag-mod-key")
-		}
-
 		const listModel = vnode.attrs.mailViewModel.listModel
 		return m(
 			".mail-list-wrapper",
@@ -336,14 +338,14 @@ export class MailListView implements Component<MailListViewAttrs> {
 					this._listDom = downcast(vnode.dom.firstChild)
 
 					if (canDoDragAndDropExport()) {
-						assertNotNull(document.body).addEventListener("keydown", onKeyDown)
-						assertNotNull(document.body).addEventListener("keyup", onKeyUp)
+						assertNotNull(document.body).addEventListener("keydown", this.onKeyDown)
+						assertNotNull(document.body).addEventListener("keyup", this.onKeyUp)
 					}
 				},
-				onbeforeremove: (vnode) => {
+				onremove: (vnode) => {
 					if (canDoDragAndDropExport()) {
-						assertNotNull(document.body).removeEventListener("keydown", onKeyDown)
-						assertNotNull(document.body).removeEventListener("keyup", onKeyUp)
+						assertNotNull(document.body).removeEventListener("keydown", this.onKeyDown)
+						assertNotNull(document.body).removeEventListener("keyup", this.onKeyUp)
 					}
 				},
 			},
@@ -353,12 +355,13 @@ export class MailListView implements Component<MailListViewAttrs> {
 				ListColumnWrapper,
 				{
 					headerContent: this.renderListHeader(purgeButtonAttrs),
+					class: styles.isSingleColumnLayout() ? undefined : "column-resize-margin",
 				},
 				listModel == null || listModel.isEmptyAndDone()
 					? m(ColumnEmptyMessageBox, {
 							icon: BootIcons.Mail,
 							message: "noMails_msg",
-							color: theme.list_message_bg,
+							color: theme.on_surface_variant,
 						})
 					: m(List, {
 							state: listModel.stateStream(),
@@ -390,9 +393,9 @@ export class MailListView implements Component<MailListViewAttrs> {
 		return m(".flex.col", [
 			this.showingSpamOrTrash
 				? [
-						m(".flex.flex-column.plr-l", [
-							m(".small.flex-grow.pt", lang.get("storageDeletion_msg")),
-							m(".mr-negative-s.align-self-end", m(Button, purgeButtonAttrs)),
+						m(".flex.flex-column.plr-24", [
+							m(".small.flex-grow.pt-16", lang.get("storageDeletion_msg")),
+							m(".mr-negative-8.align-self-end", m(Button, purgeButtonAttrs)),
 						]),
 					]
 				: null,
@@ -403,10 +406,8 @@ export class MailListView implements Component<MailListViewAttrs> {
 		const selectedFolder = this.mailViewModel.getFolder()
 		if (selectedFolder) {
 			const mailDetails = await this.mailViewModel.getMailboxDetails()
-			if (mailDetails.mailbox.folders) {
-				const folders = await mailLocator.mailModel.getMailboxFoldersForId(mailDetails.mailbox.folders._id)
-				return isOfTypeOrSubfolderOf(folders, selectedFolder, MailSetKind.ARCHIVE) || selectedFolder.folderType === MailSetKind.TRASH
-			}
+			const folders = await mailLocator.mailModel.getMailboxFoldersForId(mailDetails.mailbox.mailSets._id)
+			return isOfTypeOrSubfolderOf(folders, selectedFolder, MailSetKind.ARCHIVE) || selectedFolder.folderType === MailSetKind.TRASH
 		}
 		return false
 	}
@@ -415,14 +416,14 @@ export class MailListView implements Component<MailListViewAttrs> {
 		const actionableMails = await this.mailViewModel.getResolvedMails([listElement])
 		const currentFolder = this.mailViewModel.getFolder()
 
-		if (this.mailViewModel.currentFolderDeletesPermanently()) {
+		if (this.mailViewModel.isPermanentDeleteAllowed()) {
 			const wereDeleted = await promptAndDeleteMails(mailLocator.mailModel, actionableMails, assertNotNull(currentFolder)._id, () =>
 				this.mailViewModel.listModel?.selectNone(),
 			)
 			return wereDeleted ? ListSwipeDecision.Commit : ListSwipeDecision.Cancel
 		} else {
-			const wereTrashed = await trashMails(mailLocator.mailModel, actionableMails)
-			return wereTrashed ? ListSwipeDecision.Commit : ListSwipeDecision.Cancel
+			this.attrs.onTrashSwipe(assertNotNull(listElement._ownerGroup), actionableMails)
+			return ListSwipeDecision.Commit
 		}
 	}
 
@@ -443,18 +444,8 @@ export class MailListView implements Component<MailListViewAttrs> {
 					: this.showingArchive
 						? MailSetKind.INBOX
 						: MailSetKind.ARCHIVE
-
 				const actionableMails = await this.mailViewModel.getResolvedMails([listElement])
-				const wereMoved = await moveMailsToSystemFolder({
-					mailboxModel: locator.mailboxModel,
-					mailModel: mailLocator.mailModel,
-					mailIds: actionableMails,
-					currentFolder: folder,
-					targetFolderType: targetMailFolderType,
-					moveMode: this.mailViewModel.getMoveMode(folder),
-					mailViewModel: this.mailViewModel,
-				})
-				return wereMoved ? ListSwipeDecision.Commit : ListSwipeDecision.Cancel
+				return (await this.attrs.onMoveSwipe(targetMailFolderType, actionableMails)) ? ListSwipeDecision.Commit : ListSwipeDecision.Cancel
 			} else {
 				return ListSwipeDecision.Cancel
 			}
@@ -467,14 +458,14 @@ export class MailListView implements Component<MailListViewAttrs> {
 					m(Icon, {
 						icon: Icons.Cancel,
 					}),
-					m(".pl-s", lang.get("cancel_action")), // if this is the drafts folder, we can only cancel the selection as we have nowhere else to put the mail
+					m(".pl-4", lang.get("cancel_action")), // if this is the drafts folder, we can only cancel the selection as we have nowhere else to put the mail
 				]
 			: [
 					m(Icon, {
 						icon: Icons.Folder,
 					}),
 					m(
-						".pl-s",
+						".pl-4",
 						this.showingSpamOrTrash
 							? lang.get("recover_label") // show "recover" if this is the trash/spam folder
 							: this.showingArchive // otherwise show "inbox" or "archive" depending on the folder
@@ -489,7 +480,7 @@ export class MailListView implements Component<MailListViewAttrs> {
 			m(Icon, {
 				icon: Icons.Trash,
 			}),
-			m(".pl-s", lang.get("delete_action")),
+			m(".pl-4", lang.get("delete_action")),
 		]
 	}
 }

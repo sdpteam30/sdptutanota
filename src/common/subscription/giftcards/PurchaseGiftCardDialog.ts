@@ -6,7 +6,7 @@ import { showProgressDialog } from "../../gui/dialogs/ProgressDialog"
 import { locator } from "../../api/main/CommonLocator"
 import { BOX_MARGIN, BuyOptionBox } from "../BuyOptionBox"
 import { ButtonType } from "../../gui/base/Button.js"
-import { getPreconditionFailedPaymentMsg } from "../SubscriptionUtils"
+import { getPreconditionFailedPaymentMsg } from "../utils/SubscriptionUtils"
 import { renderAcceptGiftCardTermsCheckbox, showGiftCardToShare } from "./GiftCardUtils"
 import type { DialogHeaderBarAttrs } from "../../gui/base/DialogHeaderBar"
 import { showUserError } from "../../misc/ErrorHandlerImpl"
@@ -18,7 +18,7 @@ import { GiftCardMessageEditorField } from "./GiftCardMessageEditorField"
 import { client } from "../../misc/ClientDetector"
 import { count, filterInt, noOp, ofClass } from "@tutao/tutanota-utils"
 import { isIOSApp } from "../../api/common/Env"
-import { formatPrice, PaymentInterval, PriceAndConfigProvider } from "../PriceUtils"
+import { formatPrice, PaymentInterval, PriceAndConfigProvider } from "../utils/PriceUtils"
 import { GiftCardService } from "../../api/entities/sys/Services"
 import { UpgradePriceType } from "../FeatureListProvider"
 import { TranslationKeyType } from "../../misc/TranslationKey.js"
@@ -116,7 +116,7 @@ class GiftCardPurchaseView implements Component<GiftCardPurchaseViewAttrs> {
 		const { model, onGiftCardPurchased } = vnode.attrs
 		return [
 			m(
-				".flex.center-horizontally.wrap.pt-ml",
+				".flex.center-horizontally.wrap.pt-24",
 				{
 					style: {
 						"column-gap": px(BOX_MARGIN),
@@ -131,7 +131,7 @@ class GiftCardPurchaseView implements Component<GiftCardPurchaseViewAttrs> {
 							Array(Math.pow(2, index)).fill(
 								m(Icon, {
 									icon: Icons.Gift,
-									size: IconSize.Medium,
+									size: IconSize.PX24,
 								}),
 							),
 						),
@@ -159,10 +159,10 @@ class GiftCardPurchaseView implements Component<GiftCardPurchaseViewAttrs> {
 					message: model.message,
 					onMessageChanged: (message) => (model.message = message),
 				}),
-				renderAcceptGiftCardTermsCheckbox(model.confirmed, (checked) => (model.confirmed = checked), "pt-l"),
+				renderAcceptGiftCardTermsCheckbox(model.confirmed, (checked) => (model.confirmed = checked), "pt-32"),
 				m(LoginButton, {
 					label: "buy_action",
-					class: "mt-l mb-l",
+					class: "mt-32 mb-32",
 					onclick: () => this.onBuyButtonPressed(model, onGiftCardPurchased).catch(ofClass(UserError, showUserError)),
 				}),
 			]),

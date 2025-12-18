@@ -1,11 +1,11 @@
-import o from "../../../../packages/otest/dist/otest"
+import o from "@tutao/otest"
 import {
 	createMailSetEntry,
 	Mail,
 	MailboxGroupRootTypeRef,
 	MailBoxTypeRef,
-	MailFolder,
-	MailFolderTypeRef,
+	MailSet,
+	MailSetTypeRef,
 	MailSetEntry,
 	MailSetEntryTypeRef,
 	MailTypeRef,
@@ -31,7 +31,6 @@ import {
 } from "../../../../src/common/api/common/utils/EntityUtils"
 import { PageSize } from "../../../../src/common/gui/base/ListUtils"
 import { createTestEntity } from "../../TestUtils"
-import { tutaDunkel, tutaRed } from "../../../../src/common/gui/builtinThemes"
 import { EntityUpdateData, PrefetchStatus } from "../../../../src/common/api/common/utils/EntityUpdateUtils"
 import { MailboxDetail } from "../../../../src/common/mailFunctionality/MailboxModel"
 import { GroupInfoTypeRef, GroupTypeRef } from "../../../../src/common/api/entities/sys/TypeRefs"
@@ -39,8 +38,12 @@ import { ConnectionError } from "../../../../src/common/api/common/error/RestErr
 import { assertNotNull, clamp, lastThrow, pad } from "@tutao/tutanota-utils"
 import { LoadedMail } from "../../../../src/mail-app/mail/model/MailSetListModel"
 import { ConversationListModel } from "../../../../src/mail-app/mail/model/ConversationListModel"
+import { theme } from "../../../../src/common/gui/theme.js"
 import { ListLoadingState } from "../../../../src/common/gui/base/List"
 import { getMailFilterForType, MailFilterType } from "../../../../src/mail-app/mail/view/MailViewerUtils"
+import { ProcessInboxHandler } from "../../../../src/mail-app/mail/model/ProcessInboxHandler"
+import { FolderSystem } from "../../../../src/common/api/common/mail/FolderSystem"
+import { WebsocketConnectivityModel } from "../../../../src/common/misc/WebsocketConnectivityModel"
 
 o.spec("ConversationListModel", () => {
 	let model: ConversationListModel
@@ -59,32 +62,33 @@ o.spec("ConversationListModel", () => {
 	const mailSetEntriesListId = "entries"
 	const _ownerGroup = "me"
 
-	const labels: MailFolder[] = [
-		createTestEntity(MailFolderTypeRef, {
-			_id: ["mailFolderList", "tutaRed"],
-			color: tutaRed,
+	const labels: MailSet[] = [
+		createTestEntity(MailSetTypeRef, {
+			_id: ["mailFolderList", "tutaPrimary"],
+			color: theme.primary,
 			folderType: MailSetKind.LABEL,
-			name: "Tuta Red Label",
+			name: "Tuta Primary Label",
 			parentFolder: null,
 		}),
-		createTestEntity(MailFolderTypeRef, {
-			_id: ["mailFolderList", "tutaDunkel"],
-			color: tutaDunkel,
+		createTestEntity(MailSetTypeRef, {
+			_id: ["mailFolderList", "tutaSecondary"],
+			color: theme.secondary,
 			folderType: MailSetKind.LABEL,
-			name: "Tuta Dunkel Label",
+			name: "Tuta Secondary Label",
 			parentFolder: null,
 		}),
 	]
 
-	let mailSet: MailFolder
+	let mailSet: MailSet
 	let conversationPrefProvider: ConversationPrefProvider
 	let entityClient: EntityClient
 	let mailModel: MailModel
-	let inboxRuleHandler: InboxRuleHandler
+	let processInboxHandler: ProcessInboxHandler
 	let cacheStorage: ExposedCacheStorage
+	let connectivityModel: WebsocketConnectivityModel
 
 	o.beforeEach(() => {
-		mailSet = createTestEntity(MailFolderTypeRef, {
+		mailSet = createTestEntity(MailSetTypeRef, {
 			_id: ["mailFolderList", "mailFolderId"],
 			folderType: MailSetKind.CUSTOM,
 			name: "My Folder",
@@ -95,10 +99,14 @@ o.spec("ConversationListModel", () => {
 		conversationPrefProvider = object()
 		entityClient = object()
 		mailModel = object()
-		inboxRuleHandler = object()
+		processInboxHandler = object()
 		cacheStorage = object()
-		model = new ConversationListModel(mailSet, conversationPrefProvider, entityClient, mailModel, inboxRuleHandler, cacheStorage)
+		connectivityModel = object()
+		when(connectivityModel.isLeader()).thenReturn(true)
+		model = new ConversationListModel(mailSet, conversationPrefProvider, entityClient, mailModel, processInboxHandler, cacheStorage, connectivityModel)
 		when(mailModel.getMailboxDetailsForMailFolder(mailSet)).thenResolve(mailboxDetail)
+		const folderSystem: FolderSystem = object()
+		when(mailModel.getFolderSystemByGroupId(matchers.anything())).thenReturn(folderSystem)
 	})
 
 	// Care has to be ensured for generating mail set entry IDs as we depend on real mail set ID decoding, thus we have
@@ -117,7 +125,7 @@ o.spec("ConversationListModel", () => {
 	}
 
 	// Creates a totalMails number of mails, grouping into a number of conversations equal to totalMails/mailsPerConversation
-	async function setUpTestData(totalMails: number, initialLabels: MailFolder[], offline: boolean, mailsPerConversation: number): Promise<Mail[]> {
+	async function setUpTestData(totalMails: number, initialLabels: MailSet[], offline: boolean, mailsPerConversation: number): Promise<Mail[]> {
 		const mailSetEntries: MailSetEntry[] = []
 		const mails: Mail[][] = [[], [], [], [], [], [], [], [], [], []]
 		const allMails: Mail[] = []
@@ -147,7 +155,7 @@ o.spec("ConversationListModel", () => {
 		}
 
 		when(mailModel.getLabelsForMail(matchers.anything())).thenDo((mail: Mail) => {
-			const sets: MailFolder[] = []
+			const sets: MailSet[] = []
 			for (const set of mail.sets) {
 				const setToAdd = labels.find((label) => isSameId(label._id, set))
 				if (setToAdd) {
@@ -209,7 +217,7 @@ o.spec("ConversationListModel", () => {
 		verify(mailModel.getMailboxDetailsForMailFolder(matchers.anything()), {
 			times: 0,
 		})
-		verify(inboxRuleHandler.findAndApplyMatchingRule(mailboxDetail, matchers.anything(), true, false), {
+		verify(processInboxHandler.handleIncomingMail(matchers.anything(), matchers.anything(), mailboxDetail, matchers.anything(), true), {
 			times: 0,
 		})
 	})
@@ -227,7 +235,7 @@ o.spec("ConversationListModel", () => {
 		verify(mailModel.getMailboxDetailsForMailFolder(matchers.anything()), {
 			times: 0,
 		})
-		verify(inboxRuleHandler.findAndApplyMatchingRule(mailboxDetail, matchers.anything(), true, false), {
+		verify(processInboxHandler.handleIncomingMail(matchers.anything(), matchers.anything(), mailboxDetail, matchers.anything(), true), {
 			times: 0,
 		})
 	})
@@ -246,7 +254,7 @@ o.spec("ConversationListModel", () => {
 		verify(mailModel.getMailboxDetailsForMailFolder(matchers.anything()), {
 			times: 0,
 		})
-		verify(inboxRuleHandler.findAndApplyMatchingRule(mailboxDetail, matchers.anything(), true, false), {
+		verify(processInboxHandler.handleIncomingMail(matchers.anything(), matchers.anything(), mailboxDetail, matchers.anything(), true), {
 			times: 0,
 		})
 		o.check(model.loadingStatus).equals(ListLoadingState.Idle)
@@ -262,16 +270,29 @@ o.spec("ConversationListModel", () => {
 
 		// make one item have a rule
 		when(
-			inboxRuleHandler.findAndApplyMatchingRule(
-				mailboxDetail,
+			processInboxHandler.handleIncomingMail(
 				matchers.argThat((mail: Mail) => isSameId(mail._id, makeMailId(25))),
+				matchers.anything(),
+				matchers.anything(),
+				matchers.anything(),
 				true,
-				false,
 			),
-		).thenResolve({})
+		).thenResolve({ folderType: MailSetKind.SPAM })
+
+		when(
+			processInboxHandler.handleIncomingMail(
+				matchers.argThat((mail: Mail) => !isSameId(mail._id, makeMailId(25))),
+				matchers.anything(),
+				matchers.anything(),
+				matchers.anything(),
+				true,
+			),
+		).thenResolve({ folderType: MailSetKind.INBOX })
 
 		await setUpTestData(PageSize, labels, false, 1)
+
 		await model.loadInitial()
+
 		o.check(model.mails.length).equals(PageSize - 1)
 		for (const mail of model.mails) {
 			o.check(model.getLabelsForMail(mail)).deepEquals(labels)
@@ -282,7 +303,7 @@ o.spec("ConversationListModel", () => {
 		verify(mailModel.getMailboxDetailsForMailFolder(matchers.anything()), {
 			times: 1,
 		})
-		verify(inboxRuleHandler.findAndApplyMatchingRule(mailboxDetail, matchers.anything(), true, false), {
+		verify(processInboxHandler.handleIncomingMail(matchers.anything(), matchers.anything(), mailboxDetail, matchers.anything(), true), {
 			times: 100,
 		})
 	})
@@ -371,7 +392,7 @@ o.spec("ConversationListModel", () => {
 		const mailSetEntryId: IdTuple = [mailSetEntriesListId, makeMailSetElementId(0)]
 		const entityUpdateData: EntityUpdateData = {
 			typeRef: MailSetEntryTypeRef,
-			instanceListId: listIdPart(mailSetEntryId),
+			instanceListId: listIdPart(mailSetEntryId) as NonEmptyString,
 			instanceId: elementIdPart(mailSetEntryId),
 			operation: OperationType.CREATE,
 			instance: null,
@@ -415,8 +436,8 @@ o.spec("ConversationListModel", () => {
 			o.check(model.getLabelsForMail(someMail.mail)[1]).notDeepEquals(labels[1])
 
 			const entityUpdateData: EntityUpdateData = {
-				typeRef: MailFolderTypeRef,
-				instanceListId: getListId(labels[1]),
+				typeRef: MailSetTypeRef,
+				instanceListId: getListId(labels[1]) as NonEmptyString,
 				instanceId: getElementId(labels[1]),
 				operation: OperationType.DELETE,
 				...noPatchesAndInstance,
@@ -443,8 +464,8 @@ o.spec("ConversationListModel", () => {
 			await model.loadInitial()
 
 			const entityUpdateData: EntityUpdateData = {
-				typeRef: MailFolderTypeRef,
-				instanceListId: getListId(labels[1]),
+				typeRef: MailSetTypeRef,
+				instanceListId: getListId(labels[1]) as NonEmptyString,
 				instanceId: getElementId(labels[1]),
 				operation: OperationType.DELETE,
 				...noPatchesAndInstance,
@@ -471,7 +492,7 @@ o.spec("ConversationListModel", () => {
 
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailSetEntryTypeRef,
-				instanceListId: listIdPart(someMail.mailSetEntryId),
+				instanceListId: listIdPart(someMail.mailSetEntryId) as NonEmptyString,
 				instanceId: elementIdPart(someMail.mailSetEntryId),
 				operation: OperationType.DELETE,
 				...noPatchesAndInstance,
@@ -495,7 +516,7 @@ o.spec("ConversationListModel", () => {
 			mail: Mail
 			mailSetEntry: MailSetEntry
 			entityUpdateData: EntityUpdateData
-			mailLabels: MailFolder[]
+			mailLabels: MailSet[]
 		} {
 			const newMail = createTestEntity(MailTypeRef, {
 				_id: ["new mail!!!", deconstructMailSetEntryId(elementIdPart(mailSetEntryId)).mailId],
@@ -510,7 +531,7 @@ o.spec("ConversationListModel", () => {
 
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailSetEntryTypeRef,
-				instanceListId: getListId(newEntry),
+				instanceListId: getListId(newEntry) as NonEmptyString,
 				instanceId: getElementId(newEntry),
 				operation: OperationType.CREATE,
 				...noPatchesAndInstance,
@@ -687,7 +708,7 @@ o.spec("ConversationListModel", () => {
 
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailTypeRef,
-				instanceListId: getListId(mail),
+				instanceListId: getListId(mail) as NonEmptyString,
 				instanceId: getElementId(mail),
 				operation: OperationType.UPDATE,
 				...noPatchesAndInstance,
@@ -716,7 +737,7 @@ o.spec("ConversationListModel", () => {
 			const mail = { ...model.mails[2] }
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailTypeRef,
-				instanceListId: getListId(mail),
+				instanceListId: getListId(mail) as NonEmptyString,
 				instanceId: getElementId(mail),
 				operation: OperationType.UPDATE,
 				...noPatchesAndInstance,
@@ -742,7 +763,7 @@ o.spec("ConversationListModel", () => {
 
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailTypeRef,
-				instanceListId: getListId(unreadMail),
+				instanceListId: getListId(unreadMail) as NonEmptyString,
 				instanceId: getElementId(unreadMail),
 				operation: OperationType.UPDATE,
 				...noPatchesAndInstance,
@@ -774,7 +795,7 @@ o.spec("ConversationListModel", () => {
 
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailTypeRef,
-				instanceListId: getListId(unreadMail),
+				instanceListId: getListId(unreadMail) as NonEmptyString,
 				instanceId: getElementId(unreadMail),
 				operation: OperationType.UPDATE,
 				...noPatchesAndInstance,
@@ -804,7 +825,7 @@ o.spec("ConversationListModel", () => {
 
 			const entityUpdateData: EntityUpdateData = {
 				typeRef: MailTypeRef,
-				instanceListId: getListId(unreadMail),
+				instanceListId: getListId(unreadMail) as NonEmptyString,
 				instanceId: getElementId(unreadMail),
 				operation: OperationType.UPDATE,
 				...noPatchesAndInstance,

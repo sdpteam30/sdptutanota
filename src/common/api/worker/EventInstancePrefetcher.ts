@@ -5,10 +5,10 @@ import { assertNotNull, getTypeString, groupBy, isNotNull, isSameTypeRef, parseT
 import { parseKeyVersion } from "./facades/KeyLoaderFacade"
 import { VersionedEncryptedKey } from "./crypto/CryptoWrapper"
 import { OperationType } from "../common/TutanotaConstants"
-import { NotAuthorizedError, NotFoundError } from "../common/error/RestError"
 import { ElementEntity, ListElementEntity, SomeEntity } from "../common/EntityTypes"
 import { CacheMode, type EntityRestInterface } from "./rest/EntityRestClient"
 import { ProgressMonitorDelegate } from "./ProgressMonitorDelegate"
+import { isExpectedErrorForSynchronization } from "../common/utils/ErrorUtils"
 
 export class EventInstancePrefetcher {
 	constructor(private readonly entityCache: EntityRestInterface) {}
@@ -40,7 +40,7 @@ export class EventInstancePrefetcher {
 
 			// we do not prefetch elementInstances (ET) except for TutanotaProperties
 			// we prefetch listElementInstances (LET) except for ConversationEntry
-			const isElementType = entityUpdateData.instanceListId === ""
+			const isElementType = entityUpdateData.instanceListId == null
 			const isConversationEntryEvent = isSameTypeRef(ConversationEntryTypeRef, entityUpdateData.typeRef)
 			const isTutanotaPropertiesEvent = isSameTypeRef(TutanotaPropertiesTypeRef, entityUpdateData.typeRef)
 			if ((isElementType && !isTutanotaPropertiesEvent) || isConversationEntryEvent) {
@@ -48,32 +48,35 @@ export class EventInstancePrefetcher {
 				continue
 			}
 
-			if (entityUpdateData.operation === OperationType.DELETE) {
-				const indexesForTheInstance = prefetchMap.get(typeIdentifier)?.get(entityUpdateData.instanceListId)?.get(entityUpdateData.instanceId)
+			const instanceListId = entityUpdateData.instanceListId == null ? "" : entityUpdateData.instanceListId
+			const { operation, instanceId } = entityUpdateData
+
+			if (operation === OperationType.DELETE) {
+				const indexesForTheInstance = prefetchMap.get(typeIdentifier)?.get(instanceListId)?.get(instanceId)
 				if (indexesForTheInstance !== undefined) {
 					this.markPrefetchStatusForEntityEvents(indexesForTheInstance, allEventsFromAllBatch, progressMonitor, PrefetchStatus.NotAvailable)
-					prefetchMap.get(typeIdentifier)?.get(entityUpdateData.instanceListId)?.delete(entityUpdateData.instanceId)
+					prefetchMap.get(typeIdentifier)?.get(instanceListId)?.delete(instanceId)
 				}
 				progressMonitor.workDone(1)
 				continue
 			} else {
 				const isTypeIdentifierInitialized = prefetchMap.has(typeIdentifier)
 				if (!isTypeIdentifierInitialized) {
-					prefetchMap.set(typeIdentifier, new Map().set(entityUpdateData.instanceListId, new Map()))
+					prefetchMap.set(typeIdentifier, new Map().set(instanceListId, new Map()))
 				}
 
-				const isInstanceListInitialized = prefetchMap?.get(typeIdentifier)?.has(entityUpdateData.instanceListId)
+				const isInstanceListInitialized = prefetchMap?.get(typeIdentifier)?.has(instanceListId)
 				if (!isInstanceListInitialized) {
-					prefetchMap.get(typeIdentifier)?.set(entityUpdateData.instanceListId, new Map())
+					prefetchMap.get(typeIdentifier)?.set(instanceListId, new Map())
 				}
 
-				const isInstanceIdInitialized = prefetchMap?.get(typeIdentifier)?.get(entityUpdateData.instanceListId)?.has(entityUpdateData.instanceId)
+				const isInstanceIdInitialized = prefetchMap?.get(typeIdentifier)?.get(instanceListId)?.has(instanceId)
 				if (!isTypeIdentifierInitialized || !isInstanceListInitialized || !isInstanceIdInitialized) {
-					prefetchMap.get(typeIdentifier)!.get(entityUpdateData.instanceListId)!.set(entityUpdateData.instanceId, [])
+					prefetchMap.get(typeIdentifier)!.get(instanceListId)!.set(instanceId, [])
 				}
 			}
 
-			const singleEntityUpdateEventIndexes = prefetchMap.get(typeIdentifier)!.get(entityUpdateData.instanceListId)!.get(entityUpdateData.instanceId)!
+			const singleEntityUpdateEventIndexes = prefetchMap.get(typeIdentifier)!.get(instanceListId)!.get(instanceId)!
 			singleEntityUpdateEventIndexes.push(eventIndexInList)
 		}
 		return prefetchMap
@@ -187,12 +190,4 @@ export class EventInstancePrefetcher {
 			progressMonitor.workDone(1)
 		}
 	}
-}
-
-/**
- * Returns whether the error is expected for the cases where our local state might not be up-to-date with the server yet. E.g. we might be processing an update
- * for the instance that was already deleted. Normally this would be optimized away but it might still happen due to timing.
- */
-function isExpectedErrorForSynchronization(e: Error): boolean {
-	return e instanceof NotFoundError || e instanceof NotAuthorizedError
 }

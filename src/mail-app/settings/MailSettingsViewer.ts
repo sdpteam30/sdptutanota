@@ -4,7 +4,7 @@ import { lang, type MaybeTranslation } from "../../common/misc/LanguageViewModel
 import type { MailboxGroupRoot, MailboxProperties, OutOfOfficeNotification, TutanotaProperties } from "../../common/api/entities/tutanota/TypeRefs.js"
 import {
 	MailboxPropertiesTypeRef,
-	MailFolderTypeRef,
+	MailSetTypeRef,
 	OutOfOfficeNotificationTypeRef,
 	TutanotaPropertiesTypeRef,
 } from "../../common/api/entities/tutanota/TypeRefs.js"
@@ -49,10 +49,10 @@ import { getEnabledMailAddressesForGroupInfo } from "../../common/api/common/uti
 import { formatDate, formatStorageSize } from "../../common/misc/Formatter.js"
 import { CustomerInfo } from "../../common/api/entities/sys/TypeRefs.js"
 import { EntityUpdateData, isUpdateForTypeRef } from "../../common/api/common/utils/EntityUpdateUtils.js"
-import { getMailAddressDisplayText } from "../../common/mailFunctionality/SharedMailUtils.js"
+import { getDefaultSenderFromUser, getMailAddressDisplayText } from "../../common/mailFunctionality/SharedMailUtils.js"
 import { UpdatableSettingsViewer } from "../../common/settings/Interfaces.js"
 import { mailLocator } from "../mailLocator.js"
-import { getDefaultSenderFromUser, getFolderName } from "../mail/model/MailUtils.js"
+import { getFolderName } from "../mail/model/MailUtils.js"
 import { elementIdPart } from "../../common/api/common/utils/EntityUtils.js"
 import { DatePicker, DatePickerAttrs } from "../../calendar-app/calendar/gui/pickers/DatePicker"
 import { OfflineStorageSettingsModel } from "../../common/offline/OfflineStorageSettingsModel"
@@ -337,7 +337,7 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 		}
 		return [
 			m(
-				"#user-settings.fill-absolute.scroll.plr-l.pb-xl",
+				"#user-settings.fill-absolute.scroll.plr-24.pb-48",
 				{
 					role: "group",
 					oncreate: () => {
@@ -357,7 +357,7 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 				[
 					this.customerInfo != null && Number(this.customerInfo.perUserStorageCapacity) > 0
 						? [
-								m(".h4.mt-l", lang.get("storageCapacity_label")),
+								m("#storagecapacity.h4.mt-32", lang.get("storageCapacity_label")),
 								m(TextField, {
 									label: "storageCapacity_label",
 									value: this._storageFieldValue(),
@@ -366,31 +366,34 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 								}),
 							]
 						: null,
-					m(".h4.mt-l", lang.get("general_label")),
-					m(DropDownSelector, conversationViewDropdownAttrs),
-					m(DropDownSelector, mailListDisplayMode),
-					isBrowser() ? m(DropDownSelector, enableMailIndexingAttrs) : null,
-					m(DropDownSelector, behaviorAfterMoveEmailAction),
-					m(".h4.mt-l", lang.get("emailSending_label")),
-					m(DropDownSelector, defaultSenderAttrs),
-					m(TextField, signatureAttrs),
+					m(".h4.mt-32#general", lang.get("general_label")),
+					m("#conversationthread", m(DropDownSelector, conversationViewDropdownAttrs)),
+					m("#maillistgrouping", m(DropDownSelector, mailListDisplayMode)),
+					isBrowser() ? m("#mailindexing", m(DropDownSelector, enableMailIndexingAttrs)) : null,
+					m("#behavioraftermovingemail", m(DropDownSelector, behaviorAfterMoveEmailAction)),
+					m(".h4.mt-32#emailsending", lang.get("emailSending_label")),
+					m("#defaultsender", m(DropDownSelector, defaultSenderAttrs)),
+					m("#signature", m(TextField, signatureAttrs)),
 					mailLocator.logins.isEnabled(FeatureType.InternalCommunication) ? null : m(DropDownSelector, defaultUnconfidentialAttrs),
 					mailLocator.logins.isEnabled(FeatureType.InternalCommunication) ? null : m(DropDownSelector, sendPlaintextAttrs),
-					m(DropDownSelector, reportMovedMailsAttrs),
-					m(TextField, outOfOfficeAttrs),
+					m("#spamreports", m(DropDownSelector, reportMovedMailsAttrs)),
+					m("#outofoffice", m(TextField, outOfOfficeAttrs)),
 					this.renderLocalDataSection(),
 					this.mailAddressTableModel
-						? m(MailAddressTable, {
-								model: this.mailAddressTableModel,
-								expanded: this.mailAddressTableExpanded,
-								onExpanded: (newExpanded) => (this.mailAddressTableExpanded = newExpanded),
-							})
+						? m(
+								"#mailaddresses",
+								m(MailAddressTable, {
+									model: this.mailAddressTableModel,
+									expanded: this.mailAddressTableExpanded,
+									onExpanded: (newExpanded) => (this.mailAddressTableExpanded = newExpanded),
+								}),
+							)
 						: null,
 					mailLocator.logins.isEnabled(FeatureType.InternalCommunication)
 						? null
 						: [
-								m(".flex-space-between.items-center.mt-l.mb-s", [
-									m(".h4", lang.get("inboxRulesSettings_action")),
+								m(".flex-space-between.items-center.mt-32.mb-8", [
+									m(".h4#inboxrules", lang.get("inboxRulesSettings_action")),
 									m(ExpanderButton, {
 										label: "showInboxRules_action",
 										expanded: this._inboxRulesExpanded(),
@@ -426,11 +429,11 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 			? lang.get("storedDataTimeRange_label", { "{numDays}": OFFLINE_STORAGE_DEFAULT_TIME_RANGE_DAYS })
 			: lang.get("storedDataDate_label", { "{date}": formatDate(this.offlineStorageSettings.getTimeRange()) })
 		return [
-			m(".h4.mt-l", lang.get("localDataSection_label")),
+			m(".h4.mt-32#localdata", lang.get("localDataSection_label")),
 			m(TextField, {
 				label: "emptyString_msg",
 				// Negative upper margin to make up for no label
-				class: "mt-negative-s",
+				class: "mt-negative-8",
 				value: textFieldValue,
 				isReadOnly: true,
 				helpLabel: () => lang.get("localDataSection_msg"),
@@ -514,7 +517,7 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 	}
 
 	private async getTextForTarget(mailboxDetail: MailboxDetail, targetFolderId: IdTuple): Promise<string> {
-		const folders = await mailLocator.mailModel.getMailboxFoldersForId(assertNotNull(mailboxDetail.mailbox.folders)._id)
+		const folders = await mailLocator.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 		let folder = folders.getFolderById(elementIdPart(targetFolderId))
 
 		if (folder) {
@@ -531,7 +534,7 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 				const props = await mailLocator.entityClient.load(TutanotaPropertiesTypeRef, mailLocator.logins.getUserController().props._id)
 				this._updateTutanotaPropertiesSettings(props)
 				this._updateInboxRules(props)
-			} else if (isUpdateForTypeRef(MailFolderTypeRef, update)) {
+			} else if (isUpdateForTypeRef(MailSetTypeRef, update)) {
 				this._updateInboxRules(mailLocator.logins.getUserController().props)
 			} else if (isUpdateForTypeRef(OutOfOfficeNotificationTypeRef, update)) {
 				this._outOfOfficeNotification.reload().then(() => this._updateOutOfOfficeNotification())
@@ -591,7 +594,7 @@ async function showEditStoredDataTimeRangeDialog(settings: OfflineStorageSetting
 					nullSelectionText: helpText,
 					rightAlignDropdown: false,
 				} satisfies DatePickerAttrs),
-				m(".mt", lang.get("storedDataTimeRangeHelpText_msg")),
+				m(".mt-16", lang.get("storedDataTimeRangeHelpText_msg")),
 			])
 		},
 		okAction: async () => {

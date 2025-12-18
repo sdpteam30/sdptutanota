@@ -1,11 +1,12 @@
 import { b64UserIdHash, DbFacade } from "../../search/DbFacade.js"
-import { assertNotNull, concat, downcast, LazyLoaded, stringToUtf8Uint8Array, utf8Uint8ArrayToString } from "@tutao/tutanota-utils"
+import { assertNotNull, concat, downcast, LazyLoaded, Nullable, stringToUtf8Uint8Array, utf8Uint8ArrayToString } from "@tutao/tutanota-utils"
 import { User, UserTypeRef } from "../../../entities/sys/TypeRefs.js"
 import { ExternalImageRule, OperationType } from "../../../common/TutanotaConstants.js"
 import {
 	Aes128Key,
 	Aes256Key,
 	aes256RandomKey,
+	aesDecrypt,
 	aesEncrypt,
 	AesKey,
 	decryptKey,
@@ -14,16 +15,26 @@ import {
 	unauthenticatedAesDecrypt,
 } from "@tutao/tutanota-crypto"
 import { UserFacade } from "../UserFacade.js"
-import { EncryptedDbKeyBaseMetaData, EncryptedIndexerMetaData, Metadata, ObjectStoreName } from "../../search/IndexTables.js"
+import {
+	EncryptedDbKeyBaseMetaData,
+	EncryptedIndexerMetaData,
+	LocalDraftDataOS,
+	Metadata,
+	ObjectStoreName,
+	SpamClassificationModelOS,
+} from "../../search/IndexTables.js"
 import { DbError } from "../../../common/error/DbError.js"
 import { checkKeyVersionConstraints, KeyLoaderFacade } from "../KeyLoaderFacade.js"
-import type { QueuedBatch } from "../../EventQueue.js"
-import { encryptKeyWithVersionedKey, VersionedKey } from "../../crypto/CryptoWrapper.js"
+import { _encryptKeyWithVersionedKey, VersionedKey } from "../../crypto/CryptoWrapper.js"
 import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/utils/EntityUpdateUtils"
+import { AutosaveFacade, decodeLocalAutosavedDraftData, encodeLocalAutosavedDraftData, LOCAL_DRAFT_KEY, LocalAutosavedDraftData } from "./AutosaveFacade"
+import { decodeSpamClassificationModel, encodeSpamClassificationModel, SpamClassifierStorageFacade } from "./SpamClassifierStorageFacade"
+import { SpamClassificationModel } from "../../../../../mail-app/workerUtils/spamClassification/SpamClassifier.js"
 
-const VERSION: number = 2
+const VERSION: number = 4
 const DB_KEY_PREFIX: string = "ConfigStorage"
 const ExternalImageListOS: ObjectStoreName = "ExternalAllowListOS"
+
 export const ConfigurationMetaDataOS: ObjectStoreName = "MetaDataOS"
 type EncryptionMetadata = {
 	readonly key: Aes128Key
@@ -48,8 +59,10 @@ export async function decryptLegacyItem(encryptedAddress: Uint8Array, key: Aes25
  * Ideal for cases where the configuration values should be stored encrypted,
  * Or when the configuration is a growing list or object, which would be unsuitable for localStorage
  * Or when the configuration is only required in the Worker
+ *
+ * Also handles maintaining and encrypting autosaved draft data as well as the SpamClassificationModel
  */
-export class ConfigurationDatabase {
+export class ConfigurationDatabase implements AutosaveFacade, SpamClassifierStorageFacade {
 	// visible for testing
 	readonly db: LazyLoaded<ConfigDb>
 
@@ -63,6 +76,142 @@ export class ConfigurationDatabase {
 			const user = assertNotNull(userFacade.getLoggedInUser())
 			return dbLoadFn(user, keyLoaderFacade)
 		})
+	}
+
+	/**
+	 * Save the draft data to the database, overwriting one if there is one there.
+	 * @param draftData data to write
+	 */
+	async setAutosavedDraftData(draftData: LocalAutosavedDraftData): Promise<void> {
+		const { db, metaData } = await this.db.getAsync()
+		if (!db.indexingSupported) return
+
+		try {
+			const transaction = await db.createTransaction(false, [LocalDraftDataOS])
+			const encoded = encodeLocalAutosavedDraftData(draftData)
+			const encryptedData = aesEncrypt(metaData.key, encoded, metaData.iv)
+			await transaction.put(LocalDraftDataOS, LOCAL_DRAFT_KEY, encryptedData)
+		} catch (e) {
+			if (e instanceof DbError) {
+				console.error("failed to save draft:", e.message)
+				return
+			}
+			throw e
+		}
+	}
+
+	/**
+	 * @return the locally stored draft data, if any, or null
+	 */
+	async getAutosavedDraftData(): Promise<LocalAutosavedDraftData | null> {
+		const { db, metaData } = await this.db.getAsync()
+		if (!db.indexingSupported) {
+			return null
+		}
+
+		try {
+			const transaction = await db.createTransaction(false, [LocalDraftDataOS])
+			const data = await transaction.get<Uint8Array>(LocalDraftDataOS, LOCAL_DRAFT_KEY)
+			if (data == null) {
+				return null
+			}
+
+			const decryptedData = aesDecrypt(metaData.key, data)
+			return decodeLocalAutosavedDraftData(decryptedData)
+		} catch (e) {
+			if (e instanceof DbError) {
+				console.error("failed to load draft:", e.message)
+				return null
+			}
+			throw e
+		}
+	}
+
+	/**
+	 * Deletes any locally saved draft data, if any
+	 */
+	async clearAutosavedDraftData(): Promise<void> {
+		const { db } = await this.db.getAsync()
+		if (!db.indexingSupported) return
+
+		try {
+			const transaction = await db.createTransaction(false, [LocalDraftDataOS])
+			await transaction.delete(LocalDraftDataOS, LOCAL_DRAFT_KEY)
+		} catch (e) {
+			if (e instanceof DbError) {
+				console.error("failed to clear draft:", e.message)
+				return
+			}
+			throw e
+		}
+	}
+
+	/**
+	 * Save the SpamClassificationModel for an ownerGroup to the database, overwriting one if there is one there.
+	 * @param model to write
+	 */
+	async setSpamClassificationModel(model: SpamClassificationModel): Promise<void> {
+		const { db, metaData } = await this.db.getAsync()
+		if (!db.indexingSupported) return
+
+		try {
+			const transaction = await db.createTransaction(false, [SpamClassificationModelOS])
+			const encoded = encodeSpamClassificationModel(model)
+			const encryptedModel = aesEncrypt(metaData.key, encoded, metaData.iv)
+			await transaction.put(SpamClassificationModelOS, model.ownerGroup, encryptedModel)
+		} catch (e) {
+			if (e instanceof DbError) {
+				console.error(`failed to save spamClassificationModel for mailbox ${model.ownerGroup}:`, e.message)
+				return
+			}
+			throw e
+		}
+	}
+
+	/**
+	 * @return the locally stored SpamClassificationModel for an ownerGroup, if any, or null
+	 */
+	async getSpamClassificationModel(ownerGroup: Id): Promise<Nullable<SpamClassificationModel>> {
+		const { db, metaData } = await this.db.getAsync()
+		if (!db.indexingSupported) {
+			return null
+		}
+
+		try {
+			const transaction = await db.createTransaction(false, [SpamClassificationModelOS])
+			const encryptedModel = await transaction.get<Uint8Array>(SpamClassificationModelOS, ownerGroup)
+			if (encryptedModel == null) {
+				return null
+			}
+
+			const decryptedModel = aesDecrypt(metaData.key, encryptedModel)
+			return decodeSpamClassificationModel(decryptedModel)
+		} catch (e) {
+			if (e instanceof DbError) {
+				console.error(`failed to load SpamClassificationModel for mailbox ${ownerGroup}:`, e.message)
+				return null
+			}
+			throw e
+		}
+	}
+
+	/**
+	 * Deletes a SpamClassificationModel for an ownerGroup, if any
+	 */
+	async deleteSpamClassificationModel(ownerGroup: Id): Promise<void> {
+		const { db } = await this.db.getAsync()
+		if (!db.indexingSupported) return
+
+		try {
+			const transaction = await db.createTransaction(false, [SpamClassificationModelOS])
+			await transaction.delete(SpamClassificationModelOS, ownerGroup)
+		} catch (e) {
+			if (e instanceof DbError) {
+				console.error(`failed to delete SpamClassificationModel for mailbox ${ownerGroup}:`, e.message)
+				return
+			}
+			throw e
+		}
 	}
 
 	async addExternalImageRule(address: string, rule: ExternalImageRule): Promise<void> {
@@ -102,11 +251,20 @@ export class ConfigurationDatabase {
 					keyPath: "address",
 				})
 			}
-			const metaData =
-				(await loadEncryptionMetadata(dbFacade, id, keyLoaderFacade, ConfigurationMetaDataOS)) ||
-				(await initializeDb(dbFacade, id, keyLoaderFacade, ConfigurationMetaDataOS))
 
-			if (event.oldVersion === 1) {
+			if (event.oldVersion < 3) {
+				db.createObjectStore(LocalDraftDataOS)
+			}
+
+			if (event.oldVersion < 4) {
+				db.createObjectStore(SpamClassificationModelOS)
+			}
+
+			// put all createObjectStore calls above this line because the version change transaction is not async
+
+			const metaData = await loadEncryptionMetadata(dbFacade, id, keyLoaderFacade, ConfigurationMetaDataOS)
+
+			if (event.oldVersion === 1 && metaData) {
 				// migrate from plain, mac-and-static-iv aes256 to aes256 with mac
 				const transaction = await dbFacade.createTransaction(true, [ExternalImageListOS])
 				const entries = await transaction.getAll(ExternalImageListOS)
@@ -119,6 +277,7 @@ export class ConfigurationDatabase {
 				}
 			}
 		})
+
 		const metaData =
 			(await loadEncryptionMetadata(db, id, keyLoaderFacade, ConfigurationMetaDataOS)) ||
 			(await initializeDb(db, id, keyLoaderFacade, ConfigurationMetaDataOS))
@@ -251,7 +410,7 @@ export async function getIndexerMetaData(db: DbFacade, objectStoreName: ObjectSt
 
 async function encryptAndSaveDbKey(userGroupKey: VersionedKey, dbKey: AesKey, dbIv: Uint8Array, db: DbFacade, objectStoreName: string) {
 	const transaction = await db.createTransaction(false, [objectStoreName]) // create a new transaction to avoid timeouts and for writing
-	const groupEncSessionKey = encryptKeyWithVersionedKey(userGroupKey, dbKey)
+	const groupEncSessionKey = _encryptKeyWithVersionedKey(userGroupKey, dbKey)
 	await transaction.put(objectStoreName, Metadata.userEncDbKey, groupEncSessionKey.key)
 	await transaction.put(objectStoreName, Metadata.userGroupKeyVersion, groupEncSessionKey.encryptingKeyVersion)
 	await transaction.put(objectStoreName, Metadata.encDbIv, aesEncrypt(dbKey, dbIv))

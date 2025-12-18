@@ -20,6 +20,7 @@ import "./api/worker/crypto/AsymmetricCryptoFacadeTest.js"
 import "./api/worker/crypto/CompatibilityTest.js"
 import "./api/worker/crypto/CryptoMapperTest.js"
 import "./api/worker/crypto/CryptoFacadeTest.js"
+import "./api/worker/crypto/CryptoWrapperTest.js"
 import "./api/worker/crypto/EntityAdapterTest.js"
 import "./api/worker/crypto/ModelMapperTest.js"
 import "./api/worker/crypto/ModelMapperTransformationsTest.js"
@@ -32,6 +33,8 @@ import "./api/worker/facades/CalendarFacadeTest.js"
 import "./api/worker/facades/ConfigurationDbTest.js"
 import "./api/worker/facades/ContactFacadeTest.js"
 import "./api/worker/facades/GroupManagementFacadeTest.js"
+import "./api/worker/facades/AdminKeyLoaderFacadeTest.js"
+import "./api/worker/facades/IdentityKeyCreatorTest.js"
 import "./api/worker/facades/KeyAuthenticationFacadeTest.js"
 import "./api/worker/facades/KeyCacheTest.js"
 import "./api/worker/facades/KeyLoaderFacadeTest.js"
@@ -44,9 +47,13 @@ import "./api/worker/facades/MailExportTokenFacadeTest.js"
 import "./api/worker/facades/MailFacadeTest.js"
 import "./api/worker/facades/PQFacadeTest.js"
 import "./api/worker/facades/PQMessageTest.js"
-import "./api/worker/facades/PublicKeyProviderTest.js"
+import "./api/worker/facades/PublicEncryptionKeyProviderTest.js"
+import "./api/worker/facades/PublicIdentityKeyProviderTest.js"
+import "./api/worker/facades/IdentityKeyTrustDatabaseTest.js"
+import "./api/worker/facades/RolloutFacadeTest.js"
 import "./api/worker/facades/RsaPqPerformanceTest.js"
 import "./api/worker/facades/UserFacadeTest.js"
+import "./api/worker/facades/PublicKeySignatureFacadeTest.js"
 import "./api/worker/invoicegen/PdfInvoiceGeneratorTest.js"
 import "./api/worker/invoicegen/XRechnungInvoiceGeneratorTest.js"
 import "./api/worker/pdf/DeflaterTest.js"
@@ -75,6 +82,9 @@ import "./api/worker/search/SuggestionFacadeTest.js"
 import "./serviceworker/SwTest.js"
 import "./api/worker/facades/KeyVerificationFacadeTest.js"
 import "./api/worker/utils/SleepDetectorTest.js"
+import "./api/worker/utils/spamClassification/HashingVectorizerTest.js"
+import "./api/worker/utils/spamClassification/SpamClassifierDataDealerTest.js"
+import "./api/worker/utils/spamClassification/PreprocessPatternsTest.js"
 import "./calendar/AlarmSchedulerTest.js"
 import "./calendar/CalendarAgendaViewTest.js"
 import "./calendar/CalendarGuiUtilsTest.js"
@@ -90,6 +100,7 @@ import "./calendar/eventeditor/CalendarEventModelTest.js"
 import "./calendar/eventeditor/CalendarEventWhenModelTest.js"
 import "./calendar/eventeditor/CalendarEventWhoModelTest.js"
 import "./calendar/eventeditor/CalendarNotificationModelTest.js"
+import "./calendar/CalendarEventsRepositoryTest.js"
 import "./contacts/ContactListEditorTest.js"
 import "./contacts/ContactMergeUtilsTest.js"
 import "./contacts/ContactUtilsTest.js"
@@ -105,6 +116,7 @@ import "./gui/base/WizardDialogNTest.js"
 import "./login/LoginViewModelTest.js"
 import "./login/PostLoginUtilsTest.js"
 import "./mail/InboxRuleHandlerTest.js"
+import "./mail/ProcessInboxHandlerTest.js"
 import "./mail/KnowledgeBaseSearchFilterTest.js"
 import "./mail/MailModelTest.js"
 import "./mail/MailUtilsSignatureTest.js"
@@ -124,6 +136,7 @@ import "./misc/FormatValidatorTest.js"
 import "./misc/FormatterTest.js"
 import "./misc/HtmlSanitizerTest.js"
 import "./misc/UserSatisfactionDialogTests.js"
+import "./misc/RecipientKeyVerificationRecoveryModelTest.js"
 import "./misc/LanguageViewModelTest.js"
 import "./misc/ListElementListModelTest.js"
 import "./misc/ListModelTest.js"
@@ -145,7 +158,8 @@ import "./settings/TemplateEditorModelTest.js"
 import "./settings/UserDataExportTest.js"
 import "./settings/login/secondfactor/SecondFactorEditModelTest.js"
 import "./settings/mailaddress/MailAddressTableModelTest.js"
-import "./settings/whitelabel/CustomColorEditorTest.js"
+import "./settings/whitelabel/CustomColorEditorViewModelTest.js"
+import "./settings/keymanagement/KeyVerificationModelTest.js"
 import "./subscription/CreditCardViewModelTest.js"
 import "./subscription/PriceUtilsTest.js"
 import "./subscription/SignupFormTest.js"
@@ -163,6 +177,13 @@ import "./api/worker/offline/PatchMergerTest.js"
 import "./contacts/ContactModelTest.js"
 import "./api/worker/search/OfflinestorageIndexerTest.js"
 import "./api/worker/EventInstancePrefetcherTest.js"
+import "./misc/parsing/ParserCombinatorTest.js"
+import "./sharing/GroupSettingsModelTest.js"
+import "./mail/editor/OpenLocallySavedDraftActionTest.js"
+import "./mail/SpamClassificationHandlerTest.js"
+import "./misc/quickactions/QuickActionsModelTest.js"
+import "./calendar/CalendarTimeGridTest"
+import "./calendar/AllDaySectionTest"
 
 import * as td from "testdouble"
 import { random } from "@tutao/tutanota-crypto"
@@ -194,6 +215,8 @@ async function setupSuite({ integration }: { integration?: boolean }) {
 	if (typeof process !== "undefined") {
 		// setup the Entropy for all testcases
 		await random.addEntropy([{ data: 36, entropy: 256, source: "key" }])
+		await import("./api/worker/utils/spamClassification/SparseVectorCompressorTest.js")
+		await import("./api/worker/utils/spamClassification/SpamClassifierTest.js")
 		await import("./api/worker/offline/OfflineStorageMigratorTest.js")
 		await import("./api/worker/offline/OfflineStorageTest.js")
 		await import("./api/worker/rest/RestClientTest.js")
@@ -202,12 +225,14 @@ async function setupSuite({ integration }: { integration?: boolean }) {
 		await import("./desktop/DesktopCryptoFacadeTest.js")
 		await import("./desktop/DesktopKeyStoreFacadeTest.js")
 		await import("./desktop/notifications/DesktopNotifierTest.js")
+		await import("./desktop/CommandExecutorTest.js")
 		await import("./desktop/notifications/WindowsNotificationFactoryTest.js")
 		await import("./desktop/ElectronUpdaterTest.js")
 		await import("./desktop/PathUtilsTest.js")
 		await import("./desktop/SocketeerTest.js")
 		await import("./desktop/config/ConfigFileTest.js")
 		await import("./desktop/config/DesktopConfigTest.js")
+		await import("./desktop/DesktopUtilsTest.js")
 		await import("./desktop/config/migrations/DesktopConfigMigratorTest.js")
 		await import("./desktop/credentials/AppPassHandlerTest.js")
 		await import("./desktop/credentials/DesktopCredentialsStorageTest.js")
@@ -219,6 +244,7 @@ async function setupSuite({ integration }: { integration?: boolean }) {
 		await import("./desktop/files/TempFsTest.js")
 		await import("./desktop/files/TempFsTest.js")
 		await import("./desktop/integration/DesktopIntegratorTest.js")
+		await import("./desktop/integration/WindowsRegistryFacadeTest.js")
 		await import("./desktop/integration/RegistryScriptGeneratorTest.js")
 		await import("./desktop/net/ProtocolProxyTest.js")
 		await import("./desktop/sse/DesktopAlarmSchedulerTest.js")
@@ -230,6 +256,8 @@ async function setupSuite({ integration }: { integration?: boolean }) {
 		await import("./api/worker/search/OfflineStorageMailIndexerBackendTest.js")
 		await import("./api/worker/search/OfflineStoragePersistenceTest.js")
 		await import("./api/worker/search/OfflineStorageSearchFacadeTest.js")
+		await import("./api/worker/facades/OfflineStorageAutosaveFacadeTest.js")
+		await import("./api/worker/facades/OfflineStorageSpamClassifierStorageFacadeTest.js")
 	}
 
 	// testdouble complains about certain mocking related code smells, and also prints a warning whenever you replace a property on an object.

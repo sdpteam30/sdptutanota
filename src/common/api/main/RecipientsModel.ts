@@ -8,8 +8,10 @@ import { BoundedExecutor, LazyLoaded } from "@tutao/tutanota-utils"
 import { Contact, ContactTypeRef } from "../entities/tutanota/TypeRefs"
 import { cleanMailAddress } from "../common/utils/CommonCalendarUtils.js"
 import { createNewContact, isTutaMailAddress } from "../../mailFunctionality/SharedMailUtils.js"
-import type { KeyVerificationFacade } from "../worker/facades/lazy/KeyVerificationFacade"
-import { KeyVerificationState } from "../common/TutanotaConstants.js"
+import { EncryptionKeyVerificationState, PresentableKeyVerificationState } from "../common/TutanotaConstants.js"
+import { KeyVerificationMismatchError } from "../common/error/KeyVerificationMismatchError"
+import { ProgrammingError } from "../common/error/ProgrammingError"
+import { VerifiedPublicEncryptionKey } from "../worker/facades/lazy/KeyVerificationFacade"
 
 /**
  * A recipient that can be resolved to obtain contact and recipient type
@@ -18,7 +20,7 @@ import { KeyVerificationState } from "../common/TutanotaConstants.js"
  */
 export interface ResolvableRecipient extends Recipient {
 	/** get the resolved value of the recipient, when it's ready */
-	resolved(): Promise<Recipient>
+	resolve(): Promise<Recipient>
 
 	/** check if resolution is complete */
 	isResolved(): boolean
@@ -33,11 +35,8 @@ export interface ResolvableRecipient extends Recipient {
 	setName(name: string): void
 
 	markAsKeyVerificationMismatch(): Promise<void>
-}
 
-export enum ResolveMode {
-	Lazy,
-	Eager,
+	reset(): void
 }
 
 export class RecipientsModel {
@@ -48,44 +47,72 @@ export class RecipientsModel {
 		private readonly loginController: LoginController,
 		private readonly mailFacade: MailFacade,
 		private readonly entityClient: EntityClient,
-		private readonly keyVerificationFacade: KeyVerificationFacade,
 	) {}
 
 	/**
-	 * Start resolving a recipient
-	 * If resolveLazily === true, Then resolution will not be initiated (i.e. no server calls will be made) until the first call to `resolved`
+	 * Resolve a recipient
 	 */
-	resolve(recipient: PartialRecipient, resolveMode: ResolveMode): ResolvableRecipient {
+	initialize(recipient: PartialRecipient): ResolvableRecipient {
 		return new ResolvableRecipientImpl(
 			recipient,
 			this.contactModel,
 			this.loginController,
 			(mailAddress) => this.executor.run(this.resolveRecipientType(mailAddress)),
 			this.entityClient,
-			this.keyVerificationFacade,
-			resolveMode,
 		)
 	}
 
-	private readonly resolveRecipientType = (mailAddress: string) => async () => {
-		const keyData = await this.mailFacade.getRecipientKeyData(mailAddress)
-		return keyData == null ? RecipientType.EXTERNAL : RecipientType.INTERNAL
-	}
+	private readonly resolveRecipientType: (mailAddress: string) => () => Promise<[RecipientType, PresentableKeyVerificationState]> =
+		(mailAddress: string) => async () => {
+			let verifiedPublicEncryptionKey: VerifiedPublicEncryptionKey | null = null
+			try {
+				verifiedPublicEncryptionKey = await this.mailFacade.getRecipientKeyData(mailAddress)
+			} catch (e) {
+				if (e instanceof KeyVerificationMismatchError) {
+					return [RecipientType.INTERNAL, PresentableKeyVerificationState.ALERT]
+				} else {
+					throw e
+				}
+			}
+
+			if (verifiedPublicEncryptionKey != null) {
+				const keyVerificationState = verifiedPublicEncryptionKey.verificationState
+				switch (keyVerificationState) {
+					case EncryptionKeyVerificationState.NO_ENTRY:
+						return [RecipientType.INTERNAL, PresentableKeyVerificationState.NONE]
+					case EncryptionKeyVerificationState.VERIFIED_MANUAL:
+						return [RecipientType.INTERNAL, PresentableKeyVerificationState.SECURE]
+					case EncryptionKeyVerificationState.VERIFIED_TOFU:
+						return [RecipientType.INTERNAL, PresentableKeyVerificationState.NONE]
+					case EncryptionKeyVerificationState.NOT_SUPPORTED:
+						return [RecipientType.INTERNAL, PresentableKeyVerificationState.NONE]
+					default:
+						throw new ProgrammingError("no mapping for key verification state: " + keyVerificationState)
+				}
+			} else if (isTutaMailAddress(mailAddress)) {
+				return [RecipientType.INTERNAL, PresentableKeyVerificationState.NONE]
+			} else {
+				return [RecipientType.EXTERNAL, PresentableKeyVerificationState.NONE]
+			}
+		}
+}
+
+type RecipientInfo = {
+	type: RecipientType
+	verificationState: PresentableKeyVerificationState
 }
 
 class ResolvableRecipientImpl implements ResolvableRecipient {
 	private _address: string
 	private _name: string | null
 
-	private readonly lazyType: LazyLoaded<RecipientType>
-	private readonly lazyContact: LazyLoaded<Contact | null>
-	private readonly lazyVerificationState: LazyLoaded<KeyVerificationState>
+	private readonly lazyInfo: LazyLoaded<RecipientInfo>
+	private readonly initialInfo: RecipientInfo
 
-	private readonly initialType: RecipientType = RecipientType.UNKNOWN
+	private readonly lazyContact: LazyLoaded<Contact | null>
 	private readonly initialContact: Contact | null = null
 
 	private overrideContact: Contact | null = null
-	private overrideVerificationState: KeyVerificationState | null
 
 	get address(): string {
 		return this._address
@@ -96,44 +123,47 @@ class ResolvableRecipientImpl implements ResolvableRecipient {
 	}
 
 	get type(): RecipientType {
-		return this.lazyType.getSync() ?? this.initialType
+		const lazyInfo = this.lazyInfo.getSync()
+		if (lazyInfo) {
+			return lazyInfo.type
+		} else {
+			return this.initialInfo.type
+		}
 	}
 
 	get contact(): Contact | null {
 		return this.lazyContact.getSync() ?? this.initialContact
 	}
 
-	get verificationState(): KeyVerificationState {
-		return this.lazyVerificationState.getSync() ?? KeyVerificationState.NO_ENTRY
+	get verificationState(): PresentableKeyVerificationState {
+		const lazyInfo = this.lazyInfo.getSync()
+		if (lazyInfo) {
+			return lazyInfo.verificationState
+		} else {
+			return this.initialInfo.verificationState
+		}
 	}
 
 	constructor(
 		arg: PartialRecipient,
 		private readonly contactModel: ContactModel,
 		private readonly loginController: LoginController,
-		private readonly typeResolver: (mailAddress: string) => Promise<RecipientType>,
+		private readonly typeResolver: (mailAddress: string) => Promise<[RecipientType, PresentableKeyVerificationState]>,
 		private readonly entityClient: EntityClient,
-		private readonly keyVerificationFacade: KeyVerificationFacade,
-		resolveMode: ResolveMode,
 	) {
-		if (isTutaMailAddress(arg.address) || arg.type === RecipientType.INTERNAL) {
-			this.initialType = RecipientType.INTERNAL
-			this._address = cleanMailAddress(arg.address)
-		} else if (arg.type) {
-			this.initialType = arg.type
-			this._address = arg.address
-		} else {
-			this._address = arg.address
+		this.initialInfo = {
+			type: arg.type ?? RecipientType.UNKNOWN,
+			verificationState: PresentableKeyVerificationState.NONE,
 		}
+		this._address = cleanMailAddress(arg.address)
 
 		this._name = arg.name ?? null
-		this.overrideVerificationState = null
 
 		if (!(arg.contact instanceof Array)) {
 			this.initialContact = arg.contact ?? null
 		}
 
-		this.lazyType = new LazyLoaded(() => this.resolveType())
+		this.lazyInfo = new LazyLoaded(() => this.resolveInfo())
 		this.lazyContact = new LazyLoaded(async () => {
 			const contact = await this.resolveContact(arg.contact)
 			// sometimes we create resolvable contact and then dissect it into parts and resolve it again in which case we will default to an empty name
@@ -143,19 +173,11 @@ class ResolvableRecipientImpl implements ResolvableRecipient {
 			}
 			return contact
 		})
-		this.lazyVerificationState = new LazyLoaded(async () => {
-			if (this.overrideVerificationState != null) {
-				return this.overrideVerificationState
-			} else {
-				return this.keyVerificationFacade.resolveVerificationState(arg.address, null)
-			}
-		})
+	}
 
-		if (resolveMode === ResolveMode.Eager) {
-			this.lazyType.load()
-			this.lazyContact.load()
-			this.lazyVerificationState.load()
-		}
+	reset() {
+		this.lazyInfo.reset()
+		this.lazyContact.reset()
 	}
 
 	setName(newName: string) {
@@ -167,8 +189,8 @@ class ResolvableRecipientImpl implements ResolvableRecipient {
 		this.lazyContact.reload()
 	}
 
-	async resolved(): Promise<Recipient> {
-		await Promise.all([this.lazyType.getAsync(), this.lazyContact.getAsync(), this.lazyVerificationState.getAsync()])
+	async resolve(): Promise<Recipient> {
+		await Promise.all([this.lazyInfo.getAsync(), this.lazyContact.getAsync()])
 		return {
 			address: this.address,
 			name: this.name,
@@ -180,29 +202,25 @@ class ResolvableRecipientImpl implements ResolvableRecipient {
 
 	isResolved(): boolean {
 		// We are only resolved when both type and contact are non-null and finished
-		return this.lazyType.isLoaded() && this.lazyContact.isLoaded()
+		return this.lazyInfo.isLoaded() && this.lazyContact.isLoaded()
 	}
 
 	whenResolved(handler: (resolvedRecipient: Recipient) => void): this {
-		this.resolved().then(handler)
+		this.resolve().then(handler)
 		return this
 	}
 
 	/**
 	 * Determine whether recipient is INTERNAL or EXTERNAL based on the existence of key data (external recipients don't have any)
 	 */
-	private async resolveType(): Promise<RecipientType> {
-		if (this.initialType === RecipientType.UNKNOWN) {
-			const cleanedAddress = cleanMailAddress(this.address)
-			const recipientType = await this.typeResolver(cleanedAddress)
-			if (recipientType === RecipientType.INTERNAL) {
-				// we know this is one of ours, so it's safe to clean it up
-				this._address = cleanedAddress
-			}
-			return recipientType
-		} else {
-			return this.initialType
+	private async resolveInfo(): Promise<RecipientInfo> {
+		const cleanedAddress = cleanMailAddress(this.address)
+		const [recipientType, presentableKeyVerificationState] = await this.typeResolver(cleanedAddress)
+		if (recipientType === RecipientType.INTERNAL) {
+			// we know this is one of ours, so it's safe to clean it up
+			this._address = cleanedAddress
 		}
+		return { type: recipientType, verificationState: presentableKeyVerificationState }
 	}
 
 	/**
@@ -227,7 +245,7 @@ class ResolvableRecipientImpl implements ResolvableRecipient {
 					// we don't want to create a mixed-case contact if the address is an internal one.
 					// after lazyType is loaded, if it resolves to RecipientType.INTERNAL, we have the
 					// cleaned address in this.address.
-					await this.lazyType
+					await this.lazyInfo
 					return createNewContact(this.loginController.getUserController().user, this.address, this.name)
 				}
 			} else {
@@ -240,7 +258,7 @@ class ResolvableRecipientImpl implements ResolvableRecipient {
 	}
 
 	async markAsKeyVerificationMismatch(): Promise<void> {
-		this.overrideVerificationState = KeyVerificationState.MISMATCH
-		await this.lazyVerificationState.reload()
+		this.reset()
+		await this.resolve()
 	}
 }

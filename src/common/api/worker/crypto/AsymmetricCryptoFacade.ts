@@ -23,21 +23,21 @@ import {
 	asCryptoProtoocolVersion,
 	CryptoProtocolVersion,
 	EncryptionAuthStatus,
-	KeyVerificationState,
-	PublicKeyIdentifierType,
+	EncryptionKeyVerificationState,
+	PresentableKeyVerificationState,
 } from "../../common/TutanotaConstants.js"
-import { arrayEquals, assertNotNull, lazyAsync, Versioned } from "@tutao/tutanota-utils"
+import { arrayEquals, assertNotNull, KeyVersion, lazy, Versioned } from "@tutao/tutanota-utils"
 import { KeyLoaderFacade, parseKeyVersion } from "../facades/KeyLoaderFacade.js"
 import { ProgrammingError } from "../../common/error/ProgrammingError.js"
 import { createPublicKeyPutIn, PubEncKeyData } from "../../entities/sys/TypeRefs.js"
 import { CryptoWrapper } from "./CryptoWrapper.js"
 import { PublicKeyService } from "../../entities/sys/Services.js"
 import { IServiceExecutor } from "../../common/ServiceRequest.js"
-import type { KeyVerificationFacade } from "../facades/lazy/KeyVerificationFacade"
-import { PublicKeyIdentifier, PublicKeyProvider } from "../facades/PublicKeyProvider.js"
-import { KeyVersion } from "@tutao/tutanota-utils/dist/Utils.js"
+import { PublicEncryptionKeyProvider, PublicKeyIdentifier } from "../facades/PublicEncryptionKeyProvider.js"
 import { TypeId } from "../../common/EntityTypes"
 import { Category, syncMetrics } from "../utils/SyncMetrics"
+import { KeyVerificationMismatchError } from "../../common/error/KeyVerificationMismatchError"
+import { AdminKeyLoaderFacade } from "../facades/AdminKeyLoaderFacade"
 
 assertWorkerOrNode()
 
@@ -53,6 +53,11 @@ export type PubEncSymKey = {
 	recipientKeyVersion: KeyVersion
 }
 
+export type AuthenticateSenderReturnType = {
+	authStatus: EncryptionAuthStatus
+	verificationState: PresentableKeyVerificationState
+}
+
 /**
  * This class is responsible for asymmetric encryption and decryption.
  * It tries to hide the complexity behind handling different asymmetric protocol versions such as RSA and TutaCrypt.
@@ -64,8 +69,8 @@ export class AsymmetricCryptoFacade {
 		private readonly keyLoaderFacade: KeyLoaderFacade,
 		private readonly cryptoWrapper: CryptoWrapper,
 		private readonly serviceExecutor: IServiceExecutor,
-		private readonly lazyKeyVerificationFacade: lazyAsync<KeyVerificationFacade>,
-		private readonly publicKeyProvider: PublicKeyProvider,
+		private readonly publicKeyProvider: PublicEncryptionKeyProvider,
+		private readonly adminKeyLoaderFacade: lazy<AdminKeyLoaderFacade>,
 	) {}
 
 	getSenderEccKey(publicKey: Versioned<PublicKey>): X25519PublicKey | null {
@@ -85,31 +90,47 @@ export class AsymmetricCryptoFacade {
 	 * @param senderIdentityPubKey the senderIdentityPubKey that was used to encrypt/authenticate the data.
 	 * @param senderKeyVersion the version of the senderIdentityPubKey.
 	 */
-	async authenticateSender(identifier: PublicKeyIdentifier, senderIdentityPubKey: Uint8Array, senderKeyVersion: KeyVersion): Promise<EncryptionAuthStatus> {
-		const keyVerificationFacade = await this.lazyKeyVerificationFacade()
 
-		let authStatus = EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED
+	async authenticateSender(
+		identifier: PublicKeyIdentifier,
+		senderIdentityPubKey: Uint8Array,
+		senderKeyVersion: KeyVersion,
+	): Promise<AuthenticateSenderReturnType> {
+		let authenticated = false
 
-		const publicKey = await this.publicKeyProvider.loadPubKey(identifier, senderKeyVersion)
+		try {
+			const publicKey = await this.publicKeyProvider.loadPublicEncryptionKey(identifier, senderKeyVersion)
+			const publicEccKey = this.getSenderEccKey(publicKey.publicEncryptionKey)
+			if (publicEccKey != null && arrayEquals(publicEccKey, senderIdentityPubKey)) {
+				authenticated = true
 
-		const publicEccKey = this.getSenderEccKey(publicKey)
-
-		if (publicEccKey != null) {
-			if (!arrayEquals(publicEccKey, senderIdentityPubKey)) {
-				authStatus = EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED
-			}
-
-			// Compare against trusted identity (if possible)
-			if (identifier.identifierType === PublicKeyIdentifierType.MAIL_ADDRESS) {
-				if ((await keyVerificationFacade.resolveVerificationState(identifier.identifier, publicKey)) === KeyVerificationState.MISMATCH) {
-					authStatus = EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED
+				if (publicKey.verificationState === EncryptionKeyVerificationState.VERIFIED_MANUAL) {
+					return {
+						authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
+						verificationState: PresentableKeyVerificationState.SECURE,
+					}
 				}
 			}
-		} else {
-			authStatus = EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED
+		} catch (e) {
+			if (e instanceof KeyVerificationMismatchError) {
+				console.log(`KeyVerificationMismatchError. identifier: ${identifier}, senderKeyVersion: ${senderKeyVersion}`)
+				authenticated = false
+			} else {
+				console.log(`Error while authenticating sender. identifier: ${identifier}, senderKeyVersion: ${senderKeyVersion}, error: ${e}`)
+				throw e
+			}
 		}
-
-		return authStatus
+		if (authenticated) {
+			return {
+				authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
+				verificationState: PresentableKeyVerificationState.NONE,
+			}
+		} else {
+			return {
+				authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED,
+				verificationState: PresentableKeyVerificationState.ALERT,
+			}
+		}
 	}
 
 	/**
@@ -128,12 +149,12 @@ export class AsymmetricCryptoFacade {
 		const cryptoProtocolVersion = asCryptoProtoocolVersion(pubEncKeyData.protocolVersion)
 		const decapsulatedAesKey = await this.decryptSymKeyWithKeyPair(recipientKeyPair, cryptoProtocolVersion, pubEncKeyData.pubEncSymKey)
 		if (cryptoProtocolVersion === CryptoProtocolVersion.TUTA_CRYPT) {
-			const encryptionAuthStatus = await this.authenticateSender(
+			const { authStatus } = await this.authenticateSender(
 				senderIdentifier,
 				assertNotNull(decapsulatedAesKey.senderIdentityPubKey),
 				parseKeyVersion(assertNotNull(pubEncKeyData.senderKeyVersion)),
 			)
-			if (encryptionAuthStatus !== EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED) {
+			if (authStatus !== EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED) {
 				throw new CryptoError("the provided public key could not be authenticated")
 			}
 		}
@@ -206,7 +227,7 @@ export class AsymmetricCryptoFacade {
 	async asymEncryptSymKey(symKey: AesKey, recipientPublicKey: Versioned<PublicKey>, senderGroupId: Id): Promise<PubEncSymKey> {
 		if (isVersionedPqPublicKey(recipientPublicKey)) {
 			const senderKeyPair = await this.keyLoaderFacade.loadCurrentKeyPair(senderGroupId)
-			const senderEccKeyPair = await this.getOrMakeSenderIdentityKeyPair(senderKeyPair.object, senderGroupId)
+			const senderEccKeyPair = await this.getOrMakeSenderX25519KeyPair(senderKeyPair.object, senderGroupId)
 			return this.tutaCryptEncryptSymKeyImpl(recipientPublicKey, symKey, {
 				object: senderEccKeyPair,
 				version: senderKeyPair.version,
@@ -266,26 +287,32 @@ export class AsymmetricCryptoFacade {
 	 *                        This is necessary as a User might send an E-Mail from a shared mailbox,
 	 *                        for which the KeyPair should be created.
 	 */
-	private async getOrMakeSenderIdentityKeyPair(senderKeyPair: AsymmetricKeyPair, keyGroupId: Id): Promise<X25519KeyPair> {
+	async getOrMakeSenderX25519KeyPair(senderKeyPair: AsymmetricKeyPair, keyGroupId: Id): Promise<X25519KeyPair> {
 		const algo = senderKeyPair.keyPairType
 		if (isPqKeyPairs(senderKeyPair)) {
 			return senderKeyPair.x25519KeyPair
 		} else if (isRsaX25519KeyPair(senderKeyPair)) {
 			return { publicKey: senderKeyPair.publicEccKey, privateKey: senderKeyPair.privateEccKey }
 		} else if (isRsaOrRsaX25519KeyPair(senderKeyPair)) {
-			// there is no ecc key pair yet, so we have to genrate and upload one
-			const symGroupKey = await this.keyLoaderFacade.getCurrentSymGroupKey(keyGroupId)
-			const newIdentityKeyPair = this.cryptoWrapper.generateEccKeyPair()
-			const symEncPrivEccKey = this.cryptoWrapper.encryptEccKey(symGroupKey.object, newIdentityKeyPair.privateKey)
-			const data = createPublicKeyPutIn({
-				pubEccKey: newIdentityKeyPair.publicKey,
-				symEncPrivEccKey,
-				keyGroup: keyGroupId,
-			})
-			await this.serviceExecutor.put(PublicKeyService, data)
-			return newIdentityKeyPair
+			// there is no ecc key pair yet, so we have to generate and upload one
+			return this.createNewX25519KeyPair(keyGroupId)
 		} else {
 			throw new CryptoError("unknown key pair type: " + algo)
 		}
+	}
+
+	private async createNewX25519KeyPair(keyGroupId: string): Promise<X25519KeyPair> {
+		// If the group is a team group, it may be the case that the admin is not a member of it, so we try to get via
+		// admin key. This works for non-admins too because internally the method tries to get via membership first anyway.
+		const symGroupKey = await this.adminKeyLoaderFacade().getCurrentGroupKeyViaAdminEncGKey(keyGroupId)
+		const newX25519KeyPair = this.cryptoWrapper.generateEccKeyPair()
+		const symEncPrivEccKey = this.cryptoWrapper.encryptX25519Key(symGroupKey.object, newX25519KeyPair.privateKey)
+		const data = createPublicKeyPutIn({
+			pubEccKey: newX25519KeyPair.publicKey,
+			symEncPrivEccKey,
+			keyGroup: keyGroupId,
+		})
+		await this.serviceExecutor.put(PublicKeyService, data)
+		return newX25519KeyPair
 	}
 }

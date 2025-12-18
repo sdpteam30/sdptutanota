@@ -1,23 +1,22 @@
 import m, { Child, Children, Component, Vnode, VnodeDOM } from "mithril"
-import { base64ToBase64Url, incrementDate, isSameDay, stringToBase64 } from "@tutao/tutanota-utils"
+import { base64ToBase64Url, incrementDate, isToday, stringToBase64 } from "@tutao/tutanota-utils"
 import { lang } from "../../../common/misc/LanguageViewModel"
 import { getTimeZone, isBirthdayEvent } from "../../../common/calendar/date/CalendarUtils"
-import { CalendarEvent, Contact } from "../../../common/api/entities/tutanota/TypeRefs.js"
+import { Contact } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import type { GroupColors } from "./CalendarView"
-import type { CalendarEventBubbleClickHandler, CalendarEventBubbleKeyDownHandler, CalendarPreviewModels } from "./CalendarViewModel"
+import type { CalendarEventBubbleClickHandler, CalendarEventBubbleKeyDownHandler, CalendarPreviewModels, EventWrapper } from "./CalendarViewModel"
 import { styles } from "../../../common/gui/styles.js"
 import { DateTime } from "luxon"
 import { CalendarAgendaItemView } from "./CalendarAgendaItemView.js"
 import ColumnEmptyMessageBox from "../../../common/gui/base/ColumnEmptyMessageBox.js"
 import { BootIcons } from "../../../common/gui/base/icons/BootIcons.js"
 import { theme } from "../../../common/gui/theme.js"
-import { px, size } from "../../../common/gui/size.js"
+import { layout_size, px, size } from "../../../common/gui/size.js"
 import { DaySelector } from "../gui/day-selector/DaySelector.js"
 import { CalendarEventPreviewViewModel } from "../gui/eventpopup/CalendarEventPreviewViewModel.js"
 import { EventDetailsView } from "./EventDetailsView.js"
 import { getElementId, getListId } from "../../../common/api/common/utils/EntityUtils.js"
 import { isAllDayEvent, setNextHalfHour } from "../../../common/api/common/utils/CommonCalendarUtils.js"
-import { CalendarTimeIndicator } from "./CalendarTimeIndicator.js"
 import { Time } from "../../../common/calendar/date/Time.js"
 import { DaysToEvents } from "../../../common/calendar/date/CalendarEventsRepository.js"
 
@@ -31,6 +30,8 @@ import { client } from "../../../common/misc/ClientDetector.js"
 import { CalendarContactPreviewViewModel } from "../gui/eventpopup/CalendarContactPreviewViewModel.js"
 import { ContactCardViewer } from "../../../mail-app/contacts/view/ContactCardViewer.js"
 import { PartialRecipient } from "../../../common/api/common/recipients/Recipient.js"
+import { TimeIndicator } from "../../../common/calendar/gui/TimeIndicator"
+import { TimeBadgeVarient } from "../../../common/calendar/gui/TimeBadge"
 
 export type CalendarAgendaViewAttrs = {
 	selectedDate: Date
@@ -73,7 +74,7 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 		if (isDesktopLayout) {
 			containerStyle = {
 				marginLeft: "5px",
-				marginBottom: px(size.hpad_large),
+				marginBottom: px(size.spacing_24),
 			}
 		} else {
 			containerStyle = {}
@@ -93,7 +94,7 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 		return m(
 			".fill-absolute.flex.col",
 			{
-				class: isDesktopLayout ? "mlr-l height-100p" : "mlr-safe-inset",
+				class: isDesktopLayout ? "mlr-24 height-100p" : "mlr-safe-inset",
 				style: containerStyle,
 			},
 			[
@@ -101,7 +102,7 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 				m(
 					".rel.flex-grow.flex.col",
 					{
-						class: isDesktopLayout ? "overflow-hidden" : "content-bg scroll border-radius-top-left-big border-radius-top-right-big",
+						class: isDesktopLayout ? "overflow-hidden" : "content-bg scroll border-radius-top-12",
 						oncreate: (vnode: VnodeDOM) => {
 							if (!isDesktopLayout) this.listDom = vnode.dom as HTMLElement
 						},
@@ -123,12 +124,7 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 			: m(
 					"",
 					m(
-						".header-bg.pb-s.overflow-hidden",
-						{
-							style: {
-								"margin-left": px(size.calendar_hour_width_mobile),
-							},
-						},
+						".header-bg.pb-8.overflow-hidden.calendar-hour-margin",
 						m(DaySelector, {
 							selectedDate: selectedDate,
 							onDateSelected: (selectedDate: Date) => attrs.onDateSelected(selectedDate),
@@ -149,7 +145,9 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 							highlightSelectedWeek: false,
 							useNarrowWeekName: styles.isSingleColumnLayout(),
 							hasEventOn: (date) =>
-								attrs.eventsForDays.get(date.getTime())?.some((event) => shouldDisplayEvent(event, attrs.hiddenCalendars)) ?? false,
+								attrs.eventsForDays
+									.get(date.getTime())
+									?.some((eventWrapper) => shouldDisplayEvent(eventWrapper.event, attrs.hiddenCalendars)) ?? false,
 						}),
 					),
 				)
@@ -161,10 +159,10 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 			return m(ColumnEmptyMessageBox, {
 				icon: BootIcons.Calendar,
 				message: "noEntries_msg",
-				color: theme.list_message_bg,
+				color: theme.on_surface_variant,
 			})
 		} else {
-			return m(".flex.mb-s.col", this.renderEventsForDay(events, getTimeZone(), attrs.selectedDate, attrs))
+			return m(".flex.mb-8.col", this.renderEventsForDay(events, getTimeZone(), attrs.selectedDate, attrs))
 		}
 	}
 
@@ -195,7 +193,7 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 			return m(ColumnEmptyMessageBox, {
 				icon: BootIcons.Calendar,
 				message: "noEntries_msg",
-				color: theme.list_message_bg,
+				color: theme.on_surface_variant,
 				bottomContent: !client.isCalendarApp()
 					? m(MainCreateButton, {
 							label: "newEvent_action",
@@ -205,15 +203,14 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 
 								e.preventDefault()
 							},
-							class: "mt-s",
+							class: "mt-8",
 						})
 					: null,
 			})
 		} else {
 			return m(
-				".pt-s.flex.mb-s.col.overflow-y-scroll.height-100p",
+				".pt-8.flex.mb-8.col.overflow-y-scroll.height-100p.calendar-hour-margin",
 				{
-					style: { marginLeft: px(size.calendar_hour_width_mobile) },
 					oncreate: (vnode: VnodeDOM) => {
 						attrs.onViewChanged(vnode)
 					},
@@ -226,9 +223,9 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 		}
 	}
 
-	private getEventsToRender(day: Date, attrs: CalendarAgendaViewAttrs): readonly CalendarEvent[] {
+	private getEventsToRender(day: Date, attrs: CalendarAgendaViewAttrs): readonly EventWrapper[] {
 		return (attrs.eventsForDays.get(day.getTime()) ?? []).filter((e) => {
-			return shouldDisplayEvent(e, attrs.hiddenCalendars)
+			return shouldDisplayEvent(e.event, attrs.hiddenCalendars)
 		})
 	}
 
@@ -240,8 +237,8 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 				".flex-grow.rel.overflow-y-scroll",
 				{
 					style: {
-						"min-width": px(size.second_col_min_width),
-						"max-width": px(size.second_col_max_width),
+						"min-width": px(layout_size.second_col_min_width),
+						"max-width": px(layout_size.second_col_max_width),
 					},
 					oncreate: (vnode: VnodeDOM) => {
 						this.listDom = vnode.dom as HTMLElement
@@ -254,20 +251,15 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 				[this.renderDesktopEventList(attrs)],
 			),
 			m(
-				".ml-l.flex-grow.scroll",
-				{
-					style: {
-						"min-width": px(size.third_col_min_width),
-						"max-width": px(size.third_col_max_width),
-					},
-				},
+				".ml-24.flex-grow.scroll",
+				{},
 				attrs.eventPreviewModel == null
 					? m(
 							".rel.flex-grow.height-100p",
 							m(ColumnEmptyMessageBox, {
 								icon: BootIcons.Calendar,
 								message: "noEventSelect_msg",
-								color: theme.list_message_bg,
+								color: theme.on_surface_variant,
 							}),
 						)
 					: this.renderEventPreview(attrs),
@@ -276,7 +268,7 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 	}
 
 	private getBirthdayEventModel(eventPreviewModel: CalendarPreviewModels | null): CalendarContactPreviewViewModel | null {
-		if (isBirthdayEvent((eventPreviewModel as CalendarContactPreviewViewModel).event?.uid)) {
+		if (isBirthdayEvent((eventPreviewModel as CalendarContactPreviewViewModel).calendarEvent?.uid)) {
 			return eventPreviewModel as CalendarContactPreviewViewModel
 		}
 		return null
@@ -321,7 +313,7 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 		this.lastScrollPosition = attrs.scrollPosition
 	}
 
-	private renderEventsForDay(events: readonly CalendarEvent[], zone: string, day: Date, attrs: CalendarAgendaViewAttrs) {
+	private renderEventsForDay(events: readonly EventWrapper[], zone: string, day: Date, attrs: CalendarAgendaViewAttrs) {
 		const { groupColors: colors, onEventClicked: click, onEventKeyDown: keyDown, eventPreviewModel: modelPromise } = attrs
 		const agendaItemHeight = 62
 		const agendaGap = 3
@@ -332,20 +324,26 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 		const eventToShowTimeIndicator = earliestEventToShowTimeIndicator(events, new Date())
 		// Flat list structure so that we don't have problems with keys
 		let eventsNodes: Child[] = []
-		for (const [eventIndex, event] of events.entries()) {
-			if (eventToShowTimeIndicator === eventIndex && isSameDay(new Date(), event.startTime)) {
+		for (const [eventIndex, eventWrapper] of events.entries()) {
+			if (eventToShowTimeIndicator === eventIndex && isToday(eventWrapper.event.startTime)) {
 				eventsNodes.push(
 					m(
-						".mt-xs.mb-xs",
+						".mt-4.mb-4",
 						{
 							id: "timeIndicator",
 							key: "timeIndicator",
 						},
-						m(CalendarTimeIndicator, { circleLeftTangent: true }),
+						m(TimeIndicator, {
+							timeBadgeConfig: {
+								currentTime: Time.fromDate(new Date()),
+								amPm: attrs.amPmFormat,
+								variant: TimeBadgeVarient.LARGE,
+							},
+						}),
 					),
 				)
 			}
-			if (currentTime && event.startTime < currentTime) {
+			if (currentTime && eventWrapper.event.startTime < currentTime) {
 				newScrollPosition += agendaItemHeight + agendaGap
 			}
 
@@ -364,14 +362,15 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 				return sibling
 			}
 
+			const eventColor = getEventColor(eventWrapper.event, colors)
 			eventsNodes.push(
 				m(CalendarAgendaItemView, {
-					key: getListId(event) + getElementId(event) + event.startTime.toISOString(),
-					id: base64ToBase64Url(stringToBase64(event._id.join("/"))),
-					event: event,
-					color: getEventColor(event, colors),
-					selected: event === (modelPromise as CalendarEventPreviewViewModel)?.calendarEvent,
-					click: (domEvent) => click(event, domEvent),
+					key: getListId(eventWrapper.event) + getElementId(eventWrapper.event) + eventWrapper.event.startTime.toISOString(),
+					id: base64ToBase64Url(stringToBase64(eventWrapper.event._id.join("/"))),
+					event: eventWrapper,
+					color: eventColor,
+					selected: eventWrapper.event === (modelPromise as CalendarEventPreviewViewModel)?.calendarEvent,
+					click: (domEvent) => click(eventWrapper.event, domEvent),
 					keyDown: (domEvent) => {
 						const target = domEvent.target as HTMLElement
 						if (isKeyPressed(domEvent.key, Keys.UP, Keys.K) && !domEvent.repeat) {
@@ -380,7 +379,7 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 							if (previousItem) {
 								previousItem.focus()
 								if (previousIndex >= 0 && !styles.isSingleColumnLayout()) {
-									keyDown(events[previousIndex], new KeyboardEvent("keydown", { key: Keys.RETURN.code }))
+									keyDown(events[previousIndex].event, new KeyboardEvent("keydown", { key: Keys.RETURN.code }))
 									return
 								}
 							} else {
@@ -394,19 +393,19 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 							if (nextItem) {
 								nextItem.focus()
 								if (nextIndex < events.length && !styles.isSingleColumnLayout()) {
-									keyDown(events[nextIndex], new KeyboardEvent("keydown", { key: Keys.RETURN.code }))
+									keyDown(events[nextIndex].event, new KeyboardEvent("keydown", { key: Keys.RETURN.code }))
 									return
 								}
 							} else {
 								attrs.onScrollPositionChange(target.offsetTop)
 							}
 						}
-						keyDown(event, domEvent)
+						keyDown(eventWrapper.event, domEvent)
 					},
 					zone,
 					day: day,
 					height: agendaItemHeight,
-					timeText: formatEventTimes(day, event, zone),
+					timeText: formatEventTimes(day, eventWrapper.event, zone),
 				}),
 			)
 		}
@@ -414,7 +413,7 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
 		// Do not scroll to the next element if a scroll command (page up etc.) is given
 		if (attrs.scrollPosition === this.lastScrollPosition) attrs.onScrollPositionChange(newScrollPosition - (agendaItemHeight + agendaGap))
 		return events.length === 0
-			? m(".mb-s", lang.get("noEntries_msg"))
+			? m(".mb-8", lang.get("noEntries_msg"))
 			: m(
 					".flex.col",
 					{
@@ -433,16 +432,16 @@ export class CalendarAgendaView implements Component<CalendarAgendaViewAttrs> {
  * @param date date to use
  * @return the index, or null if there is no next event
  */
-export function earliestEventToShowTimeIndicator(events: readonly CalendarEvent[], date: Date): number | null {
+export function earliestEventToShowTimeIndicator(events: readonly EventWrapper[], date: Date): number | null {
 	// We do not want to show the time indicator above any all day events
-	const firstNonAllDayEvent = events.findIndex((event) => !isAllDayEvent(event))
+	const firstNonAllDayEvent = events.findIndex((eventWrapper) => !isAllDayEvent(eventWrapper.event))
 	if (firstNonAllDayEvent < 0) {
 		return null
 	}
 
 	// Next, we want to locate the first event where the start time has yet to be reached
 	const nonAllDayEvents = events.slice(firstNonAllDayEvent)
-	const nextEvent = nonAllDayEvents.findIndex((event) => event.startTime > date)
+	const nextEvent = nonAllDayEvents.findIndex((eventWrapper) => eventWrapper.event.startTime > date)
 	if (nextEvent < 0) {
 		return null
 	}

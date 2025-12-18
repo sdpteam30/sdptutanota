@@ -25,7 +25,6 @@ import {
 	flatMap,
 	getFromMap,
 	groupBy,
-	groupByAndMap,
 	groupByAndMapUniquely,
 	isNotNull,
 	neverNull,
@@ -61,16 +60,18 @@ import {
 	addDaysForRecurringEvent,
 	CalendarTimeRange,
 	generateCalendarInstancesInRange,
-	isClientOnlyCalendar,
+	hasAlarmsForTheUser,
+	isBirthdayCalendar,
 } from "../../../../calendar/date/CalendarUtils.js"
 import { CalendarInfo } from "../../../../../calendar-app/calendar/model/CalendarModel.js"
 import { geEventElementMaxId, getEventElementMinId } from "../../../common/utils/CommonCalendarUtils.js"
 import { DaysToEvents } from "../../../../calendar/date/CalendarEventsRepository.js"
 import { isOfflineError } from "../../../common/utils/ErrorUtils.js"
-import type { EventWrapper } from "../../../../calendar/gui/ImportExportUtils.js"
+import type { EventAlarmsTuple } from "../../../../calendar/gui/ImportExportUtils.js"
 import { InstancePipeline } from "../../crypto/InstancePipeline"
 import { AttributeModel } from "../../../common/AttributeModel"
 import { ClientModelUntypedInstance } from "../../../common/EntityTypes"
+import { EventWrapper } from "../../../../../calendar-app/calendar/view/CalendarViewModel"
 
 assertWorkerOrNode()
 
@@ -109,7 +110,7 @@ export class CalendarFacade {
 		public readonly cachingEntityClient: EntityClient,
 	) {}
 
-	async saveImportedCalendarEvents(eventWrappers: Array<EventWrapper>, operationId: OperationId): Promise<void> {
+	async saveImportedCalendarEvents(eventWrappers: Array<EventAlarmsTuple>, operationId: OperationId): Promise<void> {
 		// it is safe to assume that all event uids are set at this time
 		return this.saveCalendarEvents(eventWrappers, (percent) => this.operationProgressTracker.onProgress(operationId, percent))
 	}
@@ -142,20 +143,35 @@ export class CalendarFacade {
 		// Note: there may be issues if we get entity update before other calendars finish loading but the chance is low and we do not
 		// take care of this now.
 
-		const calendars: Array<{ long: CalendarEvent[]; short: CalendarEvent[] }> = []
+		const calendars: Array<{ long: EventWrapper[]; short: EventWrapper[] }> = []
 
-		for (const { groupRoot } of calendarInfos.values()) {
-			const [shortEventsResult, longEventsResult] = await Promise.all([
-				this.cachingEntityClient.loadReverseRangeBetween(CalendarEventTypeRef, groupRoot.shortEvents, endId, startId, 200),
-				this.cachingEntityClient.loadAll(CalendarEventTypeRef, groupRoot.longEvents),
-			])
+		for (const { groupRoot, color } of calendarInfos.values()) {
+			const shortEventsResult = await this.cachingEntityClient.loadReverseRangeBetween(CalendarEventTypeRef, groupRoot.shortEvents, endId, startId, 200)
+			const longEventsResult = await this.cachingEntityClient.loadAll(CalendarEventTypeRef, groupRoot.longEvents)
+
+			const shortEvents: Array<EventWrapper> = shortEventsResult.elements.map((e) => ({
+				event: e,
+				flags: {
+					hasAlarms: hasAlarmsForTheUser(this.userFacade.getLoggedInUser(), e),
+					isAlteredInstance: e.recurrenceId != null,
+				},
+				color,
+			}))
+			const longEvents: Array<EventWrapper> = longEventsResult.map((e) => ({
+				event: e,
+				flags: {
+					hasAlarms: hasAlarmsForTheUser(this.userFacade.getLoggedInUser(), e),
+					isAlteredInstance: e.recurrenceId != null,
+				},
+				color,
+			}))
 
 			calendars.push({
-				short: shortEventsResult.elements,
-				long: longEventsResult,
+				short: shortEvents,
+				long: longEvents,
 			})
 		}
-		const newEvents = new Map<number, Array<CalendarEvent>>(Array.from(daysToEvents.entries()).map(([day, events]) => [day, events.slice()]))
+		const newEvents = new Map<number, Array<EventWrapper>>(Array.from(daysToEvents.entries()).map(([day, events]) => [day, events.slice()]))
 
 		// Generate events occurrences per calendar to avoid calendars flashing in the screen
 		for (const calendar of calendars) {
@@ -167,8 +183,8 @@ export class CalendarFacade {
 	}
 
 	private generateEventOccurrences(
-		eventMap: Map<number, CalendarEvent[]>,
-		events: CalendarEvent[],
+		eventMap: Map<number, EventWrapper[]>,
+		events: EventWrapper[],
 		range: CalendarTimeRange,
 		zone: string,
 		overwriteRange: boolean,
@@ -177,9 +193,9 @@ export class CalendarFacade {
 			// Overrides end of range to prevent events from being truncated. Generating them until the end of the event
 			// instead of the original end guarantees that the event will be fully displayed. This WILL NOT end in an
 			// endless loop, because short events last a maximum of two weeks.
-			const generationRange = overwriteRange ? { ...range, end: e.endTime.getTime() } : range
+			const generationRange = overwriteRange ? { ...range, end: e.event.endTime.getTime() } : range
 
-			if (e.repeatRule) {
+			if (e.event.repeatRule) {
 				addDaysForRecurringEvent(eventMap, e, generationRange, zone)
 			} else {
 				addDaysForEventInstance(eventMap, e, generationRange, zone)
@@ -195,7 +211,7 @@ export class CalendarFacade {
 	 * @param eventsWrapper the events and alarmNotifications to be created.
 	 * @param onProgress
 	 */
-	private async saveCalendarEvents(eventsWrapper: Array<EventWrapper>, onProgress: (percent: number) => Promise<void>): Promise<void> {
+	private async saveCalendarEvents(eventsWrapper: Array<EventAlarmsTuple>, onProgress: (percent: number) => Promise<void>): Promise<void> {
 		let currentProgress = 10
 		await onProgress(currentProgress)
 
@@ -256,7 +272,7 @@ export class CalendarFacade {
 		}
 	}
 
-	private async setupEventAlarms(eventsWrapper: Array<EventWrapper>) {
+	private async setupEventAlarms(eventsWrapper: Array<EventAlarmsTuple>) {
 		const numEvents = eventsWrapper.length
 		let eventsWithAlarms: Array<AlarmNotificationsPerEvent> = []
 		try {
@@ -333,7 +349,7 @@ export class CalendarFacade {
 	 * get all the calendar event instances in the given time range that are generated by the given progenitor Ids
 	 */
 	async reifyCalendarSearchResult(start: number, end: number, results: Array<IdTuple>): Promise<Array<CalendarEvent>> {
-		const filteredEvents = results.filter(([calendarId, eventId]) => !isClientOnlyCalendar(calendarId))
+		const filteredEvents = results.filter(([calendarId, eventId]) => !isBirthdayCalendar(calendarId))
 		const progenitors = await loadMultipleFromLists(CalendarEventTypeRef, this.cachingEntityClient, filteredEvents)
 		const range: CalendarTimeRange = { start, end }
 		return generateCalendarInstancesInRange(progenitors, range)
@@ -643,12 +659,6 @@ export function sortByRecurrenceId(arr: Array<CalendarEventAlteredInstance>): vo
 
 async function loadAlteredInstancesFromIndexEntry(entityClient: EntityClient, indexEntry: CalendarEventUidIndex): Promise<Array<CalendarEventAlteredInstance>> {
 	if (indexEntry.alteredInstances.length === 0) return []
-	const indexedEventIds: Map<Id, Array<Id>> = groupByAndMap<IdTuple, Id, Id>(
-		indexEntry.alteredInstances,
-		(e: IdTuple) => listIdPart(e),
-		(e: IdTuple) => elementIdPart(e),
-	)
-
 	const isAlteredInstance = (e: CalendarEventAlteredInstance): e is CalendarEventAlteredInstance => e.recurrenceId != null && e.uid != null
 	const indexedEvents = await loadMultipleFromLists(CalendarEventTypeRef, entityClient, indexEntry.alteredInstances)
 	const alteredInstances: Array<CalendarEventAlteredInstance> = indexedEvents.filter(isAlteredInstance)

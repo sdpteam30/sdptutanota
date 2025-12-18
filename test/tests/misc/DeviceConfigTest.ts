@@ -151,7 +151,6 @@ o.spec("DeviceConfig", function () {
 				mailAutoSelectBehavior: ListAutoSelectBehavior.OLDER,
 				isSetupComplete: true,
 				lastExternalCalendarSync: {},
-				clientOnlyCalendars: new Map(),
 				events: [],
 				lastRatingPromptedDate: null,
 				retryRatingPromptAfter: null,
@@ -186,12 +185,12 @@ o.spec("DeviceConfig", function () {
 				isCalendarDaySelectorExpanded: false,
 				mailAutoSelectBehavior: ListAutoSelectBehavior.OLDER,
 				lastExternalCalendarSync: {},
-				clientOnlyCalendars: new Map(),
 				events: [],
 				lastRatingPromptedDate: null,
 				retryRatingPromptAfter: null,
 				scrollTime: 8,
 				mailListDisplayMode: MailListDisplayMode.MAILS,
+				mailListSize: {},
 
 				_version: DeviceConfig.Version,
 				_credentials: {

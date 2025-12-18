@@ -7,6 +7,7 @@ import { getDisplayNameOfPlanType } from "./FeatureListProvider"
 import { PlanType } from "../api/common/TutanotaConstants.js"
 import { lang, Translation } from "../misc/LanguageViewModel.js"
 import { SignupFlowStage, SignupFlowUsageTestController } from "./usagetest/UpgradeSubscriptionWizardUsageTestUtils.js"
+import { createAccount } from "./utils/PaymentUtils"
 
 export class SignupPage implements WizardPageN<UpgradeSubscriptionData> {
 	private dom!: HTMLElement
@@ -21,9 +22,17 @@ export class SignupPage implements WizardPageN<UpgradeSubscriptionData> {
 		let mailAddress: undefined | string = undefined
 		if (newAccountData) mailAddress = newAccountData.mailAddress
 		return m(SignupForm, {
-			onComplete: (signupResult) => {
-				if (signupResult.type === "success") {
-					if (signupResult.newAccountData) data.newAccountData = signupResult.newAccountData
+			onComplete: async (result) => {
+				if (result.type === "success") {
+					data.registrationCode = result.registrationCode
+					data.powChallengeSolutionPromise = result.powChallengeSolutionPromise
+					data.emailInputStore = result.emailInputStore
+					data.passwordInputStore = result.passwordInputStore
+
+					await createAccount(data, () => {
+						emitWizardEvent(this.dom, WizardEventType.CLOSE_DIALOG)
+					})
+
 					emitWizardEvent(this.dom, WizardEventType.SHOW_NEXT_PAGE)
 				} else {
 					emitWizardEvent(this.dom, WizardEventType.CLOSE_DIALOG)
@@ -33,10 +42,12 @@ export class SignupPage implements WizardPageN<UpgradeSubscriptionData> {
 				emitWizardEvent(this.dom, WizardEventType.SHOW_PREVIOUS_PAGE)
 			},
 			isBusinessUse: data.options.businessUse,
-			isPaidSubscription: () => data.type !== PlanType.Free,
-			campaign: () => data.registrationDataId,
+			isPaidSubscription: () => data.targetPlanType !== PlanType.Free,
+			campaignToken: () => data.registrationDataId,
 			prefilledMailAddress: mailAddress,
-			readonly: !!newAccountData,
+			newAccountData: data.newAccountData,
+			emailInputStore: data.emailInputStore,
+			passwordInputStore: data.passwordInputStore,
 		})
 	}
 }
@@ -49,18 +60,12 @@ export class SignupPageAttrs implements WizardPageAttrs<UpgradeSubscriptionData>
 	}
 
 	headerTitle(): Translation {
-		const title = getDisplayNameOfPlanType(this.data.type)
-
-		if (this.data.type === PlanType.Essential || this.data.type === PlanType.Advanced) {
-			return lang.makeTranslation("signup_business", title + " Business")
-		} else {
-			return lang.makeTranslation("signup_title", title)
-		}
+		return lang.makeTranslation("signup_title", getDisplayNameOfPlanType(this.data.targetPlanType))
 	}
 
 	nextAction(showErrorDialog: boolean): Promise<boolean> {
 		// next action not available for this page
-		SignupFlowUsageTestController.completeStage(SignupFlowStage.CREATE_ACCOUNT, this.data.type, this.data.options.paymentInterval())
+		SignupFlowUsageTestController.completeStage(SignupFlowStage.CREATE_ACCOUNT, this.data.targetPlanType, this.data.options.paymentInterval())
 		return Promise.resolve(true)
 	}
 

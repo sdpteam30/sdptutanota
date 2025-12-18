@@ -242,6 +242,9 @@ export type Mail = {
 	recipientCount: NumberString;
 	encryptionAuthStatus: null | NumberString;
 	_ownerKeyVersion: null | NumberString;
+	keyVerificationState: null | NumberString;
+	processingState: NumberString;
+	processNeeded: boolean;
 
 	sender: MailAddress;
 	attachments: IdTuple[];
@@ -251,6 +254,7 @@ export type Mail = {
 	mailDetailsDraft: null | IdTuple;
 	bucketKey: null | BucketKey;
 	sets: IdTuple[];
+	clientSpamClassifierResult: null | ClientSpamClassifierResult;
 }
 export const MailBoxTypeRef: TypeRef<MailBox> = new TypeRef("tutanota", 125)
 
@@ -273,13 +277,16 @@ export type MailBox = {
 
 	sentAttachments: Id;
 	receivedAttachments: Id;
-	folders: null | MailFolderRef;
-	spamResults: null | SpamResults;
+	mailSets: MailSetRef;
+	spamResults: SpamResults;
 	mailDetailsDrafts: null | MailDetailsDraftsRef;
 	archivedMailBags: MailBag[];
 	currentMailBag: null | MailBag;
 	importedAttachments: Id;
 	mailImportStates: Id;
+	extractedFeatures: Id;
+	clientSpamTrainingData: Id;
+	modifiedClientSpamTrainingDataIndex: Id;
 }
 export const CreateExternalUserGroupDataTypeRef: TypeRef<CreateExternalUserGroupData> = new TypeRef("tutanota", 138)
 
@@ -478,16 +485,16 @@ export type DeleteMailData = {
 	mails: IdTuple[];
 	folder: null | IdTuple;
 }
-export const MailFolderTypeRef: TypeRef<MailFolder> = new TypeRef("tutanota", 429)
+export const MailSetTypeRef: TypeRef<MailSet> = new TypeRef("tutanota", 429)
 
-export function createMailFolder(values: StrippedEntity<MailFolder>): MailFolder {
-    return Object.assign(create(typeModels[MailFolderTypeRef.typeId], MailFolderTypeRef), values)
+export function createMailSet(values: StrippedEntity<MailSet>): MailSet {
+    return Object.assign(create(typeModels[MailSetTypeRef.typeId], MailSetTypeRef), values)
 }
 
-export type MailFolder = {
-	_type: TypeRef<MailFolder>;
+export type MailSet = {
+	_type: TypeRef<MailSet>;
 	_errors: Object;
-	_original?: MailFolder
+	_original?: MailSet
 
 	_id: IdTuple;
 	_permissions: Id;
@@ -502,19 +509,19 @@ export type MailFolder = {
 	parentFolder: null | IdTuple;
 	entries: Id;
 }
-export const MailFolderRefTypeRef: TypeRef<MailFolderRef> = new TypeRef("tutanota", 440)
+export const MailSetRefTypeRef: TypeRef<MailSetRef> = new TypeRef("tutanota", 440)
 
-export function createMailFolderRef(values: StrippedEntity<MailFolderRef>): MailFolderRef {
-    return Object.assign(create(typeModels[MailFolderRefTypeRef.typeId], MailFolderRefTypeRef), values)
+export function createMailSetRef(values: StrippedEntity<MailSetRef>): MailSetRef {
+    return Object.assign(create(typeModels[MailSetRefTypeRef.typeId], MailSetRefTypeRef), values)
 }
 
-export type MailFolderRef = {
-	_type: TypeRef<MailFolderRef>;
-	_original?: MailFolderRef
+export type MailSetRef = {
+	_type: TypeRef<MailSetRef>;
+	_original?: MailSetRef
 
 	_id: Id;
 
-	folders: Id;
+	mailSets: Id;
 }
 export const MoveMailDataTypeRef: TypeRef<MoveMailData> = new TypeRef("tutanota", 445)
 
@@ -527,6 +534,7 @@ export type MoveMailData = {
 	_original?: MoveMailData
 
 	_format: NumberString;
+	moveReason: null | NumberString;
 
 	targetFolder: IdTuple;
 	mails: IdTuple[];
@@ -992,7 +1000,6 @@ export type MailboxServerProperties = {
 	_permissions: Id;
 	_format: NumberString;
 	_ownerGroup: null | Id;
-	whitelistProtectionEnabled: boolean;
 }
 export const MailboxGroupRootTypeRef: TypeRef<MailboxGroupRoot> = new TypeRef("tutanota", 693)
 
@@ -1088,8 +1095,7 @@ export type ListUnsubscribeData = {
 	_original?: ListUnsubscribeData
 
 	_format: NumberString;
-	recipient: string;
-	headers: string;
+	postLink: string;
 
 	mail: IdTuple;
 }
@@ -1242,6 +1248,7 @@ export type UserSettingsGroupRoot = {
 	startOfTheWeek: NumberString;
 	usageDataOptedIn: null | boolean;
 	_ownerKeyVersion: null | NumberString;
+	birthdayCalendarColor: null | string;
 
 	groupSettings: GroupSettings[];
 }
@@ -2106,6 +2113,7 @@ export type SimpleMoveMailPostIn = {
 
 	_format: NumberString;
 	destinationSetType: NumberString;
+	moveReason: null | NumberString;
 
 	mails: IdTuple[];
 }
@@ -2543,4 +2551,168 @@ export type ChangePrimaryAddressServicePutIn = {
 	address: string;
 
 	user: Id;
+}
+export const MovedMailsTypeRef: TypeRef<MovedMails> = new TypeRef("tutanota", 1716)
+
+export function createMovedMails(values: StrippedEntity<MovedMails>): MovedMails {
+    return Object.assign(create(typeModels[MovedMailsTypeRef.typeId], MovedMailsTypeRef), values)
+}
+
+export type MovedMails = {
+	_type: TypeRef<MovedMails>;
+	_original?: MovedMails
+
+	_id: Id;
+
+	targetFolder: IdTuple;
+	sourceFolder: IdTuple;
+	mailIds: IdTupleWrapper[];
+}
+export const MoveMailPostOutTypeRef: TypeRef<MoveMailPostOut> = new TypeRef("tutanota", 1721)
+
+export function createMoveMailPostOut(values: StrippedEntity<MoveMailPostOut>): MoveMailPostOut {
+    return Object.assign(create(typeModels[MoveMailPostOutTypeRef.typeId], MoveMailPostOutTypeRef), values)
+}
+
+export type MoveMailPostOut = {
+	_type: TypeRef<MoveMailPostOut>;
+	_original?: MoveMailPostOut
+
+	_format: NumberString;
+
+	movedMails: MovedMails[];
+}
+export const ClientSpamClassifierResultTypeRef: TypeRef<ClientSpamClassifierResult> = new TypeRef("tutanota", 1724)
+
+export function createClientSpamClassifierResult(values: StrippedEntity<ClientSpamClassifierResult>): ClientSpamClassifierResult {
+    return Object.assign(create(typeModels[ClientSpamClassifierResultTypeRef.typeId], ClientSpamClassifierResultTypeRef), values)
+}
+
+export type ClientSpamClassifierResult = {
+	_type: TypeRef<ClientSpamClassifierResult>;
+	_original?: ClientSpamClassifierResult
+
+	_id: Id;
+	spamDecision: NumberString;
+	confidence: NumberString;
+}
+export const ClientClassifierResultPostInTypeRef: TypeRef<ClientClassifierResultPostIn> = new TypeRef("tutanota", 1730)
+
+export function createClientClassifierResultPostIn(values: StrippedEntity<ClientClassifierResultPostIn>): ClientClassifierResultPostIn {
+    return Object.assign(create(typeModels[ClientClassifierResultPostInTypeRef.typeId], ClientClassifierResultPostInTypeRef), values)
+}
+
+export type ClientClassifierResultPostIn = {
+	_type: TypeRef<ClientClassifierResultPostIn>;
+	_original?: ClientClassifierResultPostIn
+
+	_format: NumberString;
+	isPredictionMade: boolean;
+
+	mails: IdTuple[];
+}
+export const ClientSpamTrainingDatumTypeRef: TypeRef<ClientSpamTrainingDatum> = new TypeRef("tutanota", 1736)
+
+export function createClientSpamTrainingDatum(values: StrippedEntity<ClientSpamTrainingDatum>): ClientSpamTrainingDatum {
+    return Object.assign(create(typeModels[ClientSpamTrainingDatumTypeRef.typeId], ClientSpamTrainingDatumTypeRef), values)
+}
+
+export type ClientSpamTrainingDatum = {
+	_type: TypeRef<ClientSpamTrainingDatum>;
+	_errors: Object;
+	_original?: ClientSpamTrainingDatum
+
+	_id: IdTuple;
+	_permissions: Id;
+	_format: NumberString;
+	_ownerGroup: null | Id;
+	_ownerEncSessionKey: null | Uint8Array;
+	_ownerKeyVersion: null | NumberString;
+	confidence: NumberString;
+	spamDecision: NumberString;
+	vector: Uint8Array;
+}
+export const ClientSpamTrainingDatumIndexEntryTypeRef: TypeRef<ClientSpamTrainingDatumIndexEntry> = new TypeRef("tutanota", 1747)
+
+export function createClientSpamTrainingDatumIndexEntry(values: StrippedEntity<ClientSpamTrainingDatumIndexEntry>): ClientSpamTrainingDatumIndexEntry {
+    return Object.assign(create(typeModels[ClientSpamTrainingDatumIndexEntryTypeRef.typeId], ClientSpamTrainingDatumIndexEntryTypeRef), values)
+}
+
+export type ClientSpamTrainingDatumIndexEntry = {
+	_type: TypeRef<ClientSpamTrainingDatumIndexEntry>;
+	_original?: ClientSpamTrainingDatumIndexEntry
+
+	_id: IdTuple;
+	_permissions: Id;
+	_format: NumberString;
+	_ownerGroup: null | Id;
+	clientSpamTrainingDatumElementId: Id;
+}
+export const ProcessInboxDatumTypeRef: TypeRef<ProcessInboxDatum> = new TypeRef("tutanota", 1756)
+
+export function createProcessInboxDatum(values: StrippedEntity<ProcessInboxDatum>): ProcessInboxDatum {
+    return Object.assign(create(typeModels[ProcessInboxDatumTypeRef.typeId], ProcessInboxDatumTypeRef), values)
+}
+
+export type ProcessInboxDatum = {
+	_type: TypeRef<ProcessInboxDatum>;
+	_original?: ProcessInboxDatum
+
+	_id: Id;
+	ownerEncVectorSessionKey: Uint8Array;
+	ownerKeyVersion: NumberString;
+	classifierType: null | NumberString;
+	encVector: Uint8Array;
+
+	mailId: IdTuple;
+	targetMoveFolder: IdTuple;
+}
+export const ProcessInboxPostInTypeRef: TypeRef<ProcessInboxPostIn> = new TypeRef("tutanota", 1764)
+
+export function createProcessInboxPostIn(values: StrippedEntity<ProcessInboxPostIn>): ProcessInboxPostIn {
+    return Object.assign(create(typeModels[ProcessInboxPostInTypeRef.typeId], ProcessInboxPostInTypeRef), values)
+}
+
+export type ProcessInboxPostIn = {
+	_type: TypeRef<ProcessInboxPostIn>;
+	_original?: ProcessInboxPostIn
+
+	_format: NumberString;
+	mailOwnerGroup: Id;
+
+	processInboxDatum: ProcessInboxDatum[];
+}
+export const PopulateClientSpamTrainingDatumTypeRef: TypeRef<PopulateClientSpamTrainingDatum> = new TypeRef("tutanota", 1770)
+
+export function createPopulateClientSpamTrainingDatum(values: StrippedEntity<PopulateClientSpamTrainingDatum>): PopulateClientSpamTrainingDatum {
+    return Object.assign(create(typeModels[PopulateClientSpamTrainingDatumTypeRef.typeId], PopulateClientSpamTrainingDatumTypeRef), values)
+}
+
+export type PopulateClientSpamTrainingDatum = {
+	_type: TypeRef<PopulateClientSpamTrainingDatum>;
+	_original?: PopulateClientSpamTrainingDatum
+
+	_id: Id;
+	ownerEncVectorSessionKey: Uint8Array;
+	ownerKeyVersion: NumberString;
+	isSpam: boolean;
+	confidence: NumberString;
+	encVector: Uint8Array;
+
+	mailId: IdTuple;
+}
+export const PopulateClientSpamTrainingDataPostInTypeRef: TypeRef<PopulateClientSpamTrainingDataPostIn> = new TypeRef("tutanota", 1778)
+
+export function createPopulateClientSpamTrainingDataPostIn(values: StrippedEntity<PopulateClientSpamTrainingDataPostIn>): PopulateClientSpamTrainingDataPostIn {
+    return Object.assign(create(typeModels[PopulateClientSpamTrainingDataPostInTypeRef.typeId], PopulateClientSpamTrainingDataPostInTypeRef), values)
+}
+
+export type PopulateClientSpamTrainingDataPostIn = {
+	_type: TypeRef<PopulateClientSpamTrainingDataPostIn>;
+	_original?: PopulateClientSpamTrainingDataPostIn
+
+	_format: NumberString;
+	mailOwnerGroup: Id;
+
+	populateClientSpamTrainingDatum: PopulateClientSpamTrainingDatum[];
 }

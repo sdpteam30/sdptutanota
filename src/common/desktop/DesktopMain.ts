@@ -1,5 +1,4 @@
 import { mp } from "./DesktopMonkeyPatch"
-import { err } from "./DesktopErrorHandler"
 import { DesktopConfig } from "./config/DesktopConfig"
 import * as electron from "electron"
 import { app, type Session } from "electron"
@@ -48,7 +47,7 @@ import { DesktopWebauthnFacade } from "./2fa/DesktopWebauthnFacade.js"
 import { DesktopPostLoginActions } from "./DesktopPostLoginActions.js"
 import { DesktopInterWindowEventFacade } from "./ipc/DesktopInterWindowEventFacade.js"
 import { OfflineDbFactory, PerWindowSqlCipherFacade } from "./db/PerWindowSqlCipherFacade.js"
-import { delay, lazyAsync, LazyLoaded, lazyMemoized } from "@tutao/tutanota-utils"
+import { LazyLoaded, lazyMemoized, noOp } from "@tutao/tutanota-utils"
 import dns from "node:dns"
 import { getConfigFile } from "./config/ConfigFile.js"
 import { OfflineDbRefCounter } from "./db/OfflineDbRefCounter.js"
@@ -58,7 +57,6 @@ import { makeDbPath } from "./db/DbUtils.js"
 import { DesktopCredentialsStorage } from "./db/DesktopCredentialsStorage.js"
 import { AppPassHandler } from "./credentials/AppPassHandler.js"
 import { SseClient } from "./sse/SseClient.js"
-import { suspensionAwareFetch } from "./net/SuspensionAwareFetch.js"
 import { TutaNotificationHandler } from "./sse/TutaNotificationHandler.js"
 import { TutaSseFacade } from "./sse/TutaSseFacade.js"
 import { SseStorage } from "./sse/SseStorage.js"
@@ -78,6 +76,10 @@ import { DesktopExportLock } from "./export/DesktopExportLock"
 import { ProgrammingError } from "../api/common/error/ProgrammingError"
 import { InstancePipeline } from "../api/worker/crypto/InstancePipeline"
 import { ClientModelInfo } from "../api/common/EntityFunctions"
+import { CommandExecutor } from "./CommandExecutor"
+import { makeSuspensionAwareFetch } from "./net/SuspensionAwareFetch"
+import { SuspensionHandler } from "../api/worker/SuspensionHandler"
+import { DesktopErrorHandler } from "./DesktopErrorHandler"
 
 mp()
 
@@ -102,10 +104,11 @@ type Components = {
 	readonly credentialsEncryption: NativeCredentialsFacade
 }
 const tfs = new TempFs(fs, electron, cryptoFns)
-const desktopUtils = new DesktopUtils(process.argv, tfs, electron)
+const commandExecutor = new CommandExecutor(child_process)
+const desktopUtils = new DesktopUtils(process, tfs, electron, commandExecutor)
 // Argon2 is already built for the web part, we don't need to have another copy.
 const loadArgon2 = async () => {
-	const wasmSourcePath = path.join(electron.app.getAppPath(), "wasm/argon2.wasm")
+	const wasmSourcePath = path.join(electron.app.getAppPath(), "argon2.wasm")
 	const wasmSource: Buffer = await fs.promises.readFile(wasmSourcePath)
 	const { exports } = (await WebAssembly.instantiate(wasmSource)).instance
 	return exports as unknown as Argon2IDExports
@@ -145,6 +148,8 @@ if (opts.registerAsMailHandler && opts.unregisterAsMailHandler) {
 } else {
 	createComponents().then(startupInstance)
 }
+
+const err: DesktopErrorHandler = new DesktopErrorHandler(desktopUtils)
 
 async function createComponents(): Promise<Components> {
 	const en = (await import("../../mail-app/translations/en.js")).default
@@ -259,6 +264,8 @@ async function createComponents(): Promise<Components> {
 
 	tray.setWindowManager(wm)
 
+	const suspensionAwareFetch = makeSuspensionAwareFetch(new SuspensionHandler(globalThis, noOp))
+
 	const notificationHandler = new TutaNotificationHandler(
 		wm,
 		nativeCredentialsFacade,
@@ -285,8 +292,17 @@ async function createComponents(): Promise<Components> {
 		nativeInstancePipeline,
 		clientModelInfo,
 	)
+
 	// It should be ok to await this, all we are waiting for is dynamic imports
-	const integrator = await getDesktopIntegratorForPlatform(electron, fs, child_process, () => import("winreg"))
+	const integrator = await getDesktopIntegratorForPlatform(
+		electron,
+		fs,
+		child_process,
+		new LazyLoaded(async () => {
+			const { WindowsRegistryFacade } = await import("./integration/WindowsRegistryFacade.js")
+			return new WindowsRegistryFacade(commandExecutor)
+		}),
+	)
 
 	const dragIcons = {
 		eml: desktopUtils.getIconByName("eml.png"),
@@ -299,7 +315,7 @@ async function createComponents(): Promise<Components> {
 	const dispatcherFactory: DispatcherFactory = (window: ApplicationWindow) => {
 		// @ts-ignore
 		const logger: Logger = global.logger
-		const desktopCommonSystemFacade = new DesktopCommonSystemFacade(window, logger)
+		const desktopCommonSystemFacade = new DesktopCommonSystemFacade(window, logger, desktopNet)
 		const sqlCipherFacade = new PerWindowSqlCipherFacade(offlineDbRefCounter)
 		const mailboxExportPersistence = new MailboxExportPersistence(conf)
 		const windowCleanup: WindowCleanup = {
@@ -313,8 +329,8 @@ async function createComponents(): Promise<Components> {
 			desktopCommonSystemFacade,
 			new DesktopDesktopSystemFacade(wm, window, sock),
 			new DesktopExportFacade(tfs, electron, conf, window, dragIcons, mailboxExportPersistence, fs, dateProvider, desktopExportLock),
-			new DesktopExternalCalendarFacade(),
-			new DesktopFileFacade(window, conf, dateProvider, customFetch, electron, tfs, fs, path),
+			new DesktopExternalCalendarFacade(electron.app.userAgentFallback),
+			new DesktopFileFacade(window, conf, dateProvider, customFetch, electron, tfs, fs, path, commandExecutor, process),
 			new DesktopInterWindowEventFacade(window, wm),
 			nativeCredentialsFacade,
 			desktopCrypto,
@@ -380,7 +396,7 @@ async function startupInstance(components: Components) {
 async function onAppReady(components: Components) {
 	const { wm, keyStoreFacade, conf } = components
 	// We await for it to not open any windows on top of keychain dialogs
-	await unlockDeviceKeychain(keyStoreFacade, wm, conf)
+	await unlockDeviceKeychain(keyStoreFacade, wm, conf, desktopUtils)
 	app.on("window-all-closed", async () => {
 		if (!(await conf.getVar(DesktopConfigKey.runAsTrayApp))) {
 			app.quit()
@@ -433,17 +449,13 @@ function manageDownloadsForSession(session: Session, dictUrl: string) {
 		.on("spellcheck-dictionary-download-failure", (ev, lcode) => log.debug(TAG, "spellcheck-dictionary-download-failure", lcode))
 }
 
-async function unlockDeviceKeychain(keyStoreFacade: DesktopKeyStoreFacade, wm: WindowManager, conf: DesktopConfig) {
+async function unlockDeviceKeychain(keyStoreFacade: DesktopKeyStoreFacade, wm: WindowManager, conf: DesktopConfig, utils: DesktopUtils) {
 	await keyStoreFacade.getDeviceKey().catch(async () => {
 		const { response } = await electron.dialog.showMessageBox({
 			type: "error",
 			title: "Tuta Mail",
 			message: lang.getTranslation("secretStorageError_msg", { "{url}": InfoLink.SecretStorage }).text,
-			buttons: [
-				lang.getTranslation("continue_action").text,
-				lang.getTranslation("clearLocalData_action").text,
-				lang.getTranslation("restart_action").text,
-			],
+			buttons: [lang.getTranslation("continue_action").text, lang.getTranslation("clearLocalData_action").text, lang.getTranslation("quit_action").text],
 			defaultId: 2,
 			cancelId: 0,
 		})
@@ -451,7 +463,6 @@ async function unlockDeviceKeychain(keyStoreFacade: DesktopKeyStoreFacade, wm: W
 			case 0:
 				break
 			case 1:
-				app.relaunch()
 				for (const window of wm.getAll()) {
 					log.debug("Closing window ", window.id)
 					// ideally we would destroy the window but it leads to obscure segfaults
@@ -463,12 +474,11 @@ async function unlockDeviceKeychain(keyStoreFacade: DesktopKeyStoreFacade, wm: W
 				log.debug("Invalidating keychain")
 				await keyStoreFacade.invalidateKeychain()
 				log.debug("Quitting app")
-				app.quit()
 				log.debug("App exited")
+				utils.exit()
 				break
 			case 2:
-				app.relaunch()
-				app.quit()
+				utils.exit()
 				break
 			default:
 				throw new ProgrammingError("Invalid choice")

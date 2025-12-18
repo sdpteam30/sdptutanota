@@ -1,6 +1,6 @@
 import m, { Children, Component, RouteLinkAttrs, Vnode } from "mithril"
 import { handleUncaughtError } from "../../misc/ErrorHandler"
-import { px, size } from "../size"
+import { component_size, px } from "../size"
 import type { lazy } from "@tutao/tutanota-utils"
 import { lazyStringValue, neverNull } from "@tutao/tutanota-utils"
 import type { lazyIcon } from "./Icon"
@@ -11,9 +11,8 @@ import type { MaybeTranslation } from "../../misc/LanguageViewModel"
 import { lang } from "../../misc/LanguageViewModel"
 import { Keys } from "../../api/common/TutanotaConstants"
 import { isKeyPressed } from "../../misc/KeyManager"
-import { DropData, DropHandler, DropType } from "./GuiUtils"
+import { DragStartHandler, DropData, DropHandler, DropType } from "./GuiUtils"
 import { assertMainOrNode, isDesktop } from "../../api/common/Env"
-import { stateBgHover } from "../builtinThemes.js"
 import { fileListToArray } from "../../api/common/utils/FileUtils.js"
 
 assertMainOrNode()
@@ -24,6 +23,7 @@ export type NavButtonAttrs = {
 	isSelectedPrefix?: string | boolean
 	click?: (event: Event, dom: HTMLElement) => unknown
 	colors?: NavButtonColor
+	dragStartHandler?: DragStartHandler
 	dropHandler?: DropHandler
 	hideLabel?: boolean
 	vertical?: boolean
@@ -32,6 +32,7 @@ export type NavButtonAttrs = {
 	centred?: boolean
 	leftInjection?: () => Children
 	disableHoverBackground?: boolean
+	disableSelectedBackground?: boolean
 	disabled?: boolean
 	persistentBackground?: boolean
 	onfocus?: () => unknown
@@ -62,11 +63,11 @@ export class NavButton implements Component<NavButtonAttrs> {
 						icon,
 						class: this._getIconClass(a),
 						style: {
-							fill: isNavButtonSelected(a) || this._draggedOver ? getColors(a.colors).button_selected : getColors(a.colors).button,
+							fill: isNavButtonSelected(a) || this._draggedOver ? theme.primary : theme.on_surface_variant,
 						},
 					})
 				: null,
-			!a.hideLabel ? m("span.label.click.text-ellipsis" + (!a.vertical && icon ? ".pl-m" : ""), lang.getTranslationText(a.label)) : null,
+			!a.hideLabel ? m("span.label.click.text-ellipsis" + (!a.vertical && icon ? ".pl-8" : ""), lang.getTranslationText(a.label)) : null,
 		]
 
 		// allow nav button without label for registration button on mobile devices
@@ -83,7 +84,7 @@ export class NavButton implements Component<NavButtonAttrs> {
 
 	_getNavButtonClass(a: NavButtonAttrs): string {
 		return (
-			"a.nav-button.noselect.items-center.click.plr-button.no-text-decoration.button-height.border-radius" +
+			"a.nav-button.noselect.items-center.click.plr-8.no-text-decoration.button-height.border-radius" +
 			(a.vertical ? ".col" : "") +
 			(!a.centred ? ".flex-start" : ".flex-center") +
 			(a.disableHoverBackground ? "" : ".state-bg") +
@@ -96,11 +97,11 @@ export class NavButton implements Component<NavButtonAttrs> {
 		const isSelected = isNavButtonSelected(a)
 
 		if (a.colors === NavButtonColor.Header && !styles.isDesktopLayout()) {
-			return "flex-end items-center icon-xl" + (isSelected ? " selected" : "")
+			return "flex-end items-center icon-32" + (isSelected ? " selected" : "")
 		} else if (a.small === true) {
 			return "flex-center items-center icon" + (isSelected ? " selected" : "")
 		} else {
-			return "flex-center items-center icon-large" + (isSelected ? " selected" : "")
+			return "flex-center items-center icon-24" + (isSelected ? " selected" : "")
 		}
 	}
 
@@ -111,17 +112,18 @@ export class NavButton implements Component<NavButtonAttrs> {
 	}
 
 	createButtonAttributes(a: NavButtonAttrs): RouteLinkAttrs {
-		const isCurrent = isNavButtonSelected(a)
-
+		const isCurrent = this._draggedOver || (isNavButtonSelected(a) && !a.disableSelectedBackground)
 		let attr: RouteLinkAttrs = {
 			role: "button",
 			"aria-current": isCurrent || undefined,
 			// role button for screen readers
 			href: this._getUrl(a.href),
+			draggable: a.dragStartHandler ? "true" : undefined,
+			ondragstart: a.dragStartHandler,
 			style: {
-				color: isCurrent || this._draggedOver ? getColors(a.colors).button_selected : getColors(a.colors).button,
 				"font-size": a.fontSize ? px(a.fontSize) : "",
-				background: (isCurrent && a.persistentBackground) || this._draggedOver ? stateBgHover : "",
+				color: this._draggedOver || isNavButtonSelected(a) ? theme.primary : theme.on_surface,
+				...(isCurrent && { background: theme.state_bg_active }),
 			},
 			title: lang.getTranslationText(a.label),
 			target: this._isExternalUrl(a.href) ? "_blank" : undefined,
@@ -165,8 +167,13 @@ export class NavButton implements Component<NavButtonAttrs> {
 				this._draggedOver = false
 				ev.preventDefault()
 				ev.stopPropagation()
-
-				if (ev.dataTransfer?.getData(DropType.Mail)) {
+				if (ev.dataTransfer?.getData(DropType.Folder)) {
+					let dropData: DropData = {
+						dropType: DropType.Folder,
+						folderId: ev.dataTransfer.getData(DropType.Folder),
+					}
+					neverNull(a.dropHandler)(dropData)
+				} else if (ev.dataTransfer?.getData(DropType.Mail)) {
 					let dropData: DropData = {
 						dropType: DropType.Mail,
 						mailId: ev.dataTransfer.getData(DropType.Mail),
@@ -203,7 +210,7 @@ export class NavButton implements Component<NavButtonAttrs> {
 	}
 
 	getHeight(): number {
-		return size.button_height
+		return component_size.button_height
 	}
 }
 
@@ -211,29 +218,6 @@ export const enum NavButtonColor {
 	Header = "header",
 	Nav = "nav",
 	Content = "content",
-}
-
-function getColors(buttonColors: NavButtonColor | null | undefined) {
-	switch (buttonColors) {
-		case NavButtonColor.Header:
-			return {
-				button: styles.isDesktopLayout() ? theme.header_button : theme.content_accent,
-				button_selected: styles.isDesktopLayout() ? theme.header_button_selected : theme.content_accent,
-			}
-
-		case NavButtonColor.Nav:
-			return {
-				button: theme.navigation_button,
-				button_selected: theme.navigation_button_selected,
-			}
-
-		default:
-			// for nav buttons in the more dropdown menu
-			return {
-				button: theme.content_button,
-				button_selected: theme.content_button_selected,
-			}
-	}
 }
 
 export function isNavButtonSelected(a: NavButtonAttrs): boolean {
@@ -247,6 +231,8 @@ export function isNavButtonSelected(a: NavButtonAttrs): boolean {
 
 export function isSelectedPrefix(href: string): boolean {
 	const current = m.route.get()
-	// don't just check current.indexOf(buttonHref) because other buttons may also start with this href
-	return href !== "" && (current === href || current.indexOf(href + "/") === 0 || current.indexOf(href + "?") === 0)
+	// don't just check current.startsWith(href) because other buttons may also start with this href
+	// e.g. /path/to should match /path/to/button but not /path/topology
+	// this check is a bit ad-hoc and should probably be replaced with something more structural (URLPattern?)
+	return href !== "" && (current === href || current.startsWith(href + "/") || current.startsWith(href + "?") || current.startsWith(href + "#"))
 }

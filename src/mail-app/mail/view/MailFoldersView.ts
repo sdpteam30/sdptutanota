@@ -9,38 +9,39 @@ import { isSelectedPrefix, NavButtonAttrs, NavButtonColor } from "../../../commo
 import { MAIL_PREFIX } from "../../../common/misc/RouteChange.js"
 import { MailFolderRow } from "./MailFolderRow.js"
 import { last, Thunk } from "@tutao/tutanota-utils"
-import { MailFolder } from "../../../common/api/entities/tutanota/TypeRefs.js"
+import { MailSet } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { attachDropdown, DropdownButtonAttrs } from "../../../common/gui/base/Dropdown.js"
 import { Icons } from "../../../common/gui/base/icons/Icons.js"
 import { ButtonColor } from "../../../common/gui/base/Button.js"
 import { ButtonSize } from "../../../common/gui/base/ButtonSize.js"
-import { MailSetKind } from "../../../common/api/common/TutanotaConstants.js"
+import { isNestableMailSet, MailSetKind } from "../../../common/api/common/TutanotaConstants.js"
 import { px, size } from "../../../common/gui/size.js"
 import { RowButton } from "../../../common/gui/base/buttons/RowButton.js"
 import { MailModel } from "../model/MailModel.js"
 import { getFolderName, MAX_FOLDER_INDENT_LEVEL } from "../model/MailUtils.js"
 import { isSpamOrTrashFolder } from "../model/MailChecks.js"
-import { DropData } from "../../../common/gui/base/GuiUtils"
+import { DropData, DropType } from "../../../common/gui/base/GuiUtils"
 import { lang } from "../../../common/misc/LanguageViewModel.js"
 import { getSafeAreaInsetBottom, getSafeAreaInsetTop } from "../../../common/gui/HtmlUtils"
+import { theme } from "../../../common/gui/theme.js"
 
 export interface MailFolderViewAttrs {
 	mailModel: MailModel
 	mailboxDetail: MailboxDetail
 	mailFolderElementIdToSelectedMailId: ReadonlyMap<Id, Id>
-	onFolderClick: (folder: MailFolder) => unknown
-	onFolderDrop: (dropData: DropData, folder: MailFolder) => unknown
+	onFolderClick: (folder: MailSet) => unknown
+	onFolderDrop: (dropData: DropData, folder: MailSet) => unknown
 	expandedFolders: ReadonlySet<Id>
-	onFolderExpanded: (folder: MailFolder, state: boolean) => unknown
-	onShowFolderAddEditDialog: (mailGroupId: Id, folder: MailFolder | null, parentFolder: MailFolder | null) => unknown
-	onDeleteCustomMailFolder: (folder: MailFolder) => unknown
+	onFolderExpanded: (folder: MailSet, state: boolean) => unknown
+	onShowFolderAddEditDialog: (mailGroupId: Id, folder: MailSet | null, parentFolder: MailSet | null) => unknown
+	onDeleteCustomMailFolder: (folder: MailSet) => unknown
 	inEditMode: boolean
 	onEditMailbox: () => unknown
 }
 
 type Counters = Record<string, number>
 
-/** Displays a tree of all folders. */
+/** Displays a tree of all mailSets. */
 export class MailFoldersView implements Component<MailFolderViewAttrs> {
 	// Contains the id of the visible row
 	private visibleRow: string | null = null
@@ -87,7 +88,7 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 		groupCounters: Counters,
 		folders: FolderSystem,
 		attrs: MailFolderViewAttrs,
-		path: MailFolder[],
+		path: MailSet[],
 		isInternalUser: boolean,
 		indentationLevel: number = 0,
 	): { children: Children[]; numRows: number } {
@@ -119,6 +120,18 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 				dropHandler: (dropData) => attrs.onFolderDrop(dropData, system.folder),
 				disableHoverBackground: true,
 				disabled: attrs.inEditMode,
+				dragStartHandler: isNestableMailSet(system.folder)
+					? (e: DragEvent) => {
+							const domElement = e.target as HTMLElement | null
+							// The quick change of the background color is to prevent a white background appearing in dark mode
+							if (domElement) domElement.style.background = theme.surface_container
+							requestAnimationFrame(() => {
+								if (domElement) domElement.style.background = ""
+							})
+
+							e.dataTransfer?.setData(DropType.Folder, getElementId(system.folder))
+						}
+					: undefined,
 			}
 			const currentExpansionState = attrs.inEditMode ? true : (attrs.expandedFolders.has(getElementId(system.folder)) ?? false) //default is false
 			const hasChildren = system.children.length > 0
@@ -152,6 +165,7 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 							? () => attrs.onFolderExpanded(system.folder, currentExpansionState)
 							: (event: Event) => {
 									event.preventDefault()
+									attrs.onFolderClick(system.folder)
 									m.route.set(href())
 								},
 						hasChildren,
@@ -179,9 +193,9 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 			label: "addFolder_action",
 			key: "addFolder",
 			icon: Icons.Add,
-			class: "folder-row mlr-button border-radius-small",
+			class: "folder-row mlr-8 border-radius-4",
 			style: {
-				width: `calc(100% - ${px(size.hpad_button * 2)})`,
+				width: `calc(100% - ${px(size.spacing_8 * 2)})`,
 			},
 			onclick: () => {
 				attrs.onShowFolderAddEditDialog(attrs.mailboxDetail.mailGroup._id, null, null)
@@ -193,7 +207,7 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 	 * Get a full path to a folder with colons in between,
 	 * Used for data-testids
 	 */
-	private getPathToFolderAsString(folderSystem: FolderSystem, currentFolder: MailFolder): string {
+	private getPathToFolderAsString(folderSystem: FolderSystem, currentFolder: MailSet): string {
 		return folderSystem
 			.getPathToFolder(currentFolder._id)
 			.map((f) => getFolderName(f))
@@ -205,7 +219,7 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 		return (counters[counterId] ?? 0) + system.children.reduce((acc, child) => acc + this.getTotalFolderCounter(counters, child), 0)
 	}
 
-	private createFolderMoreButton(folder: MailFolder, folders: FolderSystem, attrs: MailFolderViewAttrs, onClose: Thunk): IconButtonAttrs {
+	private createFolderMoreButton(folder: MailSet, folders: FolderSystem, attrs: MailFolderViewAttrs, onClose: Thunk): IconButtonAttrs {
 		return attachDropdown({
 			mainButtonAttrs: {
 				title: "more_label",
@@ -219,9 +233,9 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 				const lowerSpace = window.innerHeight - original.bottom - getSafeAreaInsetBottom()
 				// Shift the dropdown up by the icon size to hide the fact that the more button disappears after being clicked on
 				if (lowerSpace < upperSpace) {
-					return new DOMRect(original.x, original.y + size.icon_size_large, original.width, original.height)
+					return new DOMRect(original.x, original.y + size.icon_24, original.width, original.height)
 				} else {
-					return new DOMRect(original.x, original.y - size.icon_size_large, original.width, original.height)
+					return new DOMRect(original.x, original.y - size.icon_24, original.width, original.height)
 				}
 			},
 			childAttrs: () => {
@@ -236,7 +250,7 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 		})
 	}
 
-	private deleteButtonAttrs(attrs: MailFolderViewAttrs, folder: MailFolder): DropdownButtonAttrs {
+	private deleteButtonAttrs(attrs: MailFolderViewAttrs, folder: MailSet): DropdownButtonAttrs {
 		return {
 			label: "delete_action",
 			icon: Icons.Trash,
@@ -246,7 +260,7 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 		}
 	}
 
-	private addButtonAttrs(attrs: MailFolderViewAttrs, folder: MailFolder): DropdownButtonAttrs {
+	private addButtonAttrs(attrs: MailFolderViewAttrs, folder: MailSet): DropdownButtonAttrs {
 		return {
 			label: "addFolder_action",
 			icon: Icons.Add,
@@ -256,7 +270,7 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 		}
 	}
 
-	private editButtonAttrs(attrs: MailFolderViewAttrs, folders: FolderSystem, folder: MailFolder): DropdownButtonAttrs {
+	private editButtonAttrs(attrs: MailFolderViewAttrs, folders: FolderSystem, folder: MailSet): DropdownButtonAttrs {
 		return {
 			label: "edit_action",
 			icon: Icons.Edit,
@@ -270,7 +284,7 @@ export class MailFoldersView implements Component<MailFolderViewAttrs> {
 		}
 	}
 
-	private renderCreateFolderAddButton(parentFolder: MailFolder | null, attrs: MailFolderViewAttrs): Child {
+	private renderCreateFolderAddButton(parentFolder: MailSet | null, attrs: MailFolderViewAttrs): Child {
 		return m(IconButton, {
 			title: "addFolder_action",
 			click: () => {

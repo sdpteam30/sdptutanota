@@ -3,6 +3,7 @@ import { UserAreaGroupPostDataTypeRef } from "./TypeRefs.js"
 import { CreateGroupPostReturnTypeRef } from "./TypeRefs.js"
 import { CalendarDeleteDataTypeRef } from "./TypeRefs.js"
 import { ChangePrimaryAddressServicePutInTypeRef } from "./TypeRefs.js"
+import { ClientClassifierResultPostInTypeRef } from "./TypeRefs.js"
 import { UserAreaGroupDeleteDataTypeRef } from "./TypeRefs.js"
 import { CustomerAccountCreateDataTypeRef } from "./TypeRefs.js"
 import { DraftCreateDataTypeRef } from "./TypeRefs.js"
@@ -33,8 +34,11 @@ import { DeleteMailDataTypeRef } from "./TypeRefs.js"
 import { ManageLabelServicePostInTypeRef } from "./TypeRefs.js"
 import { ManageLabelServiceDeleteInTypeRef } from "./TypeRefs.js"
 import { MoveMailDataTypeRef } from "./TypeRefs.js"
+import { MoveMailPostOutTypeRef } from "./TypeRefs.js"
 import { NewsOutTypeRef } from "./TypeRefs.js"
 import { NewsInTypeRef } from "./TypeRefs.js"
+import { PopulateClientSpamTrainingDataPostInTypeRef } from "./TypeRefs.js"
+import { ProcessInboxPostInTypeRef } from "./TypeRefs.js"
 import { ReceiveInfoServiceDataTypeRef } from "./TypeRefs.js"
 import { ReceiveInfoServicePostOutTypeRef } from "./TypeRefs.js"
 import { ReportMailPostDataTypeRef } from "./TypeRefs.js"
@@ -73,6 +77,15 @@ export const ChangePrimaryAddressService = Object.freeze({
 	get: null,
 	post: null,
 	put: { data: ChangePrimaryAddressServicePutInTypeRef, return: null },
+	delete: null,
+} as const)
+
+export const ClientClassifierResultService = Object.freeze({
+	app: "tutanota",
+	name: "ClientClassifierResultService",
+	get: null,
+	post: { data: ClientClassifierResultPostInTypeRef, return: null },
+	put: null,
 	delete: null,
 } as const)
 
@@ -206,7 +219,7 @@ export const MoveMailService = Object.freeze({
 	app: "tutanota",
 	name: "MoveMailService",
 	get: null,
-	post: { data: MoveMailDataTypeRef, return: null },
+	post: { data: MoveMailDataTypeRef, return: MoveMailPostOutTypeRef },
 	put: null,
 	delete: null,
 } as const)
@@ -216,6 +229,24 @@ export const NewsService = Object.freeze({
 	name: "NewsService",
 	get: { data: null, return: NewsOutTypeRef },
 	post: { data: NewsInTypeRef, return: null },
+	put: null,
+	delete: null,
+} as const)
+
+export const PopulateClientSpamTrainingDataService = Object.freeze({
+	app: "tutanota",
+	name: "PopulateClientSpamTrainingDataService",
+	get: null,
+	post: { data: PopulateClientSpamTrainingDataPostInTypeRef, return: null },
+	put: null,
+	delete: null,
+} as const)
+
+export const ProcessInboxService = Object.freeze({
+	app: "tutanota",
+	name: "ProcessInboxService",
+	get: null,
+	post: { data: ProcessInboxPostInTypeRef, return: null },
 	put: null,
 	delete: null,
 } as const)
@@ -260,7 +291,7 @@ export const SimpleMoveMailService = Object.freeze({
 	app: "tutanota",
 	name: "SimpleMoveMailService",
 	get: null,
-	post: { data: SimpleMoveMailPostInTypeRef, return: null },
+	post: { data: SimpleMoveMailPostInTypeRef, return: MoveMailPostOutTypeRef },
 	put: null,
 	delete: null,
 } as const)

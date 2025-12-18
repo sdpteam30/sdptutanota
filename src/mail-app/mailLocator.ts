@@ -71,7 +71,7 @@ import { SearchViewModel } from "./search/view/SearchViewModel.js"
 import { SearchRouter } from "../common/search/view/SearchRouter.js"
 import { MailOpenedListener } from "./mail/view/MailViewModel.js"
 import { getEnabledMailAddressesWithUser } from "../common/mailFunctionality/SharedMailUtils.js"
-import { CLIENT_ONLY_CALENDARS, Const, DEFAULT_CLIENT_ONLY_CALENDAR_COLORS, FeatureType, GroupType } from "../common/api/common/TutanotaConstants.js"
+import { Const, FeatureType, GroupType } from "../common/api/common/TutanotaConstants.js"
 import { ShareableGroupType } from "../common/sharing/GroupUtils.js"
 import { ReceivedGroupInvitationsModel } from "../common/sharing/model/ReceivedGroupInvitationsModel.js"
 import { CalendarViewModel } from "../calendar-app/calendar/view/CalendarViewModel.js"
@@ -129,7 +129,6 @@ import type { ContactImporter } from "./contacts/ContactImporter.js"
 import { ExternalCalendarFacade } from "../common/native/common/generatedipc/ExternalCalendarFacade.js"
 import { AppType } from "../common/misc/ClientConstants.js"
 import { ParsedEvent } from "../common/calendar/gui/CalendarImporter.js"
-import { lang } from "../common/misc/LanguageViewModel.js"
 import type { CalendarContactPreviewViewModel } from "../calendar-app/calendar/gui/eventpopup/CalendarContactPreviewViewModel.js"
 import { KeyLoaderFacade } from "../common/api/worker/facades/KeyLoaderFacade.js"
 import { KeyVerificationFacade } from "../common/api/worker/facades/lazy/KeyVerificationFacade"
@@ -147,6 +146,18 @@ import { ClientModelInfo, ClientTypeModelResolver } from "../common/api/common/E
 import { OfflineStorageSettingsModel } from "../common/offline/OfflineStorageSettingsModel"
 import { SearchToken } from "../common/api/common/utils/QueryTokenUtils"
 import type { ContactSearchFacade } from "./workerUtils/index/ContactSearchFacade"
+import { PublicEncryptionKeyProvider } from "../common/api/worker/facades/PublicEncryptionKeyProvider"
+import { IdentityKeyCreator } from "../common/api/worker/facades/lazy/IdentityKeyCreator"
+import { PublicIdentityKeyProvider } from "../common/api/worker/facades/PublicIdentityKeyProvider"
+import { WhitelabelThemeGenerator } from "../common/gui/WhitelabelThemeGenerator"
+import { UndoModel } from "./UndoModel"
+import { GroupSettingsModel } from "../common/sharing/model/GroupSettingsModel"
+import { AutosaveFacade } from "../common/api/worker/facades/lazy/AutosaveFacade"
+import { lang } from "../common/misc/LanguageViewModel.js"
+import { SpamClassificationHandler } from "./mail/model/SpamClassificationHandler"
+import { SpamClassifier } from "./workerUtils/spamClassification/SpamClassifier"
+import { ProcessInboxHandler } from "./mail/model/ProcessInboxHandler"
+import type { QuickActionsModel } from "../common/misc/quickactions/QuickActionsModel"
 
 assertMainOrNode()
 
@@ -171,6 +182,7 @@ class MailLocator implements CommonLocator {
 	keyLoaderFacade!: KeyLoaderFacade
 	giftCardFacade!: GiftCardFacade
 	groupManagementFacade!: GroupManagementFacade
+	identityKeyCreator!: IdentityKeyCreator
 	configFacade!: ConfigurationDatabase
 	calendarFacade!: CalendarFacade
 	mailFacade!: MailFacade
@@ -182,6 +194,8 @@ class MailLocator implements CommonLocator {
 	bookingFacade!: BookingFacade
 	mailAddressFacade!: MailAddressFacade
 	keyVerificationFacade!: KeyVerificationFacade
+	publicEncryptionKeyProvider!: PublicEncryptionKeyProvider
+	publicIdentityKeyProvider!: PublicIdentityKeyProvider
 	blobFacade!: BlobFacade
 	userManagementFacade!: UserManagementFacade
 	recoverCodeFacade!: RecoverCodeFacade
@@ -210,6 +224,9 @@ class MailLocator implements CommonLocator {
 	bulkMailLoader!: BulkMailLoader
 	mailExportFacade!: MailExportFacade
 	syncTracker!: SyncTracker
+	spamClassifier!: SpamClassifier
+	whitelabelThemeGenerator!: WhitelabelThemeGenerator
+	autosaveFacade!: AutosaveFacade
 
 	private nativeInterfaces: NativeInterfaces | null = null
 	private mailImporter: MailImporter | null = null
@@ -222,7 +239,7 @@ class MailLocator implements CommonLocator {
 
 	readonly recipientsModel: lazyAsync<RecipientsModel> = lazyMemoized(async () => {
 		const { RecipientsModel } = await import("../common/api/main/RecipientsModel.js")
-		return new RecipientsModel(this.contactModel, this.logins, this.mailFacade, this.entityClient, this.keyVerificationFacade)
+		return new RecipientsModel(this.contactModel, this.logins, this.mailFacade, this.entityClient)
 	})
 
 	async noZoneDateProvider(): Promise<NoZoneDateProvider> {
@@ -271,7 +288,7 @@ class MailLocator implements CommonLocator {
 			conversationViewModelFactory,
 			this.mailOpenedListener,
 			deviceConfig,
-			this.inboxRuleHandler(),
+			this.processInboxHandler(),
 			router,
 			await this.redraw(),
 		)
@@ -286,6 +303,14 @@ class MailLocator implements CommonLocator {
 		return new InboxRuleHandler(this.mailFacade, this.logins, this.mailModel)
 	})
 
+	readonly spamClassificationHandler = lazyMemoized(() => {
+		return new SpamClassificationHandler(this.spamClassifier)
+	})
+
+	readonly processInboxHandler = lazyMemoized(() => {
+		return new ProcessInboxHandler(this.logins, this.mailFacade, this.spamClassificationHandler, this.inboxRuleHandler)
+	})
+
 	async searchViewModelFactory(): Promise<() => SearchViewModel> {
 		const { SearchViewModel } = await import("../mail-app/search/view/SearchViewModel.js")
 		const conversationViewModelFactory = await this.conversationViewModelFactory()
@@ -293,6 +318,7 @@ class MailLocator implements CommonLocator {
 		const searchRouter = await this.scopedSearchRouter()
 		const calendarEventsRepository = await this.calendarEventsRepository()
 		const offlineStorageSettings = await this.offlineStorageSettingsModel()
+		const calendarModel = await this.calendarModel()
 		return () => {
 			return new SearchViewModel(
 				searchRouter,
@@ -308,9 +334,9 @@ class MailLocator implements CommonLocator {
 				this.progressTracker,
 				conversationViewModelFactory,
 				calendarEventsRepository,
+				calendarModel,
 				redraw,
 				deviceConfig.getMailAutoSelectBehavior(),
-				deviceConfig.getClientOnlyCalendars(),
 				offlineStorageSettings,
 			)
 		}
@@ -336,6 +362,11 @@ class MailLocator implements CommonLocator {
 			: noOp,
 	}
 
+	readonly quickActionsModel: lazyAsync<QuickActionsModel> = lazyMemoized(async () => {
+		const { QuickActionsModel } = await import("../common/misc/quickactions/QuickActionsModel.js")
+		return new QuickActionsModel()
+	})
+
 	readonly contactViewModel = lazyMemoized(async () => {
 		const { ContactViewModel } = await import("../mail-app/contacts/view/ContactViewModel.js")
 		const router = new ScopedRouter(this.throttledRouter(), "/contact")
@@ -353,8 +384,14 @@ class MailLocator implements CommonLocator {
 			this.contactModel,
 			await this.receivedGroupInvitationsModel(GroupType.ContactList),
 			router,
+			this.groupSettingsModel,
 			await this.redraw(),
 		)
+	})
+
+	readonly groupSettingsModel: lazy<Promise<GroupSettingsModel>> = lazyMemoized(async () => {
+		const { GroupSettingsModel } = await import("../common/sharing/model/GroupSettingsModel.js")
+		return new GroupSettingsModel(this.entityClient, this.logins)
 	})
 
 	async receivedGroupInvitationsModel<TypeOfGroup extends ShareableGroupType>(groupType: TypeOfGroup): Promise<ReceivedGroupInvitationsModel<TypeOfGroup>> {
@@ -385,6 +422,7 @@ class MailLocator implements CommonLocator {
 			timeZone,
 			this.mailboxModel,
 			this.contactModel,
+			this.groupSettingsModel,
 		)
 	})
 
@@ -420,9 +458,11 @@ class MailLocator implements CommonLocator {
 				recipientsModel,
 				dateProvider,
 				mailboxProperties,
+				this.autosaveFacade,
 				async (mail: Mail) => {
 					return await isMailInSpamOrTrash(mail, mailLocator.mailModel)
 				},
+				this.syncTracker,
 			)
 	}
 
@@ -512,6 +552,7 @@ class MailLocator implements CommonLocator {
 	async mailViewerViewModelFactory(): Promise<(options: CreateMailViewerOptions) => MailViewerViewModel> {
 		const { MailViewerViewModel } = await import("../mail-app/mail/view/MailViewerViewModel.js")
 		const eventRepository = await this.calendarEventsRepository()
+		const undoModel = await this.undoModel()
 
 		return ({ mail, showFolder, highlightedTokens }) =>
 			new MailViewerViewModel(
@@ -520,14 +561,11 @@ class MailLocator implements CommonLocator {
 				this.entityClient,
 				this.mailboxModel,
 				this.mailModel,
+				isBrowser() ? null : this.commonSystemFacade,
 				this.contactModel,
 				this.configFacade,
 				this.fileController,
 				this.logins,
-				async (mailboxDetails) => {
-					const mailboxProperties = await this.mailboxModel.getMailboxProperties(mailboxDetails.mailboxGroupRoot)
-					return this.sendMailModel(mailboxDetails, mailboxProperties)
-				},
 				this.eventController,
 				this.workerFacade,
 				this.search,
@@ -536,7 +574,7 @@ class MailLocator implements CommonLocator {
 				() => this.contactImporter(),
 				highlightedTokens ?? [],
 				eventRepository,
-				this.mailViewModel,
+				undoModel,
 			)
 	}
 
@@ -656,7 +694,7 @@ class MailLocator implements CommonLocator {
 				})
 	}
 
-	async loginViewModelFactory(): Promise<lazy<LoginViewModel>> {
+	loginViewModelFactory = lazyMemoized(async () => {
 		const { LoginViewModel } = await import("../common/login/LoginViewModel.js")
 		const credentialsRemovalHandler = await mailLocator.credentialsRemovalHandler()
 		const { MobileAppLock, NoOpAppLock } = await import("../common/login/AppLock.js")
@@ -680,7 +718,7 @@ class MailLocator implements CommonLocator {
 				appLock,
 			)
 		}
-	}
+	})
 
 	private getNativeInterface<T extends keyof NativeInterfaces>(name: T): NativeInterfaces[T] {
 		if (!this.nativeInterfaces) {
@@ -729,6 +767,7 @@ class MailLocator implements CommonLocator {
 			customerFacade,
 			giftCardFacade,
 			groupManagementFacade,
+			identityKeyCreator,
 			configFacade,
 			calendarFacade,
 			mailFacade,
@@ -739,6 +778,8 @@ class MailLocator implements CommonLocator {
 			bookingFacade,
 			mailAddressFacade,
 			keyVerificationFacade,
+			publicEncryptionKeyProvider,
+			publicIdentityKeyProvider,
 			blobFacade,
 			userManagementFacade,
 			recoverCodeFacade,
@@ -755,11 +796,14 @@ class MailLocator implements CommonLocator {
 			bulkMailLoader,
 			mailExportFacade,
 			contactSearchFacade,
+			autosaveFacade,
+			spamClassifier,
 		} = this.worker.getWorkerInterface() as WorkerInterface
 		this.loginFacade = loginFacade
 		this.customerFacade = customerFacade
 		this.giftCardFacade = giftCardFacade
 		this.groupManagementFacade = groupManagementFacade
+		this.identityKeyCreator = identityKeyCreator
 		this.configFacade = configFacade
 		this.calendarFacade = calendarFacade
 		this.mailFacade = mailFacade
@@ -771,6 +815,8 @@ class MailLocator implements CommonLocator {
 		this.bookingFacade = bookingFacade
 		this.mailAddressFacade = mailAddressFacade
 		this.keyVerificationFacade = keyVerificationFacade
+		this.publicEncryptionKeyProvider = publicEncryptionKeyProvider
+		this.publicIdentityKeyProvider = publicIdentityKeyProvider
 		this.blobFacade = blobFacade
 		this.userManagementFacade = userManagementFacade
 		this.recoverCodeFacade = recoverCodeFacade
@@ -806,12 +852,13 @@ class MailLocator implements CommonLocator {
 			this.logins,
 			this.mailFacade,
 			this.connectivityModel,
-			this.inboxRuleHandler,
+			this.processInboxHandler,
 		)
 		this.operationProgressTracker = new OperationProgressTracker()
 		this.infoMessageHandler = new InfoMessageHandler((state: SearchIndexStateInfo) => {
 			mailLocator.search.indexState(state)
 		})
+		this.autosaveFacade = autosaveFacade
 
 		this.usageTestModel = new UsageTestModel(
 			{
@@ -835,6 +882,8 @@ class MailLocator implements CommonLocator {
 		)
 		this.usageTestController = new UsageTestController(this.usageTestModel)
 		this.Const = Const
+		this.whitelabelThemeGenerator = new WhitelabelThemeGenerator()
+		this.spamClassifier = spamClassifier
 		if (!isBrowser()) {
 			const { WebDesktopFacade } = await import("../common/native/main/WebDesktopFacade")
 			const { WebMobileFacade } = await import("../common/native/main/WebMobileFacade.js")
@@ -851,8 +900,8 @@ class MailLocator implements CommonLocator {
 				return await this.calendarEventModel(mode, getEventWithDefaultTimes(setNextHalfHour(new Date(date))), mailboxDetail, mailboxProperties, null)
 			})
 			const { OpenSettingsHandler } = await import("../common/native/main/OpenSettingsHandler.js")
-			const openSettingsHandler = new OpenSettingsHandler(this.logins)
 
+			const openSettingsHandler = new OpenSettingsHandler(this.logins)
 			this.webMobileFacade = new WebMobileFacade(this.connectivityModel, MAIL_PREFIX)
 
 			this.nativeInterfaces = createNativeInterfaces(
@@ -951,6 +1000,10 @@ class MailLocator implements CommonLocator {
 					const { RichNotificationsNews } = await import("../common/misc/news/items/RichNotificationsNews.js")
 					return new RichNotificationsNews(this.newsModel, isApp() || isDesktop() ? this.pushService : null)
 				}
+				case "colorCustomizationUpdate": {
+					const { UpdateColorCustomizationNews } = await import("../common/misc/news/items/UpdateColorCustomizationNews.js")
+					return new UpdateColorCustomizationNews(this.newsModel, this.logins.getUserController())
+				}
 				default:
 					console.log(`No implementation for news named '${name}'`)
 					return null
@@ -988,9 +1041,9 @@ class MailLocator implements CommonLocator {
 			isApp() || isDesktop() ? new NativeThemeFacade(new LazyLoaded<ThemeFacade>(async () => mailLocator.themeFacade)) : new WebThemeFacade(deviceConfig)
 		const lazySanitizer = isTest()
 			? () => Promise.resolve(sanitizerStub as HtmlSanitizer)
-			: () => import("../common/misc/HtmlSanitizer").then(({ htmlSanitizer }) => htmlSanitizer)
+			: () => import("../common/misc/HtmlSanitizer").then(({ getHtmlSanitizer }) => getHtmlSanitizer())
 
-		this.themeController = new ThemeController(theme, selectedThemeFacade, lazySanitizer, AppType.Mail)
+		this.themeController = new ThemeController(theme, selectedThemeFacade, lazySanitizer, AppType.Mail, this.whitelabelThemeGenerator)
 
 		// For native targets WebCommonNativeFacade notifies themeController because Android and Desktop do not seem to work reliably via media queries
 		if (selectedThemeFacade instanceof WebThemeFacade) {
@@ -1019,6 +1072,7 @@ class MailLocator implements CommonLocator {
 			!isBrowser() ? this.pushService : null,
 			this.syncTracker,
 			noOp,
+			lang,
 		)
 	})
 
@@ -1069,7 +1123,7 @@ class MailLocator implements CommonLocator {
 
 			calendarSelectionDialog(Array.from(calendarInfos.values()), this.logins.getUserController(), groupColors, (dialog, selectedCalendar) => {
 				dialog.close()
-				handleCalendarImport(selectedCalendar.groupRoot, parsedEvents)
+				handleCalendarImport(selectedCalendar.groupRoot, selectedCalendar, parsedEvents)
 			})
 		}
 	}
@@ -1113,7 +1167,7 @@ class MailLocator implements CommonLocator {
 			hasBusinessFeature,
 			ownAttendee,
 			lazyIndexEntry,
-			async (mode: CalendarOperation) => this.calendarEventModel(mode, selectedEvent, mailboxDetails, mailboxProperties, null),
+			async (mode: CalendarOperation, event: CalendarEvent) => this.calendarEventModel(mode, event, mailboxDetails, mailboxProperties, null),
 			highlightedTokens,
 		)
 
@@ -1148,8 +1202,8 @@ class MailLocator implements CommonLocator {
 			this.themeController,
 			this.syncTracker,
 			() => this.showSetupWizard(),
-			() => this.setUpClientOnlyCalendars(),
 			() => this.updateClients(),
+			this.loginFacade,
 		)
 	})
 
@@ -1166,20 +1220,6 @@ class MailLocator implements CommonLocator {
 				deviceConfig,
 				true,
 			)
-		}
-	}
-
-	setUpClientOnlyCalendars() {
-		let configs = deviceConfig.getClientOnlyCalendars()
-
-		for (const [id, name] of CLIENT_ONLY_CALENDARS.entries()) {
-			const calendarId = `${this.logins.getUserController().userId}#${id}`
-			const config = configs.get(calendarId)
-			if (!config)
-				deviceConfig.updateClientOnlyCalendars(calendarId, {
-					name: lang.get(name),
-					color: DEFAULT_CLIENT_ONLY_CALENDAR_COLORS.get(id)!,
-				})
 		}
 	}
 
@@ -1220,9 +1260,9 @@ class MailLocator implements CommonLocator {
 	}
 
 	readonly mailExportController: () => Promise<MailExportController> = lazyMemoized(async () => {
-		const { htmlSanitizer } = await import("../common/misc/HtmlSanitizer")
+		const { getHtmlSanitizer } = await import("../common/misc/HtmlSanitizer")
 		const { MailExportController } = await import("./native/main/MailExportController.js")
-		return new MailExportController(this.mailExportFacade, htmlSanitizer, this.exportFacade, this.logins, this.mailboxModel, await this.scheduler())
+		return new MailExportController(this.mailExportFacade, getHtmlSanitizer(), this.exportFacade, this.logins, this.mailboxModel, await this.scheduler())
 	})
 
 	async offlineStorageSettingsModel(): Promise<OfflineStorageSettingsModel | null> {
@@ -1232,6 +1272,11 @@ class MailLocator implements CommonLocator {
 			return null
 		}
 	}
+
+	readonly undoModel: lazyAsync<UndoModel> = lazyMemoized(async () => {
+		const { UndoModel } = await import("./UndoModel.js")
+		return new UndoModel()
+	})
 
 	/**
 	 * Factory method for credentials provider that will return an instance injected with the implementations appropriate for the platform.

@@ -3,10 +3,10 @@ import { px, size } from "../../size.js"
 import { ExpanderButton, ExpanderPanel } from "../Expander.js"
 import { TextField } from "../TextField.js"
 import { lang } from "../../../misc/LanguageViewModel.js"
-import { hexToHSL, hslToHex, isColorLight, isValidCSSHexColor, MAX_HUE_ANGLE, normalizeHueAngle } from "../Color.js"
+import { hexToHSL, hslToHex, isValidCSSHexColor, MAX_HUE_ANGLE, normalizeHueAngle } from "../Color.js"
 import { ColorPickerModel } from "./ColorPickerModel.js"
 import { client } from "../../../misc/ClientDetector.js"
-import { theme } from "../../theme.js"
+import { isDarkTheme, theme } from "../../theme.js"
 import { assertNotNull, clamp, filterInt } from "@tutao/tutanota-utils"
 import { Keys, TabIndex } from "../../../api/common/TutanotaConstants"
 import { isKeyPressed } from "../../../misc/KeyManager"
@@ -32,7 +32,7 @@ export type ColorPickerViewAttrs = {
 
 export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 	private readonly palette = Array<string | null>(ColorPickerModel.PALETTE_SIZE).fill(null)
-	private readonly model: ColorPickerModel = new ColorPickerModel(!isColorLight(theme.content_bg))
+	private readonly model: ColorPickerModel = new ColorPickerModel(isDarkTheme())
 	private selectedHueAngle = Math.floor(Math.random() * MAX_HUE_ANGLE)
 	private fallbackVariantIndex: number = PaletteIndex.defaultVariant
 	private isAdvanced = false
@@ -73,10 +73,10 @@ export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 		return m(".color-picker", [
 			this.renderHuePicker(attrs.onselect),
 			m(
-				".flex.wrap.full-width.items-center.justify-between.p0.plr-s",
+				".flex.wrap.full-width.items-center.justify-between.p0.plr-4",
 				{
 					style: {
-						rowGap: px(size.vpad_xs),
+						rowGap: px(size.spacing_4),
 						marginTop: px(12),
 					},
 				},
@@ -87,11 +87,11 @@ export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 						selectedColor: attrs.value,
 						onselect: attrs.onselect,
 						// add right divider to first color option
-						className: i === 0 ? ".pr-vpad-s.mr-hpad-small" : undefined,
+						className: i === 0 ? ".pr-8.mr-4" : undefined,
 						style:
 							i === 0
 								? {
-										borderRight: `2px solid ${theme.content_border}`,
+										borderRight: `2px solid ${theme.outline}`,
 									}
 								: undefined,
 					}),
@@ -137,7 +137,7 @@ export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 	}
 
 	private renderCustomColorContainer(attrs: ColorPickerViewAttrs) {
-		return m(".custom-color-container.flex.items-start.gap-hpad", [
+		return m(".custom-color-container.flex.items-start.gap-12", [
 			m("", [
 				m(TextField, {
 					value: this.customColorHex.replace("#", ""),
@@ -154,7 +154,7 @@ export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 					this.postionSliderOnHue(assertNotNull(this.hueImgDom), assertNotNull(this.hueSliderDom))
 					attrs.onselect(color)
 				},
-				className: ".mt-m",
+				className: ".mt-12",
 			}),
 		])
 	}
@@ -224,13 +224,13 @@ export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 				style,
 			},
 			m(
-				".border-radius-m",
+				".border-radius-8",
 				{
 					style: {
 						padding: "1px",
 						borderWidth: "2px",
 						borderStyle: "solid",
-						borderColor: isOptionSelected ? theme.content_button_selected : "transparent",
+						borderColor: isOptionSelected ? theme.primary : "transparent",
 					},
 				},
 				m(".border-radius", {
@@ -243,8 +243,8 @@ export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 						height: px(30),
 						borderWidth: "1px",
 						borderStyle: "solid",
-						borderColor: isOptionSelected ? "transparent" : theme.content_border,
-						backgroundColor: isColorValid ? color : theme.content_border,
+						borderColor: isOptionSelected ? "transparent" : theme.outline,
+						backgroundColor: isColorValid ? color : theme.outline,
 					},
 					onkeydown: (e: KeyboardEvent) => {
 						if (isKeyPressed(e.key, Keys.SPACE)) {
@@ -323,16 +323,14 @@ export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 					{
 						style: {
 							borderStyle: "solid",
-							borderColor: theme.content_border,
-							backgroundColor: theme.content_border,
+							borderColor: theme.outline,
+							backgroundColor: theme.outline,
 							borderWidth: px(HUE_GRADIENT_BORDER_WIDTH),
 							height: px(HUE_GRADIENT_HEIGHT),
 						},
 					},
 					m("img.block.full-width", {
-						src: `${window.tutao.appState.prefixWithoutFile}/images/color-hue-picker/hue-gradient-${
-							!isColorLight(theme.content_bg) ? "dark" : "light"
-						}.png`,
+						src: `${window.tutao.appState.prefixWithoutFile}/images/color-hue-picker/hue-gradient-${isDarkTheme() ? "dark" : "light"}.png`,
 						alt: "",
 						draggable: false,
 						style: {
@@ -396,7 +394,7 @@ export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 								width: px(24),
 								height: px(24),
 								transform: "translateX(-50%)",
-								backgroundColor: this.model.getHueWindowColor(this.selectedHueAngle) ?? theme.content_border,
+								backgroundColor: this.model.getHueWindowColor(this.selectedHueAngle) ?? theme.outline,
 							},
 							oncreate: (vnode) => {
 								this.hueWindowDom = vnode.dom as HTMLElement
@@ -408,7 +406,7 @@ export class ColorPickerView implements Component<ColorPickerViewAttrs> {
 								width: px(2),
 								height: px(HUE_GRADIENT_HEIGHT),
 								transform: "translateX(-50%)",
-								backgroundColor: theme.content_border,
+								backgroundColor: theme.outline,
 							},
 						}),
 					],

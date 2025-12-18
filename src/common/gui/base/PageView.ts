@@ -11,6 +11,7 @@ type Attrs = {
 	currentPage: Page
 	nextPage: Page
 	onChangePage: (next: boolean) => unknown
+	classes?: string
 }
 
 export class PageView implements Component<Attrs> {
@@ -21,6 +22,9 @@ export class PageView implements Component<Attrs> {
 		this.onChangePage = (next) => attrs.onChangePage(next)
 		return m(
 			".rel.flex-grow.overflow-hidden",
+			{
+				class: attrs.classes,
+			},
 			m(
 				".fill-absolute",
 				{
@@ -40,6 +44,7 @@ export class PageView implements Component<Attrs> {
 						{
 							"aria-hidden": "true",
 							key: attrs.previousPage.key,
+							inert: true,
 							style: this.viewDom &&
 								this.viewDom.offsetWidth > 0 && {
 									width: this.viewDom.offsetWidth + "px",
@@ -61,6 +66,7 @@ export class PageView implements Component<Attrs> {
 						{
 							"aria-hidden": "true",
 							key: attrs.nextPage.key,
+							inert: true,
 							style: this.viewDom &&
 								this.viewDom.offsetWidth > 0 && {
 									width: this.viewDom.offsetWidth + "px",

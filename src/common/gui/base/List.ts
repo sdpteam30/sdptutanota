@@ -1,6 +1,6 @@
 import m, { Children, ClassComponent, Vnode, VnodeDOM } from "mithril"
-import { debounce, memoized, numberRange } from "@tutao/tutanota-utils"
-import { px, size } from "../size.js"
+import { createResizeObserver, debounce, memoized, numberRange } from "@tutao/tutanota-utils"
+import { component_size, px, size } from "../size.js"
 import { isKeyPressed } from "../../misc/KeyManager.js"
 import { Keys, TabIndex } from "../../api/common/TutanotaConstants.js"
 import { client } from "../../misc/ClientDetector.js"
@@ -12,7 +12,6 @@ import { theme, ThemeId } from "../theme.js"
 import { ProgrammingError } from "../../api/common/error/ProgrammingError.js"
 import { Coordinate2D } from "./SwipeHandler.js"
 import { styles } from "../styles.js"
-import { createResizeObserver } from "@tutao/tutanota-utils/dist/Utils"
 
 export type ListState<T> = Readonly<{
 	items: ReadonlyArray<T>
@@ -123,7 +122,7 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 	private lastThemeId: ThemeId = theme.themeId
 
 	view({ attrs }: Vnode<ListAttrs<T, VH>>) {
-		const oldAttrs = this.lastAttrs
+		const oldRenderConfig = this.lastAttrs?.renderConfig
 		this.lastAttrs = attrs
 		return m(
 			".list-container.overflow-y-scroll.nofocus.overflow-x-hidden.fill-absolute",
@@ -149,6 +148,7 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 			this.renderSwipeItems(attrs),
 			// we need rel for the status indicator
 			m("ul.list.rel.click", {
+				role: "list",
 				oncreate: ({ dom }) => {
 					this.innerDom = dom as HTMLElement
 					this.initializeDom(dom as HTMLElement, attrs.renderConfig)
@@ -158,7 +158,7 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 					if (styles.isSingleColumnLayout()) this.innerDom.focus()
 				},
 				onupdate: ({ dom }) => {
-					if (oldAttrs.renderConfig !== attrs.renderConfig) {
+					if (oldRenderConfig !== attrs.renderConfig) {
 						// reset everything
 						console.log("list renderConfig has changed, reset")
 						// m.render actually does diffing if you call it on the same dom element again which is not something that we want, we want completely
@@ -233,9 +233,9 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 	}
 
 	private createRow(renderConfig: RenderConfig<T, VH>, rows: ListRow<T, VH>[]) {
-		return m("li.list-row.nofocus", {
+		return m("li.list-row", {
+			role: "listitem",
 			draggable: renderConfig.dragStart ? "true" : undefined,
-			tabindex: TabIndex.Default,
 			oncreate: (vnode: VnodeDOM) => {
 				const dom = vnode.dom as HTMLElement
 				const row = {
@@ -255,6 +255,9 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 		let touchStartTime: number | null = null
 
 		domElement.onclick = (e) => {
+			// If the touch is not running, just a click.
+			// If the touch has been completed within LONG_PRESS_DURATION_MS then it's a click
+			// If the touch took longer then it's rather a longpress.
 			if (!touchStartTime || Date.now() - touchStartTime < LONG_PRESS_DURATION_MS) {
 				if (row.entity) this.handleEvent(row.entity, e)
 			}
@@ -282,9 +285,9 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 
 		domElement.ondragstart = (e: DragEvent) => {
 			// The quick change of the background color is to prevent a white background appearing in dark mode
-			if (row.domElement) row.domElement!.style.background = theme.navigation_bg
+			if (row.domElement) row.domElement.style.background = theme.surface_container
 			requestAnimationFrame(() => {
-				if (row.domElement) row.domElement!.style.background = ""
+				if (row.domElement) row.domElement.style.background = ""
 			})
 			if (renderConfig.dragStart) {
 				if (row.entity && this.state) renderConfig.dragStart(e, row.entity, this.state.selectedItems)
@@ -312,6 +315,11 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 			})
 
 			const touchEnd = () => {
+				// Making sure that the time is reset.
+				// Normally we either get no touch events (only mouse or keyboard) or we get touch events before/after click event but
+				// there are some situations (e.g. VoiceOver on iOS quirks) where touchstart and click would be dispatched to different
+				// DOM elements so it is not a given that every click will be preceeded by a touchstart event.
+				touchStartTime = null
 				if (timeoutId) clearTimeout(timeoutId)
 			}
 			domElement.addEventListener("touchend", touchEnd)
@@ -388,7 +396,7 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 		const rowHeight = attrs.renderConfig.itemHeight
 		// plus loading indicator
 		// should depend on whether we are completely loaded maybe?
-		const statusHeight = attrs.state.loadingStatus === ListLoadingState.Done ? 0 : size.list_row_height
+		const statusHeight = attrs.state.loadingStatus === ListLoadingState.Done ? 0 : component_size.list_row_height
 		this.innerDom!.style.height = px(attrs.state.items.length * rowHeight + statusHeight)
 		if (attrs.state.activeIndex != null && attrs.state.activeIndex !== this.activeIndex) {
 			const index = attrs.state.activeIndex
@@ -466,10 +474,10 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 			".flex-center.items-center",
 			{
 				style: {
-					height: px(size.list_row_height),
+					height: px(component_size.list_row_height),
 					width: "100%",
 					position: "absolute",
-					gap: px(size.hpad_small),
+					gap: px(size.spacing_4),
 				},
 				"data-testid": "list-progress",
 			},
@@ -484,10 +492,10 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 
 	private renderConnectionLostIndicator(): Children {
 		return m(
-			".plr-l.flex-center.items-center",
+			".plr-24.flex-center.items-center",
 			{
 				style: {
-					height: px(size.list_row_height),
+					height: px(component_size.list_row_height),
 				},
 			},
 			m(Button, {
@@ -517,7 +525,7 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 		return m("li.list-row", {
 			style: {
 				bottom: 0,
-				height: px(size.list_row_height),
+				height: px(component_size.list_row_height),
 				display: this.shouldDisplayStatusRow() ? "none" : null,
 			},
 			oncreate: (vnode) => {
@@ -536,7 +544,7 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 		}
 		return [
 			m(
-				".swipe-spacer.flex.items-center.justify-end.pr-l.blue",
+				".swipe-spacer.flex.items-center.justify-end.pr-24.blue",
 				{
 					oncreate: (vnode) => (this.domSwipeSpacerLeft = vnode.dom as HTMLElement),
 					tabindex: TabIndex.Programmatic,
@@ -552,7 +560,7 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 				attrs.renderConfig.swipe.renderLeftSpacer(),
 			),
 			m(
-				".swipe-spacer.flex.items-center.pl-l.red",
+				".swipe-spacer.flex.items-center.pl-24.red",
 				{
 					oncreate: (vnode) => (this.domSwipeSpacerRight = vnode.dom as HTMLElement),
 					tabindex: TabIndex.Programmatic,
@@ -583,7 +591,7 @@ export class List<T, VH extends ViewHolder<T>> implements ClassComponent<ListAtt
 		this.width = containerDom.clientWidth
 		this.height = containerDom.clientHeight
 
-		if (this.swipeHandler) {
+		if (this.swipeHandler && client.isMobileDevice()) {
 			// with different zoom levels Blink does weird things and shows parts of elements that it shouldn't so we shift them around by a pixel
 			const translateX = this.width + 1
 			this.domSwipeSpacerLeft.style.width = px(this.width)

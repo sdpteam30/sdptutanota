@@ -1,6 +1,6 @@
 import m, { Component, Vnode } from "mithril"
 
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
+import { newPromise } from "@tutao/tutanota-utils"
 
 export type ProgressBarAttrs = {
 	progress: number
@@ -41,7 +41,7 @@ export class ProgressBar implements Component<ProgressBarAttrs> {
 		}
 
 		this.lastProgress = a.progress
-		let progressBarSelector = a.type === ProgressBarType.Large ? ".abs.accent-bg.border-radius-big" : ".abs.accent-bg"
+		let progressBarSelector = a.type === ProgressBarType.Large ? ".abs.accent-bg.border-radius-12" : ".abs.accent-bg"
 		return m(progressBarSelector, {
 			onbeforeremove: (vn) =>
 				newPromise<void>((resolve) => {

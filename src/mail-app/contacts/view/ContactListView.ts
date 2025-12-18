@@ -1,6 +1,6 @@
 import m, { Children, ClassComponent, Vnode } from "mithril"
 import type { Contact } from "../../../common/api/entities/tutanota/TypeRefs.js"
-import { size } from "../../../common/gui/size"
+import { component_size, size } from "../../../common/gui/size"
 import { ListColumnWrapper } from "../../../common/gui/ListColumnWrapper"
 import { assertMainOrNode } from "../../../common/api/common/Env"
 import { List, ListAttrs, MultiselectMode, RenderConfig, ViewHolder } from "../../../common/gui/base/List.js"
@@ -32,7 +32,7 @@ export class ContactListView implements ClassComponent<ContactListViewAttrs> {
 			},
 			contactViewModel.listModel.isEmptyAndDone()
 				? m(ColumnEmptyMessageBox, {
-						color: theme.list_message_bg,
+						color: theme.on_surface_variant,
 						message: "noContacts_msg",
 						icon: BootIcons.Contacts,
 					})
@@ -62,7 +62,7 @@ export class ContactListView implements ClassComponent<ContactListViewAttrs> {
 	}
 
 	private readonly renderConfig: RenderConfig<Contact, KindaContactRow> = {
-		itemHeight: size.list_row_height,
+		itemHeight: component_size.list_row_height,
 		multiselectionAllowed: MultiselectMode.Enabled,
 		swipe: null,
 		createElement: (dom) => {
@@ -73,7 +73,6 @@ export class ContactListView implements ClassComponent<ContactListViewAttrs> {
 
 export class KindaContactRow implements ViewHolder<Contact> {
 	readonly cr: ContactRow
-	domElement: HTMLElement
 	entity: Contact | null = null
 
 	constructor(
@@ -83,7 +82,6 @@ export class KindaContactRow implements ViewHolder<Contact> {
 		private readonly getHighlightedStrings?: () => readonly SearchToken[],
 	) {
 		this.cr = new ContactRow(onToggleSelection, shouldShowCheckbox, getHighlightedStrings)
-		this.domElement = dom
 		m.render(dom, this.cr.render())
 	}
 

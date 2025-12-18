@@ -1,6 +1,6 @@
 import m, { Children } from "mithril"
 import { assertMainOrNode, isIOSApp } from "../api/common/Env"
-import { assertNotNull, last, neverNull, ofClass } from "@tutao/tutanota-utils"
+import { assertNotNull, last, neverNull, newPromise, ofClass } from "@tutao/tutanota-utils"
 import { InfoLink, lang, TranslationKey } from "../misc/LanguageViewModel"
 import {
 	AccountingInfo,
@@ -13,7 +13,7 @@ import {
 	InvoiceInfoTypeRef,
 } from "../api/entities/sys/TypeRefs.js"
 import { HtmlEditor, HtmlEditorMode } from "../gui/editor/HtmlEditor"
-import { formatPrice, getPaymentMethodInfoText, getPaymentMethodName } from "./PriceUtils"
+import { formatPrice, getPaymentMethodInfoText, getPaymentMethodName } from "./utils/PriceUtils"
 import * as InvoiceDataDialog from "./InvoiceDataDialog"
 import { Icons } from "../gui/base/icons/Icons"
 import { ColumnWidth, Table, TableLineAttrs } from "../gui/base/Table.js"
@@ -33,7 +33,7 @@ import { Dialog, DialogType } from "../gui/base/Dialog"
 import { getByAbbreviation } from "../api/common/CountryList"
 import * as PaymentDataDialog from "./PaymentDataDialog"
 import { showProgressDialog } from "../gui/dialogs/ProgressDialog"
-import { getPreconditionFailedPaymentMsg, hasRunningAppStoreSubscription } from "./SubscriptionUtils"
+import { getPreconditionFailedPaymentMsg, hasRunningAppStoreSubscription } from "./utils/SubscriptionUtils"
 import type { DialogHeaderBarAttrs } from "../gui/base/DialogHeaderBar"
 import { DialogHeaderBar } from "../gui/base/DialogHeaderBar"
 import { TextField } from "../gui/base/TextField.js"
@@ -56,8 +56,6 @@ import { ProgrammingError } from "../api/common/error/ProgrammingError.js"
 import { showSwitchDialog } from "./SwitchSubscriptionDialog.js"
 import { GENERATED_MAX_ID } from "../api/common/utils/EntityUtils.js"
 import { createDropdown } from "../gui/base/Dropdown.js"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 assertMainOrNode()
 
@@ -88,7 +86,7 @@ export class PaymentViewer implements UpdatableSettingsViewer {
 
 	view(): Children {
 		return m(
-			"#invoicing-settings.fill-absolute.scroll.plr-l",
+			"#invoicing-settings.fill-absolute.scroll.plr-24",
 			{
 				role: "group",
 			},
@@ -176,7 +174,13 @@ export class PaymentViewer implements UpdatableSettingsViewer {
 					console.warn("No booking but payment method is AppStore?")
 					return
 				}
-				return showSwitchDialog(this.customer, this.accountingInfo, lastBooking, AvailablePlans, null)
+				return showSwitchDialog({
+					customer: this.customer,
+					accountingInfo: this.accountingInfo,
+					lastBooking,
+					acceptedPlans: AvailablePlans,
+					reason: null,
+				})
 			}
 		} else {
 			const showPaymentMethodDialog = createNotAvailableForFreeClickHandler(
@@ -244,10 +248,10 @@ export class PaymentViewer implements UpdatableSettingsViewer {
 		} else {
 			const balance = this.balance
 			return [
-				m(".h4.mt-l", lang.get("currentBalance_label")),
+				m(".h4.mt-32", lang.get("currentBalance_label")),
 				m(".flex.center-horizontally.center-vertically.col", [
 					m(
-						"div.h4.pt.pb" + (this.isAmountOwed() ? ".content-accent-fg" : ""),
+						"div.h4.pt-16.pb-16" + (this.isAmountOwed() ? ".content-accent-fg" : ""),
 						formatPrice(balance, true) + (this.accountBalance() !== balance ? ` (${formatPrice(this.accountBalance(), true)})` : ""),
 					),
 					this.accountBalance() !== balance
@@ -260,7 +264,7 @@ export class PaymentViewer implements UpdatableSettingsViewer {
 						: null,
 					this.isPayButtonVisible()
 						? m(
-								".pb",
+								".pb-16",
 								{
 									style: {
 										width: "200px",
@@ -280,7 +284,7 @@ export class PaymentViewer implements UpdatableSettingsViewer {
 						? m(".small.underline.b", lang.get(getPreconditionFailedPaymentMsg(this.invoiceInfo.paymentErrorInfo.errorCode)))
 						: m(".small.underline.b", lang.get("failedDebitAttempt_msg"))
 					: null,
-				m(".flex-space-between.items-center.mt-l.mb-s", [
+				m(".flex-space-between.items-center.mt-32.mb-8", [
 					m(".h4", lang.get("postings_label")),
 					m(ExpanderButton, {
 						label: "show_action",
@@ -476,7 +480,7 @@ export class PaymentViewer implements UpdatableSettingsViewer {
 
 	private renderInvoiceData(): Children {
 		return [
-			m(".flex-space-between.items-center.mt-l.mb-s", [
+			m(".flex-space-between.items-center.mt-32.mb-8", [
 				m(".h4", lang.get("invoiceData_msg")),
 				m(IconButton, {
 					title: "invoiceData_msg",
@@ -531,9 +535,9 @@ function showPayConfirmDialog(price: number): Promise<boolean> {
 			view: (): Children => [
 				m(DialogHeaderBar, actionBarAttrs),
 				m(
-					".plr-l.pb",
+					".plr-24.pb-16",
 					m("", [
-						m(".pt", lang.get("invoicePayConfirm_msg")),
+						m(".pt-16", lang.get("invoicePayConfirm_msg")),
 						m(TextField, {
 							label: "price_label",
 							value: formatPrice(-price, true),

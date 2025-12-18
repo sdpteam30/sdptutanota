@@ -2,13 +2,13 @@ import m, { Children, Vnode } from "mithril"
 import { ViewSlider } from "../../../common/gui/nav/ViewSlider.js"
 import { ColumnType, ViewColumn } from "../../../common/gui/base/ViewColumn"
 import { InfoLink, lang, TranslationKey } from "../../../common/misc/LanguageViewModel"
-import { FeatureType, Keys, MailSetKind } from "../../../common/api/common/TutanotaConstants"
+import { FeatureType, Keys, MailReportType, MailSetKind, SystemFolderType } from "../../../common/api/common/TutanotaConstants"
 import { assertMainOrNode, isApp, isBrowser } from "../../../common/api/common/Env"
 import { keyManager, Shortcut } from "../../../common/misc/KeyManager"
 import { BootIcons } from "../../../common/gui/base/icons/BootIcons"
 import { CalendarEvent, CalendarEventTypeRef, Contact, ContactTypeRef, Mail, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { SearchListView, SearchListViewAttrs } from "./SearchListView"
-import { px, size } from "../../../common/gui/size"
+import { layout_size, size } from "../../../common/gui/size"
 import { SEARCH_MAIL_FIELDS, SearchCategoryTypes } from "../model/SearchUtils"
 import { Dialog } from "../../../common/gui/base/Dialog"
 import { locator } from "../../../common/api/main/CommonLocator"
@@ -21,7 +21,6 @@ import {
 	isSameDayOfDate,
 	isSameTypeRef,
 	last,
-	lazyAsync,
 	LazyLoaded,
 	lazyMemoized,
 	memoized,
@@ -74,8 +73,7 @@ import {
 	showLabelsPopup,
 	showMoveMailsDropdown,
 	ShowMoveMailsDropdownOpts,
-	simpleMoveToArchive,
-	simpleMoveToInbox,
+	simpleMoveToSystemFolder,
 	trashMails,
 } from "../../mail/view/MailGuiUtils.js"
 import { SelectAllCheckbox } from "../../../common/gui/SelectAllCheckbox.js"
@@ -105,7 +103,7 @@ import { allInSameMailbox, getIndentedFolderNameForDropdown } from "../../mail/m
 import { ContactModel } from "../../../common/contactsFunctionality/ContactModel.js"
 import { extractContactIdFromEvent, isBirthdayEvent } from "../../../common/calendar/date/CalendarUtils.js"
 import { createDropdown, PosRect } from "../../../common/gui/base/Dropdown"
-import { editDraft, getMailViewerMoreActions, MailFilterType, showReportMailDialog, startExport } from "../../mail/view/MailViewerUtils"
+import { editDraft, getMailViewerMoreActions, MailFilterType, showReportPhishingMailDialog, startExport } from "../../mail/view/MailViewerUtils"
 import { isDraft } from "../../mail/model/MailChecks"
 import { ConversationViewModel } from "../../mail/view/ConversationViewModel"
 import { UserError } from "../../../common/api/main/UserError"
@@ -119,7 +117,9 @@ import { formatDate } from "../../../common/misc/Formatter"
 import { AllIcons } from "../../../common/gui/base/Icon"
 import { showDateRangeSelectionDialog } from "../../../calendar-app/calendar/gui/pickers/DatePickerDialog"
 import { ProgrammingError } from "../../../common/api/common/error/ProgrammingError"
-import { MailViewModel } from "../../mail/view/MailViewModel"
+import { UndoModel } from "../../UndoModel"
+import { deviceConfig } from "../../../common/misc/DeviceConfig"
+import { CalendarInfo } from "../../../calendar-app/calendar/model/CalendarModel"
 
 assertMainOrNode()
 
@@ -128,7 +128,7 @@ export interface SearchViewAttrs extends TopLevelAttrs {
 	header: AppHeaderAttrs
 	makeViewModel: () => SearchViewModel
 	contactModel: ContactModel
-	mailViewModel: lazyAsync<MailViewModel>
+	undoModel: UndoModel
 }
 
 export class SearchView extends BaseTopLevelView implements TopLevelView<SearchViewAttrs> {
@@ -139,12 +139,13 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 	private readonly searchViewModel: SearchViewModel
 	private readonly contactModel: ContactModel
 	private readonly startOfTheWeekOffset: number
-	private readonly mailViewModel: lazyAsync<MailViewModel>
+	private readonly undoModel: UndoModel
 
 	private getSanitizedPreviewData: (event: CalendarEvent) => LazyLoaded<CalendarEventPreviewViewModel> = memoized((event: CalendarEvent) =>
 		new LazyLoaded(async () => {
-			const calendars = await this.searchViewModel.getLazyCalendarInfos().getAsync()
-			const eventPreviewModel = await locator.calendarEventPreviewModel(event, calendars, this.searchViewModel.getHighlightedStrings())
+			const calendars = await this.searchViewModel.getAvailableCalendars(false)
+			const calendarInfosMap = new Map(calendars.map((calendarInfo) => [calendarInfo.id, calendarInfo as CalendarInfo]))
+			const eventPreviewModel = await locator.calendarEventPreviewModel(event, calendarInfosMap, this.searchViewModel.getHighlightedStrings())
 			eventPreviewModel.sanitizeDescription().then(() => m.redraw())
 			return eventPreviewModel
 		}).load(),
@@ -164,7 +165,8 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 		this.searchViewModel = vnode.attrs.makeViewModel()
 		this.contactModel = vnode.attrs.contactModel
 		this.startOfTheWeekOffset = this.searchViewModel.getStartOfTheWeekOffset()
-		this.mailViewModel = vnode.attrs.mailViewModel
+		this.undoModel = vnode.attrs.undoModel
+		const userId = locator.logins.getUserController().userId
 
 		this.folderColumn = new ViewColumn(
 			{
@@ -177,7 +179,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 							m(SidebarSection, {
 								name: "searchFilters_label",
 							}),
-							m(".flex.wrap.plr-button-double.gap-vpad-s.flex-shrink-children", this.renderFilterChips()),
+							m(".flex.wrap.plr-16.gap-8.flex-shrink-children", this.renderFilterChips()),
 							m(".flex-grow"),
 							this.renderAppPromo(),
 						],
@@ -187,8 +189,8 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 			},
 			ColumnType.Foreground,
 			{
-				minWidth: size.first_col_min_width,
-				maxWidth: size.first_col_max_width,
+				minWidth: layout_size.first_col_min_width,
+				maxWidth: layout_size.first_col_max_width,
 				headerCenter: "search_label",
 			},
 		)
@@ -197,7 +199,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 			{
 				view: () => {
 					return m(BackgroundColumnLayout, {
-						backgroundColor: theme.navigation_bg,
+						backgroundColor: theme.surface_container,
 						desktopToolbar: () =>
 							m(DesktopListToolbar, [
 								this.searchViewModel.listModel && getCurrentSearchMode() !== SearchCategoryTypes.calendar
@@ -211,9 +213,12 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 			},
 			ColumnType.Background,
 			{
-				minWidth: size.second_col_min_width,
-				maxWidth: size.second_col_max_width,
+				minWidth: layout_size.second_col_min_width,
+				maxWidth: deviceConfig.getMailListSize(userId) ?? layout_size.second_col_max_width,
 				headerCenter: "searchResult_label",
+				resizeCallback: (size) => {
+					deviceConfig.setMailListSize(userId, size)
+				},
 			},
 		)
 		this.resultDetailsColumn = new ViewColumn(
@@ -222,8 +227,8 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 			},
 			ColumnType.Background,
 			{
-				minWidth: size.third_col_min_width,
-				maxWidth: size.third_col_max_width,
+				minWidth: layout_size.third_col_min_width,
+				maxWidth: layout_size.third_col_max_width,
 			},
 		)
 		this.viewSlider = new ViewSlider([this.folderColumn, this.resultListColumn, this.resultDetailsColumn])
@@ -257,13 +262,14 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 					isFreeAccount: locator.logins.getUserController().isFreeAccount(),
 					getLabelsForMail: (mail) => this.searchViewModel.getLabelsForMail(mail),
 					highlightedStrings: this.searchViewModel.getHighlightedStrings(),
+					availableCalendars: this.searchViewModel.getAvailableCalendars(true),
 				} satisfies SearchListViewAttrs),
 			),
 		])
 	}
 
 	private renderFilterBar(): Children {
-		return m(".flex.gap-vpad-s.pl-vpad-m.pr-vpad-m.pt-s.pb-s.scroll-x", this.renderFilterChips())
+		return m(".flex.gap-8.pl-16.pr-16.pt-8.pb-8.scroll-x", this.renderFilterChips())
 	}
 
 	private renderCategoryChip(label: TranslationKey, icon: AllIcons): Children {
@@ -477,7 +483,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 		if (searchText == null) {
 			return null
 		}
-		return m("div.ml-button.mt-m.small.plr-button.content-fg.mb", m(Card, searchText))
+		return m("div.ml-8.mt-12.small.plr-8.content-fg.mb-16", m(Card, searchText))
 	}
 
 	oncreate(): void {
@@ -529,12 +535,12 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 							},
 						}),
 					)
-				: m(".ml-s"),
+				: m(".ml-8"),
 			right: rightActions,
 			center: m(
 				".flex-grow.flex.justify-center",
 				{
-					class: rightActions.length === 0 ? "mr" : "",
+					class: rightActions.length === 0 ? "mr-12" : "",
 				},
 				m(searchBar, {
 					placeholder: this.searchBarPlaceholder(),
@@ -576,7 +582,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 			})
 			const isMultiselect = this.searchViewModel.listModel.state.inMultiselect || selectedContacts.length === 0
 			return m(BackgroundColumnLayout, {
-				backgroundColor: theme.navigation_bg,
+				backgroundColor: theme.surface_container,
 				desktopToolbar: () => m(DesktopViewerToolbar, actions),
 				mobileHeader: () =>
 					m(MobileHeader, {
@@ -625,9 +631,10 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 					replyAllAction: null,
 					forwardAction: null,
 					mailViewerMoreActions: null,
+					reportSpamAction: this.getReportSelectedMailsSpamAction(),
 				})
 				return m(BackgroundColumnLayout, {
-					backgroundColor: theme.navigation_bg,
+					backgroundColor: theme.surface_container,
 					desktopToolbar: () => m(DesktopViewerToolbar, actions),
 					mobileHeader: () =>
 						m(MobileHeader, {
@@ -670,12 +677,14 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 					forwardAction: this.getForwardAction(conversationViewModel),
 					mailViewerMoreActions: getMailViewerMoreActions({
 						viewModel: conversationViewModel.primaryViewModel(),
-						report: this.getReportAction(conversationViewModel.primaryViewModel()),
 						print: this.getPrintAction(),
+						reportSpam: null,
+						reportPhishing: this.getSingleMailPhishingAction(conversationViewModel.primaryViewModel()),
 					}),
+					reportSpamAction: this.getReportSelectedMailsSpamAction(),
 				})
 				return m(BackgroundColumnLayout, {
-					backgroundColor: theme.navigation_bg,
+					backgroundColor: theme.surface_container,
 					desktopToolbar: () => m(DesktopViewerToolbar, actions),
 					mobileHeader: () =>
 						m(MobileHeader, {
@@ -696,26 +705,38 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 						actions: (mailViewerModel: MailViewerViewModel) => {
 							return {
 								trash: () => {
-									trashMails(mailLocator.mailModel, [mailViewerModel.mail._id])
+									trashMails(mailViewerModel.mailboxModel, mailViewerModel.mailModel, this.undoModel, [mailViewerModel.mail])
 								},
 								delete: mailViewerModel.isDeletableMail()
 									? () => promptAndDeleteMails(mailViewerModel.mailModel, [mailViewerModel.mail._id], null, noOp)
 									: null,
+								move: (dom) => {
+									showMoveMailsDropdown(
+										mailViewerModel.mailboxModel,
+										mailViewerModel.mailModel,
+										this.undoModel,
+										dom.getBoundingClientRect(),
+										[mailViewerModel.mail],
+										MoveMode.Mails,
+									)
+								},
 							}
 						},
-						moreActions: (mailViewerModel) =>
-							getMailViewerMoreActions({
+						moreActions: (mailViewerModel) => {
+							return getMailViewerMoreActions({
 								viewModel: mailViewerModel,
-								report: this.getReportAction(mailViewerModel),
 								print: this.getPrintAction(),
-							}),
+								reportSpam: this.getSingleMailSpamAction(mailViewerModel),
+								reportPhishing: this.getSingleMailPhishingAction(mailViewerModel),
+							})
+						},
 					}),
 				})
 			}
 		} else if (getCurrentSearchMode() === SearchCategoryTypes.calendar) {
 			const selectedEvent = this.searchViewModel.getSelectedEvents()[0]
 			return m(BackgroundColumnLayout, {
-				backgroundColor: theme.navigation_bg,
+				backgroundColor: theme.surface_container,
 				desktopToolbar: () => m(DesktopViewerToolbar, []),
 				mobileHeader: () =>
 					m(MobileHeader, {
@@ -732,8 +753,8 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 						? m(ColumnEmptyMessageBox, {
 								message: "noEventSelect_msg",
 								icon: BootIcons.Calendar,
-								color: theme.content_message_bg,
-								backgroundColor: theme.navigation_bg,
+								color: theme.on_surface_variant,
+								backgroundColor: theme.surface_container,
 							})
 						: this.renderEventPreview(selectedEvent),
 			})
@@ -746,25 +767,42 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 					".flex-grow.rel.overflow-hidden",
 					m(ColumnEmptyMessageBox, {
 						message: "noSelection_msg",
-						color: theme.content_message_bg,
-						backgroundColor: theme.navigation_bg,
+						color: theme.on_surface_variant,
+						backgroundColor: theme.surface_container,
 					}),
 				),
 			)
 		}
 	}
 
-	private getReportAction(viewModel: MailViewerViewModel): (() => unknown) | null {
+	private reportSingleMail(viewModel: MailViewerViewModel, reportType: MailReportType): void {
+		viewModel
+			.reportMail(reportType)
+			.catch(ofClass(LockedError, () => Dialog.message("operationStillActive_msg")))
+			.finally(m.redraw)
+	}
+
+	private getSingleMailSpamAction(viewModel: MailViewerViewModel): () => void {
+		return () => this.reportSingleMail(viewModel, MailReportType.SPAM)
+	}
+
+	private getSingleMailPhishingAction(viewModel: MailViewerViewModel): (() => void) | null {
 		return viewModel.canReport()
 			? () => {
-					showReportMailDialog((type) => {
-						viewModel
-							.reportMail(type)
-							.catch(ofClass(LockedError, () => Dialog.message("operationStillActive_msg")))
-							.finally(m.redraw)
-					})
+					showReportPhishingMailDialog(async () => this.reportSingleMail(viewModel, MailReportType.PHISHING))
 				}
 			: null
+	}
+
+	private getReportSelectedMailsSpamAction(): (() => unknown) | null {
+		return async () => {
+			const selectedMails = this.searchViewModel.getSelectedMails()
+			if (isEmpty(selectedMails)) {
+				return
+			}
+
+			simpleMoveToSystemFolder(mailLocator.mailboxModel, mailLocator.mailModel, this.undoModel, MailSetKind.SPAM, selectedMails)
+		}
 	}
 
 	private getForwardAction(conversationViewModel: ConversationViewModel): (() => void) | null {
@@ -811,8 +849,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 	}
 
 	private getMoveMailsAction(): ((origin: PosRect, opts?: ShowMoveMailsDropdownOpts) => void) | null {
-		const mailModel = mailLocator.mailModel
-		return mailModel.isMovingMailsFromSearchAllowed() ? (origin) => this.moveMails(origin) : null
+		return (origin) => this.moveMails(origin)
 	}
 
 	private getLabelsAction(): ((dom: HTMLElement | null, opts?: LabelsPopupOpts) => void) | null {
@@ -878,15 +915,11 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 
 	private renderEventDetails(selectedEvent: CalendarEvent): Children {
 		return m(
-			".height-100p.overflow-y-scroll.mb-l.fill-absolute.pb-l",
+			".height-100p.overflow-y-scroll.mb-32.fill-absolute.pb-32",
 			m(
-				".border-radius-big.flex.col.flex-grow.content-bg",
+				".border-radius-12.flex.col.flex-grow.content-bg",
 				{
-					class: styles.isDesktopLayout() ? "mlr-l" : "mlr",
-					style: {
-						"min-width": styles.isDesktopLayout() ? px(size.third_col_min_width) : null,
-						"max-width": styles.isDesktopLayout() ? px(size.third_col_max_width) : null,
-					},
+					class: styles.isDesktopLayout() ? "mlr-24" : "mlr-12",
 				},
 				m(EventDetailsView, {
 					eventPreviewModel: assertNotNull(this.getSanitizedPreviewData(selectedEvent).getSync()),
@@ -936,8 +969,9 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 				forwardAction: this.getForwardAction(conversationViewModel),
 				mailViewerMoreActions: getMailViewerMoreActions({
 					viewModel: conversationViewModel.primaryViewModel(),
-					report: this.getReportAction(conversationViewModel.primaryViewModel()),
 					print: this.getPrintAction(),
+					reportSpam: this.getSingleMailSpamAction(conversationViewModel.primaryViewModel()),
+					reportPhishing: this.getSingleMailPhishingAction(conversationViewModel.primaryViewModel()),
 				}),
 			})
 		} else if (!isInMultiselect && this.viewSlider.focusedColumn === this.resultDetailsColumn) {
@@ -1040,7 +1074,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 	private async moveMails(origin: PosRect, opts?: ShowMoveMailsDropdownOpts) {
 		const selection = this.searchViewModel.getSelectedMails()
 		if (!isEmpty(selection)) {
-			showMoveMailsDropdown(mailLocator.mailboxModel, mailLocator.mailModel, this.mailViewModel, origin, selection, MoveMode.Mails, opts)
+			showMoveMailsDropdown(mailLocator.mailboxModel, mailLocator.mailModel, this.undoModel, origin, selection, MoveMode.Mails, opts)
 		}
 	}
 
@@ -1107,7 +1141,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 
 					if (isSameTypeRef(type, MailTypeRef)) {
 						newMailEditor()
-							.then((editor) => editor.show())
+							.then((editor) => editor?.show())
 							.catch(ofClass(PermissionError, noOp))
 					} else if (isSameTypeRef(type, ContactTypeRef)) {
 						locator.contactModel.getContactListId().then((contactListId) => {
@@ -1133,14 +1167,26 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 				help: "delete_action",
 			},
 			{
+				key: Keys.DELETE,
+				shift: true,
+				exec: () => this.moveSelectedToSystemFolder(MailSetKind.SPAM),
+				help: "spam_move_action",
+			},
+			{
+				key: Keys.BACKSPACE,
+				shift: true,
+				exec: () => this.moveSelectedToSystemFolder(MailSetKind.SPAM),
+				help: "spam_move_action",
+			},
+			{
 				key: Keys.A,
-				exec: () => this.archiveSelected(),
+				exec: () => this.moveSelectedToSystemFolder(MailSetKind.ARCHIVE),
 				help: "archive_action",
 				enabled: () => getCurrentSearchMode() === SearchCategoryTypes.mail,
 			},
 			{
 				key: Keys.I,
-				exec: () => this.moveSelectedToInbox(),
+				exec: () => this.moveSelectedToSystemFolder(MailSetKind.INBOX),
 				help: "moveToInbox_action",
 				enabled: () => getCurrentSearchMode() === SearchCategoryTypes.mail,
 			},
@@ -1150,6 +1196,15 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 					this.move()
 				},
 				help: "move_action",
+				enabled: () => getCurrentSearchMode() === SearchCategoryTypes.mail,
+			},
+			{
+				key: Keys.Z,
+				ctrlOrCmd: true,
+				exec: () => {
+					this.undoModel.performUndoAction()
+				},
+				help: "undo_action",
 				enabled: () => getCurrentSearchMode() === SearchCategoryTypes.mail,
 			},
 			{
@@ -1190,7 +1245,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 			return {
 				click: () => {
 					newMailEditor()
-						.then((editor) => editor.show())
+						.then((editor) => editor?.show())
 						.catch(ofClass(PermissionError, noOp))
 				},
 				label: "newMail_action",
@@ -1220,11 +1275,9 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 		const dateToUse = this.searchViewModel.startDate ? setNextHalfHour(new Date(this.searchViewModel.startDate)) : setNextHalfHour(new Date())
 
 		// Disallow creation of events when there is no existing calendar
-		const lazyCalendarInfo = this.searchViewModel.getLazyCalendarInfos()
-		const calendarInfos = lazyCalendarInfo.isLoaded() ? lazyCalendarInfo.getSync() : lazyCalendarInfo.getAsync()
-
-		if (calendarInfos instanceof Promise) {
-			await showProgressDialog("pleaseWait_msg", calendarInfos)
+		const calendarInfos = this.searchViewModel.getAvailableCalendars(false)
+		if (!calendarInfos.length) {
+			await showProgressDialog("pleaseWait_msg", this.searchViewModel.loadCalendarInfos())
 		}
 
 		const mailboxDetails = await locator.mailboxModel.getUserMailboxDetails()
@@ -1237,7 +1290,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 		}
 	}
 
-	private archiveSelected(): void {
+	private moveSelectedToSystemFolder(targetFolder: SystemFolderType): void {
 		const selectedMails = this.searchViewModel.getSelectedMails()
 
 		if (selectedMails.length > 0) {
@@ -1245,19 +1298,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 				this.searchViewModel.listModel.selectNone()
 			}
 
-			simpleMoveToArchive(getIds(selectedMails))
-		}
-	}
-
-	private moveSelectedToInbox(): void {
-		const selectedMails = this.searchViewModel.getSelectedMails()
-
-		if (selectedMails.length > 0) {
-			if (selectedMails.length > 1) {
-				this.searchViewModel.listModel.selectNone()
-			}
-
-			simpleMoveToInbox(getIds(selectedMails))
+			simpleMoveToSystemFolder(mailLocator.mailboxModel, mailLocator.mailModel, this.undoModel, targetFolder, selectedMails)
 		}
 	}
 
@@ -1265,7 +1306,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 		const selectedMails = this.searchViewModel.getSelectedMails()
 
 		if (selectedMails.length > 0) {
-			showMoveMailsDropdown(locator.mailboxModel, mailLocator.mailModel, this.mailViewModel, getMoveMailBounds(), selectedMails, MoveMode.Mails, {
+			showMoveMailsDropdown(mailLocator.mailboxModel, mailLocator.mailModel, this.undoModel, getMoveMailBounds(), selectedMails, MoveMode.Mails, {
 				onSelected: () => {
 					if (selectedMails.length > 1) {
 						this.searchViewModel.listModel.selectNone()
@@ -1306,7 +1347,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 				return {
 					deleteAction: null,
 					trashAction: () => {
-						trashMails(mailLocator.mailModel, getIds(selected))
+						trashMails(mailLocator.mailboxModel, mailLocator.mailModel, this.undoModel, selected)
 					},
 				}
 			}
@@ -1347,7 +1388,8 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 	}
 
 	private renderCalendarFilterChips() {
-		const availableCalendars = this.searchViewModel.getAvailableCalendars()
+		const availableCalendars = this.searchViewModel.getAvailableCalendars(true)
+		const selectedCalendar = this.searchViewModel.selectedCalendar
 		return [
 			this.renderCategoryChip("calendar_label", BootIcons.Calendar),
 			m(FilterChip, {
@@ -1364,10 +1406,13 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 				onClick: (_) => this.onCalendarDateRangeSelect(),
 			}),
 			m(FilterChip, {
-				label: this.searchViewModel.selectedCalendar
-					? lang.makeTranslation("calendar_label", availableCalendars.find((f) => f.info === this.searchViewModel.selectedCalendar)?.name ?? "")
+				label: selectedCalendar
+					? lang.makeTranslation(
+							"calendar_label",
+							availableCalendars.find((calendarInfo) => isSameId(calendarInfo.id, selectedCalendar?.id))?.name ?? "",
+						)
 					: lang.getTranslation("calendar_label"),
-				selected: this.searchViewModel.selectedCalendar != null,
+				selected: selectedCalendar != null,
 				chevron: true,
 				onClick: createDropdown({
 					lazyButtons: () => [
@@ -1375,9 +1420,9 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 							label: lang.getTranslation("all_label"),
 							click: () => this.searchViewModel.selectCalendar(null),
 						},
-						...availableCalendars.map((f) => ({
-							label: lang.makeTranslation(f.name, f.name),
-							click: () => this.searchViewModel.selectCalendar(f.info),
+						...availableCalendars.map((calendarInfo) => ({
+							label: lang.makeTranslation(calendarInfo.name, calendarInfo.name),
+							click: () => this.searchViewModel.selectCalendar(calendarInfo),
 						})),
 					],
 				}),
@@ -1413,7 +1458,7 @@ function getCurrentSearchMode(): SearchCategoryTypes {
 	}
 }
 
-async function newMailEditor(): Promise<Dialog> {
+async function newMailEditor(): Promise<Dialog | null> {
 	const [mailboxDetails, { newMailEditor }] = await Promise.all([locator.mailboxModel.getUserMailboxDetails(), import("../../mail/editor/MailEditor")])
 	return newMailEditor(mailboxDetails)
 }

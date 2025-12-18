@@ -2,16 +2,16 @@ import m, { Children, Component, Vnode } from "mithril"
 import { assertMainOrNode } from "../../../../common/api/common/Env"
 import { downcast } from "@tutao/tutanota-utils"
 import { List, ListAttrs, MultiselectMode, RenderConfig } from "../../../../common/gui/base/List.js"
-import { size } from "../../../../common/gui/size.js"
+import { component_size, size } from "../../../../common/gui/size.js"
 import { CalendarEvent } from "../../../../common/api/entities/tutanota/TypeRefs.js"
 import ColumnEmptyMessageBox from "../../../../common/gui/base/ColumnEmptyMessageBox.js"
 import { BootIcons } from "../../../../common/gui/base/icons/BootIcons.js"
-import { lang } from "../../../../common/misc/LanguageViewModel.js"
 import { theme } from "../../../../common/gui/theme.js"
 import { VirtualRow } from "../../../../common/gui/base/ListUtils.js"
 import { styles } from "../../../../common/gui/styles.js"
 import { KindaCalendarRow } from "../../gui/CalendarRow.js"
 import { ListElementListModel } from "../../../../common/misc/ListElementListModel"
+import { CalendarInfoBase } from "../../model/CalendarModel"
 
 assertMainOrNode()
 
@@ -27,18 +27,18 @@ export interface CalendarSearchListViewAttrs {
 	listModel: ListElementListModel<CalendarSearchResultListEntry>
 	onSingleSelection: (item: CalendarSearchResultListEntry) => unknown
 	isFreeAccount: boolean
-	cancelCallback: () => unknown | null
+	cancelCallback: () => unknown | null // TODO add search highlights?
+	availableCalendars: ReadonlyArray<CalendarInfoBase>
 }
 
 export class CalendarSearchListView implements Component<CalendarSearchListViewAttrs> {
-	private listModel: ListElementListModel<CalendarSearchResultListEntry>
+	private attrs: CalendarSearchListViewAttrs
 
 	constructor({ attrs }: Vnode<CalendarSearchListViewAttrs>) {
-		this.listModel = attrs.listModel
+		this.attrs = attrs
 	}
 
 	view({ attrs }: Vnode<CalendarSearchListViewAttrs>): Children {
-		this.listModel = attrs.listModel
 		const icon = BootIcons.Calendar
 		const renderConfig = this.calendarRenderConfig
 
@@ -46,7 +46,7 @@ export class CalendarSearchListView implements Component<CalendarSearchListViewA
 			? m(ColumnEmptyMessageBox, {
 					icon,
 					message: "searchNoResults_msg",
-					color: theme.list_message_bg,
+					color: theme.on_surface_variant,
 				})
 			: m(List, {
 					state: attrs.listModel.state,
@@ -78,11 +78,11 @@ export class CalendarSearchListView implements Component<CalendarSearchListViewA
 	}
 
 	private readonly calendarRenderConfig: RenderConfig<CalendarSearchResultListEntry, SearchResultListRow> = {
-		itemHeight: size.list_row_height,
+		itemHeight: component_size.list_row_height,
 		multiselectionAllowed: MultiselectMode.Disabled,
 		swipe: null,
 		createElement: (dom: HTMLElement) => {
-			const row: SearchResultListRow = new SearchResultListRow(new KindaCalendarRow(dom))
+			const row: SearchResultListRow = new SearchResultListRow(new KindaCalendarRow(dom, this.attrs.availableCalendars))
 			m.render(dom, row.render())
 			return row
 		},
@@ -91,8 +91,6 @@ export class CalendarSearchListView implements Component<CalendarSearchListViewA
 
 export class SearchResultListRow implements VirtualRow<CalendarSearchResultListEntry> {
 	top: number
-	// set from List
-	domElement: HTMLElement | null = null
 
 	// this is our own entry which we need for some reason (probably easier to deal with than a lot of sum type entries)
 	private _entity: CalendarSearchResultListEntry | null = null
@@ -108,7 +106,6 @@ export class SearchResultListRow implements VirtualRow<CalendarSearchResultListE
 	}
 
 	update(entry: CalendarSearchResultListEntry, selected: boolean, isInMultiSelect: boolean): void {
-		this._delegate.domElement = this.domElement!
 		this._entity = entry
 
 		this._delegate.update(downcast(entry.entry), selected, isInMultiSelect)

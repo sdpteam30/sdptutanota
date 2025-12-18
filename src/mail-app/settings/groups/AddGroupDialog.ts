@@ -17,7 +17,7 @@ import type { GroupManagementFacade } from "../../../common/api/worker/facades/l
 import { locator } from "../../../common/api/main/CommonLocator.js"
 import { assertMainOrNode } from "../../../common/api/common/Env.js"
 import { EmailDomainData, getAvailableDomains } from "../../../common/settings/mailaddress/MailAddressesUtils.js"
-import { getAvailablePlansWithTemplates, toFeatureType } from "../../../common/subscription/SubscriptionUtils.js"
+import { getAvailablePlansWithTemplates, toFeatureType } from "../../../common/subscription/utils/SubscriptionUtils.js"
 import { MoreInfoLink } from "../../../common/misc/news/MoreInfoLink.js"
 
 assertMainOrNode()
@@ -66,7 +66,7 @@ export class AddGroupDialog implements Component<AddGroupDialogAttrs> {
 							onBusyStateChanged,
 							onDomainChanged,
 						}),
-						m(".mt-m", ""),
+						m(".mt-12", ""),
 						m(MoreInfoLink, { link: InfoLink.SharedMailboxes, isSmall: true }),
 					])
 				: m(""),
@@ -98,8 +98,8 @@ export class AddGroupDialogViewModel {
 		this.selectedDomain = getFirstOrThrow(availableDomains)
 	}
 
-	createMailGroup(): Promise<void> {
-		return this._groupManagementFacade.createMailGroup(this.groupName, this.mailAddress)
+	createSharedMailGroup(): Promise<void> {
+		return this._groupManagementFacade.createSharedMailGroup(this.groupName, this.mailAddress)
 	}
 
 	validateAddGroupInput(): TranslationKey | null {
@@ -159,7 +159,7 @@ export function show(): void {
 					}).then((accepted) => {
 						if (accepted) {
 							dialog.close()
-							return viewModel.createMailGroup()
+							return viewModel.createSharedMailGroup()
 						}
 					}),
 				)

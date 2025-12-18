@@ -5,7 +5,6 @@ import { Keys, MailSetKind } from "../../../common/api/common/TutanotaConstants.
 import { modal, ModalComponent } from "../../../common/gui/base/Modal.js"
 import type { Shortcut } from "../../../common/misc/KeyManager.js"
 import { MailViewerViewModel, TRUSTED_SENDERS_API_URL, TrustedSenderInfo } from "./MailViewerViewModel.js"
-import { moveMails } from "./MailGuiUtils.js"
 import { assertSystemFolderOfType } from "../model/MailUtils.js"
 import { MoveMode } from "../model/MailModel.js"
 import { getDisplayedSenderWithDomainReplacement } from "./MailAddressDisplayUtils.js"
@@ -130,16 +129,8 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 		// Fetch full trusted senders list from backend
 		this.fetchTrustedSendersFromBackend()
 
-		if (this.trustedSenderObjects.length === 0) {
-			const senderName = (this.viewModel.getSender().name || "").trim()
-			// Only show warning if sender has a name; otherwise stay on initial view
-			// so user can add sender without seeing phishing warning
-			if (senderName.length > 0) {
-				this.modalState = "warning"
-				this.selectedSenderName = senderName
-				this.skippedInitialView = true
-			}
-		}
+		// Always start with the initial view (dropdown to confirm sender)
+		// The warning view will only show if user selects a name that doesn't match the actual sender
 	}
 
 	private async fetchTrustedSendersFromBackend(): Promise<void> {
@@ -496,19 +487,11 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 										// Move email to spam folder (without reporting to Tutanota servers)
 										try {
 											const mailboxDetail = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
-											if (mailboxDetail && mailboxDetail.mailbox.folders) {
-												const folders = await this.viewModel.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.folders._id)
+											if (mailboxDetail && mailboxDetail.mailbox.mailSets) {
+												const folders = await this.viewModel.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 												const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
 
-												await moveMails({
-													mailboxModel: this.viewModel.mailboxModel,
-													mailModel: this.viewModel.mailModel,
-													mailIds: [this.viewModel.mail._id],
-													targetFolder: spamFolder,
-													moveMode: MoveMode.Mails,
-													isReportable: false,
-													mailViewModel: await this.viewModel.mailViewModel(),
-												})
+												await this.viewModel.mailModel.moveMails([this.viewModel.mail._id], spamFolder, MoveMode.Mails)
 												console.log(`🔒 MOBYPHISH_LOG: Successfully moved email to spam folder for sender="${senderEmail}"`)
 											}
 										} catch (moveError) {
@@ -645,19 +628,11 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 								// Move email to spam folder (without reporting to Tutanota servers)
 								try {
 									const mailboxDetail = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
-									if (mailboxDetail && mailboxDetail.mailbox.folders) {
-										const folders = await this.viewModel.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.folders._id)
+									if (mailboxDetail && mailboxDetail.mailbox.mailSets) {
+										const folders = await this.viewModel.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 										const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
 
-										await moveMails({
-											mailboxModel: this.viewModel.mailboxModel,
-											mailModel: this.viewModel.mailModel,
-											mailIds: [this.viewModel.mail._id],
-											targetFolder: spamFolder,
-											moveMode: MoveMode.Mails,
-											isReportable: false,
-											mailViewModel: await this.viewModel.mailViewModel(),
-										})
+										await this.viewModel.mailModel.moveMails([this.viewModel.mail._id], spamFolder, MoveMode.Mails)
 										console.log(`🔒 MOBYPHISH_LOG: Successfully moved email to spam folder for sender="${senderEmail}"`)
 									}
 								} catch (moveError) {

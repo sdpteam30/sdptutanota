@@ -24,7 +24,7 @@ extension HexData: Decodable {
 }
 
 struct AesTestData: Decodable {
-	@Base64Data var iv: Data
+	@HexData var seed: Data
 	@Base64Data var plainText: Data
 	@Base64Data var cipherText: Data
 	@HexData var key: Data
@@ -34,7 +34,7 @@ struct AesTestData: Decodable {
 	@Base64Data var encryptedKey256: Data
 
 	enum CodingKeys: String, CodingKey {
-		case iv = "ivBase64"
+		case seed
 		case plainText = "plainTextBase64"
 		case cipherText = "cipherTextBase64"
 		case key = "hexKey"
@@ -45,14 +45,34 @@ struct AesTestData: Decodable {
 	}
 }
 
+struct AeadTestData: Decodable {
+	@HexData var seed: Data
+	@Base64Data var plainText: Data
+	@Base64Data var cipherText: Data
+	@HexData var plaintextKey: Data
+	@HexData var encryptionKey: Data
+	@Base64Data var encryptedKey: Data
+	@Base64Data var associatedData: Data
+
+	enum CodingKeys: String, CodingKey {
+		case seed
+		case plainText = "plainTextBase64"
+		case cipherText = "cipherTextBase64"
+		case plaintextKey
+		case encryptionKey
+		case encryptedKey
+		case associatedData
+	}
+}
+
 struct AesMacTestData: Decodable {
-	@Base64Data var iv: Data
+	@HexData var seed: Data
 	@Base64Data var plainText: Data
 	@Base64Data var cipherText: Data
 	@HexData var key: Data
 
 	enum CodingKeys: String, CodingKey {
-		case iv = "ivBase64"
+		case seed
 		case plainText = "plainTextBase64"
 		case cipherText = "cipherTextBase64"
 		case key = "hexKey"
@@ -149,6 +169,14 @@ struct KyberTestData: Decodable {
 	@HexData var sharedSecret: Data
 }
 
+struct Ed25519TestData: Decodable {
+	@HexData var alicePrivateKeyHex: Data
+	@HexData var alicePublicKeyHex: Data
+	@HexData var message: Data
+	@HexData var signature: Data
+	@HexData var seed: Data
+}
+
 struct EncryptedTestData: Decodable {
 	let aes128Tests: [AesTestData]
 	let aes128MacTests: [AesMacTestData]
@@ -156,6 +184,8 @@ struct EncryptedTestData: Decodable {
 	let argon2idTests: [Argon2idTestData]
 	let rsaEncryptionTests: [RsaTestData]
 	let kyberEncryptionTests: [KyberTestData]
+	let ed25519Tests: [Ed25519TestData]
+	let aeadTests: [AeadTestData]
 }
 
 // used for testing Swift code
@@ -201,7 +231,13 @@ struct CryptoCompatibilityTest {
 	@Test func testAes128Mac() throws {
 		// AES-128 with MAC is not used for keys, so it's not tested here
 		for test in testData.aes128MacTests {
-			let encrypted = try aesEncrypt(data: test.plainText, withKey: test.key, withIV: test.iv, withPadding: true, withMAC: true)
+			let encrypted = try aesEncrypt(
+				data: test.plainText,
+				withKey: test.key,
+				withIV: test.seed.subdata(in: 0..<TUTAO_IV_BYTE_SIZE),
+				withPadding: true,
+				withMAC: true
+			)
 			let decrypted = try aesDecryptData(encrypted, withKey: test.key)
 			#expect(encrypted == test.cipherText)
 			#expect(decrypted == test.plainText)
@@ -215,9 +251,21 @@ struct CryptoCompatibilityTest {
 			// aesEncrypt(key:withKey:) does not support passing in IVs, and AES and TUTCrypto do not currently support mocking, so we use the
 			// full aesEncrypt function that the key function would've called anyway
 
-			let resultingEncryptedKey128 = try aesEncrypt(data: test.keyToEncrypt128, withKey: test.key, withIV: test.iv, withPadding: false, withMAC: true)
+			let resultingEncryptedKey128 = try aesEncrypt(
+				data: test.keyToEncrypt128,
+				withKey: test.key,
+				withIV: test.seed.subdata(in: 0..<TUTAO_IV_BYTE_SIZE),
+				withPadding: false,
+				withMAC: true
+			)
 			#expect(resultingEncryptedKey128 == test.encryptedKey128)
-			let resultingEncryptedKey256 = try aesEncrypt(data: test.keyToEncrypt256, withKey: test.key, withIV: test.iv, withPadding: false, withMAC: true)
+			let resultingEncryptedKey256 = try aesEncrypt(
+				data: test.keyToEncrypt256,
+				withKey: test.key,
+				withIV: test.seed.subdata(in: 0..<TUTAO_IV_BYTE_SIZE),
+				withPadding: false,
+				withMAC: true
+			)
 			#expect(resultingEncryptedKey256 == test.encryptedKey256)
 
 			let resultingDecryptedKey128 = try aesDecryptKey(resultingEncryptedKey128, withKey: test.key)
@@ -234,8 +282,29 @@ struct CryptoCompatibilityTest {
 		}
 	}
 
+	@Test func ed25519() async throws {
+		for test in testData.ed25519Tests {
+			let alicePrivateKey = IPCEd25519PrivateKey(raw: DataWrapper(data: test.alicePrivateKeyHex))
+			let alicePublicKey = IPCEd25519PublicKey(raw: DataWrapper(data: test.alicePublicKeyHex))
+			let message = DataWrapper(data: test.message)
+
+			let signature = IPCEd25519Signature(signature: DataWrapper(data: test.signature))
+			let reproducedSignature = try await facade.ed25519Sign(alicePrivateKey, message)
+			#expect(reproducedSignature.signature.data == signature.signature.data)
+
+			let verifyResult = try await facade.ed25519Verify(alicePublicKey, message, signature)
+			#expect(verifyResult == true)
+		}
+	}
+
 	private func testAesDataEncryption(test: AesTestData, withMAC: Bool) throws {
-		let encrypted = try aesEncrypt(data: test.plainText, withKey: test.key, withIV: test.iv, withPadding: true, withMAC: withMAC)
+		let encrypted = try aesEncrypt(
+			data: test.plainText,
+			withKey: test.key,
+			withIV: test.seed.subdata(in: 0..<TUTAO_IV_BYTE_SIZE),
+			withPadding: true,
+			withMAC: withMAC
+		)
 		let decrypted = try aesDecryptData(encrypted, withKey: test.key)
 		#expect(encrypted == test.cipherText)
 		#expect(decrypted == test.plainText)

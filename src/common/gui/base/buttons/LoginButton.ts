@@ -1,6 +1,7 @@
 import m, { Children, Component, Vnode } from "mithril"
 import { BaseButton, BaseButtonAttrs } from "./BaseButton.js"
 import { lang, MaybeTranslation } from "../../../misc/LanguageViewModel.js"
+import { DefaultAnimationTime } from "../../animation/Animations"
 
 export const enum LoginButtonType {
 	FullWidth = "FullWidth",
@@ -10,6 +11,7 @@ export const enum LoginButtonType {
 export type LoginButtonAttrs = Pick<BaseButtonAttrs, "onclick" | "class"> & {
 	label: MaybeTranslation
 	disabled?: boolean
+	discouraged?: boolean
 	type?: LoginButtonType
 	icon?: Children
 }
@@ -22,29 +24,32 @@ export class LoginButton implements Component<LoginButtonAttrs> {
 			icon: attrs.icon,
 			label: attrs.label,
 			text: lang.getTranslationText(attrs.label),
-
 			class: classes.join(" "),
-
+			style: {
+				transition: `background ${DefaultAnimationTime}ms ease-in-out, color ${DefaultAnimationTime}ms ease-in-out, opacity ${DefaultAnimationTime}ms ease-in-out`,
+			},
 			onclick: attrs.onclick,
 			disabled: attrs.disabled,
 		})
 	}
 
 	private resolveClasses(attrs: LoginButtonAttrs) {
-		let classes = [
-			"button-content",
-			"border-radius",
-			"center",
+		let classes = ["button-content", "border-radius", "center", "flash", attrs.class]
+
+		if (attrs.disabled) {
 			// This makes the button appear "disabled" (grey color, no hover) when disabled is set to true
-			attrs.disabled ? "button-bg" : `accent-bg`,
-			"flash",
-			attrs.class,
-		]
+			classes.push("disabled-button")
+		} else if (attrs.discouraged) {
+			// This makes the button appear outlined with a transparent background
+			classes.push("tutaui-button-outline")
+		} else {
+			classes.push("accent-bg")
+		}
 
 		if (attrs.type === LoginButtonType.FlexWidth) {
-			classes.push("plr-2l")
+			classes.push("plr-48")
 		} else {
-			classes.push("full-width plr-button")
+			classes.push("full-width plr-8")
 		}
 
 		return classes

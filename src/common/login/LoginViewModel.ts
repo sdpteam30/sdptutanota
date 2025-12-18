@@ -23,7 +23,7 @@ import { credentialsToUnencrypted } from "../misc/credentials/Credentials.js"
 import { UnencryptedCredentials } from "../native/common/generatedipc/UnencryptedCredentials.js"
 import { AppLock } from "./AppLock.js"
 import { isOfflineError } from "../api/common/utils/ErrorUtils.js"
-import { OfflineStorageSettingsModel } from "../offline/OfflineStorageSettingsModel"
+import { AppLockAuthenticationError } from "../api/common/error/AppLockAuthenticationError"
 
 assertMainOrNode()
 
@@ -132,6 +132,7 @@ export interface ILoginViewModel {
 export class LoginViewModel implements ILoginViewModel {
 	readonly mailAddress: Stream<string>
 	readonly password: Stream<string>
+	skipPostLoginActions: boolean = false
 	displayMode: DisplayMode
 	state: LoginState
 	helpText: MaybeTranslation
@@ -357,6 +358,16 @@ export class LoginViewModel implements ILoginViewModel {
 				await this.updateCachedCredentials()
 				this.state = LoginState.NotAuthenticated
 				this.helpText = "credentialsKeyInvalidated_msg"
+			} else if (e instanceof AppLockAuthenticationError) {
+				// when the app's AppLockMethod doesn't match with system's, clear credential and fallback
+				// AppLockMethod to default
+				await this.credentialsProvider.clearCredentials(e)
+				await this.updateCachedCredentials()
+				this.state = LoginState.NotAuthenticated
+				await this.appLock.resetAppLockMethod()
+				this.helpText = lang.getTranslation("couldNotUnlockCredentials_msg", {
+					"{reason}": e.message,
+				})
 			} else if (e instanceof DeviceStorageUnavailableError) {
 				// The app already shows a dialog with FAQ link so we don't have to explain
 				// much here, just catching it to avoid unexpected error dialog
@@ -389,7 +400,9 @@ export class LoginViewModel implements ILoginViewModel {
 		try {
 			const sessionType = savePassword ? SessionType.Persistent : SessionType.Login
 
-			const { credentials, databaseKey } = await this.loginController.createSession(mailAddress, password, sessionType)
+			const { credentials, databaseKey } = this.skipPostLoginActions
+				? await this.loginController.createPostSignupSession(mailAddress, password)
+				: await this.loginController.createSession(mailAddress, password, sessionType)
 			await this.onLogin()
 			// enforce app lock always, even if we don't access stored credentials
 			await this.appLock.enforce()
@@ -410,13 +423,20 @@ export class LoginViewModel implements ILoginViewModel {
 			}
 
 			if (savePassword) {
+				const unencryptedCredentials = credentialsToUnencrypted(credentials, databaseKey)
 				try {
-					await this.credentialsProvider.store(credentialsToUnencrypted(credentials, databaseKey))
+					await this.credentialsProvider.store(unencryptedCredentials)
 				} catch (e) {
 					if (e instanceof KeyPermanentlyInvalidatedError) {
 						await this.credentialsProvider.clearCredentials(e)
 						await this.updateCachedCredentials()
-					} else if (e instanceof DeviceStorageUnavailableError || e instanceof CancelledError) {
+					} else if (e instanceof CancelledError) {
+						console.warn("login aborted:", e)
+						// delete the session we just made
+						await this.loginController.deleteOldSession(unencryptedCredentials)
+						this.helpText = "emptyString_msg"
+						this.state = LoginState.NotAuthenticated
+					} else if (e instanceof DeviceStorageUnavailableError) {
 						console.warn("will proceed with ephemeral credentials because device storage is unavailable:", e)
 					} else {
 						throw e
@@ -435,6 +455,10 @@ export class LoginViewModel implements ILoginViewModel {
 
 	private async onLogin(): Promise<void> {
 		this.helpText = "emptyString_msg"
+		// The viewmodel is memoized in the locator, so it can be reused. Under normal circumstances this won't happen
+		// after a successful login, but the model is still kept around. clearing the password is a bit of extra safety
+		// in case there's ever an issue where something gets access to app state after login.
+		this.password("")
 		this.state = LoginState.LoggedIn
 	}
 

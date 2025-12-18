@@ -21,7 +21,6 @@ use crate::crypto::crypto_facade::CryptoFacade;
 use crate::crypto::key::{GenericAesKey, VersionedAesKey};
 #[cfg_attr(test, mockall_double::double)]
 use crate::crypto::public_key_provider::PublicKeyProvider;
-use crate::crypto::randomizer_facade::RandomizerFacade;
 use crate::crypto::{aes::Iv, Aes256Key};
 #[cfg_attr(test, mockall_double::double)]
 use crate::crypto_entity_client::CryptoEntityClient;
@@ -53,6 +52,7 @@ use crate::typed_entity_client::TypedEntityClient;
 use crate::user_facade::UserFacade;
 use bindings::file_client::FileClient;
 use bindings::rest_client::{RestClient, RestClientError};
+use crypto_primitives::randomizer_facade::RandomizerFacade;
 
 pub mod contacts;
 pub mod crypto;
@@ -86,6 +86,7 @@ pub mod tutanota_constants;
 pub mod type_model_provider;
 mod typed_entity_client;
 mod user_facade;
+mod user_facade_factory;
 pub mod util;
 
 use crate::bindings::suspendable_rest_client::SuspendableRestClient;
@@ -100,6 +101,8 @@ use crate::entities::Entity;
 use crate::groups::GroupType;
 use crate::metamodel::TypeModel;
 use crate::tutanota_constants::ArchiveDataType;
+#[cfg_attr(test, mockall_double::double)]
+use crate::user_facade_factory::UserFacadeFactory;
 pub use id::custom_id::CustomId;
 pub use id::generated_id::GeneratedId;
 pub use id::id_tuple::IdTupleCustom;
@@ -185,29 +188,23 @@ impl Sdk {
 		raw_rest_client: Arc<dyn RestClient>,
 		file_client: Arc<dyn FileClient>,
 	) -> Sdk {
-		logging::init_logger();
-		log::info!("Initializing SDK...");
-
 		let date_provider = Arc::new(SystemDateProvider);
-		let rest_client = Arc::new(SuspendableRestClient::new(raw_rest_client, date_provider));
-
-		let type_model_provider = Arc::new(TypeModelProvider::new(
-			rest_client.clone(),
-			file_client,
-			base_url.clone(),
-		));
-		// TODO validate parameters
-		let instance_mapper = Arc::new(InstanceMapper::new(type_model_provider.clone()));
-		let json_serializer = Arc::new(JsonSerializer::new(type_model_provider.clone()));
-
-		Sdk {
-			type_model_provider,
-			json_serializer,
-			instance_mapper,
-			rest_client,
+		Self::new_internal(
 			base_url,
-		}
+			Arc::new(SuspendableRestClient::new(raw_rest_client, date_provider)),
+			file_client,
+		)
 	}
+
+	#[uniffi::constructor]
+	pub fn new_without_suspension(
+		base_url: String,
+		raw_rest_client: Arc<dyn RestClient>,
+		file_client: Arc<dyn FileClient>,
+	) -> Sdk {
+		Self::new_internal(base_url, raw_rest_client, file_client)
+	}
+
 	/// Authorizes the SDK's REST requests via inserting `access_token` into the HTTP headers
 	pub async fn login(&self, credentials: Credentials) -> Result<Arc<LoggedInSdk>, LoginError> {
 		self.type_model_provider
@@ -234,10 +231,13 @@ impl Sdk {
 			self.instance_mapper.clone(),
 		));
 
+		let key_cache = Arc::new(KeyCache::new());
+		let user_facade_factory = Arc::new(UserFacadeFactory::new(key_cache.clone()));
+
 		let login_facade = LoginFacade::new(
 			entity_client.clone(),
 			typed_entity_client.clone(),
-			|user| UserFacade::new(Arc::new(KeyCache::new()), user),
+			user_facade_factory,
 			self.type_model_provider.clone(),
 		);
 		let user_facade = Arc::new(login_facade.resume_session(&credentials).await?);
@@ -245,7 +245,9 @@ impl Sdk {
 		let key_loader_facade = Arc::new(KeyLoaderFacade::new(
 			user_facade.clone(),
 			typed_entity_client.clone(),
+			key_cache.clone(),
 		));
+
 		let service_executor: Arc<ServiceExecutor> = Arc::new(ServiceExecutor::new(
 			auth_headers_provider.clone(),
 			None,
@@ -418,6 +420,31 @@ impl Sdk {
 }
 
 impl Sdk {
+	fn new_internal(
+		base_url: String,
+		rest_client: Arc<dyn RestClient>,
+		file_client: Arc<dyn FileClient>,
+	) -> Self {
+		logging::init_logger();
+		log::info!("Initializing SDK...");
+		let type_model_provider = Arc::new(TypeModelProvider::new(
+			rest_client.clone(),
+			file_client,
+			base_url.clone(),
+		));
+		// TODO validate parameters
+		let instance_mapper = Arc::new(InstanceMapper::new(type_model_provider.clone()));
+		let json_serializer = Arc::new(JsonSerializer::new(type_model_provider.clone()));
+
+		Sdk {
+			type_model_provider,
+			json_serializer,
+			instance_mapper,
+			rest_client,
+			base_url,
+		}
+	}
+
 	fn create_blob_facade(
 		&self,
 		auth_headers_provider: Arc<HeadersProvider>,

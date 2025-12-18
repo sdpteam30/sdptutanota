@@ -2,13 +2,13 @@
 
 use crate::crypto::hmac::{HmacError, HMAC_SHA256_SIZE};
 use crate::crypto::key::GenericAesKey;
-use crate::crypto::randomizer_facade::RandomizerFacade;
 use crate::join_slices;
 use crate::util::{array_cast_size, array_cast_slice, ArrayCastingError};
 use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::{BlockCipher, BlockSizeUser};
 use cbc::cipher::block_padding::UnpadError;
 use cbc::cipher::{BlockDecrypt, BlockDecryptMut, BlockEncrypt, BlockEncryptMut, KeyIvInit};
+use crypto_primitives::randomizer_facade::RandomizerFacade;
 use std::fmt::Debug;
 use zeroize::ZeroizeOnDrop;
 
@@ -553,8 +553,8 @@ mod tests {
 	use base64::engine::Engine;
 	use base64::prelude::BASE64_STANDARD;
 
-	use crate::crypto::compatibility_test_utils::*;
-	use crate::crypto::randomizer_facade::test_util::make_thread_rng_facade;
+	use crypto_primitives::compatibility_test_utils::*;
+	use crypto_primitives::randomizer_facade::test_util::make_thread_rng_facade;
 
 	use super::*;
 
@@ -563,7 +563,7 @@ mod tests {
 		for td in get_compatibility_test_data().aes128_tests {
 			let key: Aes128Key = td.hex_key.try_into().unwrap();
 			let plaintext = td.plain_text_base64;
-			let iv = &Iv(td.iv_base64.try_into().unwrap());
+			let iv = &reproduce_iv_from_injected_seed(&td.seed);
 			let encrypted_bytes = aes_128_encrypt(
 				&key,
 				&plaintext,
@@ -582,7 +582,7 @@ mod tests {
 		for td in get_compatibility_test_data().aes128_mac_tests {
 			let key: Aes128Key = td.hex_key.try_into().unwrap();
 			let plaintext = td.plain_text_base64;
-			let iv = &Iv(td.iv_base64.try_into().unwrap());
+			let iv = &reproduce_iv_from_injected_seed(&td.seed);
 			let encrypted_bytes = aes_128_encrypt(
 				&key,
 				&plaintext,
@@ -682,7 +682,7 @@ mod tests {
 		for td in get_compatibility_test_data().aes256_tests {
 			let key: Aes256Key = td.hex_key.try_into().unwrap();
 			let plaintext = td.plain_text_base64;
-			let iv = &Iv(td.iv_base64.try_into().unwrap());
+			let iv = &reproduce_iv_from_injected_seed(&td.seed);
 			let encrypted_bytes =
 				aes_256_encrypt(&key, &plaintext, iv, PaddingMode::WithPadding).unwrap();
 			let expected_ciphertext = td.cipher_text_base64;
@@ -713,7 +713,7 @@ mod tests {
 		for td in get_compatibility_test_data().aes256_tests {
 			let key: Aes256Key = td.hex_key.try_into().unwrap();
 			let plain_key = td.key_to_encrypt256;
-			let iv = &Iv(td.iv_base64.try_into().unwrap());
+			let iv = &reproduce_iv_from_injected_seed(&td.seed);
 			let encrypted_bytes =
 				aes_256_encrypt(&key, &plain_key, iv, PaddingMode::NoPadding).unwrap();
 			let expected_encrypted_key = td.encrypted_key256;
@@ -741,7 +741,7 @@ mod tests {
 		for td in get_compatibility_test_data().aes256_tests {
 			let key: Aes256Key = td.hex_key.try_into().unwrap();
 			let plain_key = td.key_to_encrypt128;
-			let iv = &Iv(td.iv_base64.try_into().unwrap());
+			let iv = &reproduce_iv_from_injected_seed(&td.seed);
 			let encrypted_bytes =
 				aes_256_encrypt(&key, &plain_key, iv, PaddingMode::NoPadding).unwrap();
 			let expected_encrypted_key = td.encrypted_key128;
@@ -806,5 +806,9 @@ mod tests {
 			.is_err();
 			assert!(o);
 		}
+	}
+
+	fn reproduce_iv_from_injected_seed(seed: &Vec<u8>) -> Iv {
+		Iv(seed[..IV_BYTE_SIZE].try_into().unwrap())
 	}
 }

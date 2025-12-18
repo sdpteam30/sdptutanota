@@ -57,7 +57,7 @@ import { DeviceConfig, deviceConfig } from "../common/misc/DeviceConfig.js"
 import { CalendarSearchViewModel } from "./calendar/search/view/CalendarSearchViewModel.js"
 import { SearchRouter } from "../common/search/view/SearchRouter.js"
 import { getEnabledMailAddressesWithUser } from "../common/mailFunctionality/SharedMailUtils.js"
-import { CLIENT_ONLY_CALENDARS, Const, DEFAULT_CLIENT_ONLY_CALENDAR_COLORS, FeatureType, GroupType, KdfType } from "../common/api/common/TutanotaConstants.js"
+import { Const, FeatureType, GroupType, KdfType } from "../common/api/common/TutanotaConstants.js"
 import { ShareableGroupType } from "../common/sharing/GroupUtils.js"
 import { ReceivedGroupInvitationsModel } from "../common/sharing/model/ReceivedGroupInvitationsModel.js"
 import { CalendarViewModel } from "./calendar/view/CalendarViewModel.js"
@@ -104,15 +104,21 @@ import { AppType } from "../common/misc/ClientConstants.js"
 import type { ParsedEvent } from "../common/calendar/gui/CalendarImporter.js"
 import { ExternalCalendarFacade } from "../common/native/common/generatedipc/ExternalCalendarFacade.js"
 import { WorkerRandomizer } from "../common/api/worker/workerInterfaces.js"
-import { lang } from "../common/misc/LanguageViewModel.js"
 import type { CalendarContactPreviewViewModel } from "./calendar/gui/eventpopup/CalendarContactPreviewViewModel.js"
 import { ContactSuggestion } from "../common/native/common/generatedipc/ContactSuggestion"
 import { SyncTracker } from "../common/api/main/SyncTracker.js"
 import { KeyVerificationFacade } from "../common/api/worker/facades/lazy/KeyVerificationFacade"
 import { getEventWithDefaultTimes, setNextHalfHour } from "../common/api/common/utils/CommonCalendarUtils.js"
+import { PublicEncryptionKeyProvider } from "../common/api/worker/facades/PublicEncryptionKeyProvider"
 import { ClientModelInfo, ClientTypeModelResolver } from "../common/api/common/EntityFunctions"
 import { CommonLocator } from "../common/api/main/CommonLocator"
 import { SearchToken } from "../common/api/common/utils/QueryTokenUtils"
+import { GroupSettingsModel } from "../common/sharing/model/GroupSettingsModel"
+import { IdentityKeyCreator } from "../common/api/worker/facades/lazy/IdentityKeyCreator"
+import { PublicIdentityKeyProvider } from "../common/api/worker/facades/PublicIdentityKeyProvider"
+import { WhitelabelThemeGenerator } from "../common/gui/WhitelabelThemeGenerator"
+import type { AutosaveFacade, LocalAutosavedDraftData } from "../common/api/worker/facades/lazy/AutosaveFacade"
+import { lang } from "../common/misc/LanguageViewModel.js"
 
 assertMainOrNode()
 
@@ -142,6 +148,8 @@ class CalendarLocator implements CommonLocator {
 	bookingFacade!: BookingFacade
 	mailAddressFacade!: MailAddressFacade
 	keyVerificationFacade!: KeyVerificationFacade
+	publicEncryptionKeyProvider!: PublicEncryptionKeyProvider
+	publicIdentityKeyProvider!: PublicIdentityKeyProvider
 	blobFacade!: BlobFacade
 	userManagementFacade!: UserManagementFacade
 	recoverCodeFacade!: RecoverCodeFacade
@@ -167,6 +175,8 @@ class CalendarLocator implements CommonLocator {
 	themeController!: ThemeController
 	Const!: Record<string, any>
 	syncTracker!: SyncTracker
+	identityKeyCreator!: IdentityKeyCreator
+	whitelabelThemeGenerator!: WhitelabelThemeGenerator
 
 	private nativeInterfaces: NativeInterfaces | null = null
 	private entropyFacade!: EntropyFacade
@@ -178,7 +188,7 @@ class CalendarLocator implements CommonLocator {
 
 	readonly recipientsModel: lazyAsync<RecipientsModel> = lazyMemoized(async () => {
 		const { RecipientsModel } = await import("../common/api/main/RecipientsModel.js")
-		return new RecipientsModel(this.contactModel, this.logins, this.mailFacade, this.entityClient, this.keyVerificationFacade)
+		return new RecipientsModel(this.contactModel, this.logins, this.mailFacade, this.entityClient)
 	})
 
 	async noZoneDateProvider(): Promise<NoZoneDateProvider> {
@@ -218,10 +228,12 @@ class CalendarLocator implements CommonLocator {
 		const redraw = await this.redraw()
 		const searchRouter = await this.scopedSearchRouter()
 		const calendarEventsRepository = await this.calendarEventsRepository()
+		const calendarModel = await this.calendarModel()
 		return () => {
 			return new CalendarSearchViewModel(
 				searchRouter,
 				this.search,
+				calendarModel,
 				this.logins,
 				this.entityClient,
 				this.eventController,
@@ -229,28 +241,6 @@ class CalendarLocator implements CommonLocator {
 				this.progressTracker,
 				calendarEventsRepository,
 				redraw,
-				deviceConfig.getClientOnlyCalendars(),
-			)
-		}
-	}
-
-	async calendarSearchViewModelFactory(): Promise<() => CalendarSearchViewModel> {
-		const { CalendarSearchViewModel } = await import("./calendar/search/view/CalendarSearchViewModel.js")
-		const redraw = await this.redraw()
-		const searchRouter = await this.scopedSearchRouter()
-		const calendarEventsRepository = await this.calendarEventsRepository()
-		return () => {
-			return new CalendarSearchViewModel(
-				searchRouter,
-				this.search,
-				this.logins,
-				this.entityClient,
-				this.eventController,
-				this.calendarFacade,
-				this.progressTracker,
-				calendarEventsRepository,
-				redraw,
-				deviceConfig.getClientOnlyCalendars(),
 			)
 		}
 	}
@@ -295,6 +285,7 @@ class CalendarLocator implements CommonLocator {
 			timeZone,
 			this.mailboxModel,
 			this.contactModel,
+			this.groupSettingsModel,
 		)
 	})
 
@@ -318,6 +309,15 @@ class CalendarLocator implements CommonLocator {
 		const { SendMailModel } = await import("../common/mailFunctionality/SendMailModel.js")
 		const recipientsModel = await this.recipientsModel()
 		const dateProvider = await this.noZoneDateProvider()
+
+		const noOpAutosave: AutosaveFacade = {
+			async clearAutosavedDraftData(): Promise<void> {},
+			async getAutosavedDraftData(): Promise<LocalAutosavedDraftData | null> {
+				return null
+			},
+			async setAutosavedDraftData(_draftData: LocalAutosavedDraftData): Promise<void> {},
+		}
+
 		return () =>
 			new SendMailModel(
 				this.mailFacade,
@@ -330,9 +330,11 @@ class CalendarLocator implements CommonLocator {
 				recipientsModel,
 				dateProvider,
 				mailboxProperties,
+				noOpAutosave,
 				async (mail: Mail) => {
 					return false
 				},
+				this.syncTracker,
 			)
 	}
 
@@ -566,6 +568,8 @@ class CalendarLocator implements CommonLocator {
 			bookingFacade,
 			mailAddressFacade,
 			keyVerificationFacade,
+			publicEncryptionKeyProvider,
+			publicIdentityKeyProvider,
 			blobFacade,
 			userManagementFacade,
 			recoverCodeFacade,
@@ -579,6 +583,7 @@ class CalendarLocator implements CommonLocator {
 			workerFacade,
 			sqlCipherFacade,
 			contactFacade,
+			identityKeyCreator,
 		} = this.worker.getWorkerInterface()
 		this.loginFacade = loginFacade
 		this.customerFacade = customerFacade
@@ -592,12 +597,15 @@ class CalendarLocator implements CommonLocator {
 		this.bookingFacade = bookingFacade
 		this.mailAddressFacade = mailAddressFacade
 		this.keyVerificationFacade = keyVerificationFacade
+		this.publicEncryptionKeyProvider = publicEncryptionKeyProvider
+		this.publicIdentityKeyProvider = publicIdentityKeyProvider
 		this.blobFacade = blobFacade
 		this.userManagementFacade = userManagementFacade
 		this.recoverCodeFacade = recoverCodeFacade
 		this.contactFacade = contactFacade
 		this.serviceExecutor = serviceExecutor
 		this.sqlCipherFacade = sqlCipherFacade
+		this.identityKeyCreator = identityKeyCreator
 		this.logins = new LoginController(
 			this.loginFacade,
 			this.customerFacade,
@@ -622,6 +630,7 @@ class CalendarLocator implements CommonLocator {
 			// calendar does not have index, so nothing needs to be handled here
 			noOp()
 		})
+		this.whitelabelThemeGenerator = new WhitelabelThemeGenerator()
 
 		this.usageTestModel = new UsageTestModel(
 			{
@@ -787,9 +796,9 @@ class CalendarLocator implements CommonLocator {
 				: new WebThemeFacade(deviceConfig)
 		const lazySanitizer = isTest()
 			? () => Promise.resolve(sanitizerStub as HtmlSanitizer)
-			: () => import("../common/misc/HtmlSanitizer").then(({ htmlSanitizer }) => htmlSanitizer)
+			: () => import("../common/misc/HtmlSanitizer").then(({ getHtmlSanitizer }) => getHtmlSanitizer())
 
-		this.themeController = new ThemeController(theme, selectedThemeFacade, lazySanitizer, AppType.Calendar)
+		this.themeController = new ThemeController(theme, selectedThemeFacade, lazySanitizer, AppType.Calendar, this.whitelabelThemeGenerator)
 
 		// For native targets WebCommonNativeFacade notifies themeController because Android and Desktop do not seem to work reliably via media queries
 		if (selectedThemeFacade instanceof WebThemeFacade) {
@@ -839,6 +848,7 @@ class CalendarLocator implements CommonLocator {
 			() => {
 				this.systemFacade.requestWidgetRefresh()
 			},
+			lang,
 		)
 	})
 
@@ -889,7 +899,7 @@ class CalendarLocator implements CommonLocator {
 			hasBusinessFeature,
 			ownAttendee,
 			lazyIndexEntry,
-			async (mode: CalendarOperation) => this.calendarEventModel(mode, selectedEvent, mailboxDetails, mailboxProperties, null),
+			async (mode: CalendarOperation, event: CalendarEvent) => this.calendarEventModel(mode, event, mailboxDetails, mailboxProperties, null),
 			highlightedTokens,
 		)
 
@@ -919,8 +929,8 @@ class CalendarLocator implements CommonLocator {
 			this.themeController,
 			this.syncTracker,
 			() => this.showSetupWizard(),
-			() => this.setUpClientOnlyCalendars(),
 			() => this.updateClients(),
+			this.loginFacade,
 		)
 	})
 
@@ -937,20 +947,6 @@ class CalendarLocator implements CommonLocator {
 				deviceConfig,
 				false,
 			)
-		}
-	}
-
-	setUpClientOnlyCalendars() {
-		let configs = deviceConfig.getClientOnlyCalendars()
-
-		for (const [id, name] of CLIENT_ONLY_CALENDARS.entries()) {
-			const calendarId = `${this.logins.getUserController().userId}#${id}`
-			const config = configs.get(calendarId)
-			if (!config)
-				deviceConfig.updateClientOnlyCalendars(calendarId, {
-					name: lang.get(name),
-					color: DEFAULT_CLIENT_ONLY_CALENDAR_COLORS.get(id)!,
-				})
 		}
 	}
 
@@ -994,6 +990,11 @@ class CalendarLocator implements CommonLocator {
 			return new CredentialsProvider(new WebCredentialsFacade(deviceConfig), null, null)
 		}
 	}
+
+	readonly groupSettingsModel: lazy<Promise<GroupSettingsModel>> = lazyMemoized(async () => {
+		const { GroupSettingsModel } = await import("../common/sharing/model/GroupSettingsModel.js")
+		return new GroupSettingsModel(this.entityClient, this.logins)
+	})
 }
 
 export type ICalendarLocator = Readonly<CalendarLocator>
@@ -1001,5 +1002,5 @@ export type ICalendarLocator = Readonly<CalendarLocator>
 export const calendarLocator: ICalendarLocator = new CalendarLocator()
 
 if (typeof window !== "undefined") {
-	window.tutao.locator = calendarLocator
+	// window.tutao.locator = calendarLocator
 }

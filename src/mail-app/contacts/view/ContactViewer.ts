@@ -79,10 +79,10 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 
 		const phoneticName = this.contactPhoneticName(attrs.contact)
 
-		return m(".plr-l.pb-floating.mlr-safe-inset", [
+		return m(".plr-24.pb-floating.mlr-safe-inset", [
 			m("", [
 				m(
-					".flex-space-between.flex-wrap.mt-m",
+					".flex-space-between.flex-wrap.mt-12",
 					m(".left.flex-grow-shrink-150", [
 						m(".h2.selectable.text-break", [
 							this.renderContactName(contact, attrs.highlightedStrings),
@@ -96,7 +96,7 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 					]),
 					this.renderActions(contact, attrs),
 				),
-				m("hr.hr.mt.mb"),
+				m("hr.hr.mt-16.mb-16"),
 			]),
 			this.renderCustomDatesAndRelationships(contact),
 			this.renderMailAddressesAndPhones(contact, onWriteMail),
@@ -199,7 +199,7 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 	private renderJobInformation(contact: Contact): Children {
 		const spacerFunction = () =>
 			m(
-				"span.plr-s",
+				"span.plr-4",
 				{
 					style: {
 						fontWeight: "900",
@@ -221,7 +221,7 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 	private renderPronounsInfo(contact: Contact): Children {
 		const spacerFunction = () =>
 			m(
-				"span.plr-s",
+				"span.plr-4",
 				{
 					style: {
 						fontWeight: "900",
@@ -248,8 +248,8 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 		const socials = contact.socialIds.map((element) => this.renderSocialId(element))
 		return addresses.length > 0 || socials.length > 0
 			? m(".wrapping-row", [
-					m(".address.mt-l", addresses.length > 0 ? [m(".h4", lang.get("address_label")), m(".aggregateEditors", addresses)] : null),
-					m(".social.mt-l", socials.length > 0 ? [m(".h4", lang.get("social_label")), m(".aggregateEditors", socials)] : null),
+					m(".address.mt-32", addresses.length > 0 ? [m(".h4", lang.get("address_label")), m(".aggregateEditors", addresses)] : null),
+					m(".social.mt-32", socials.length > 0 ? [m(".h4", lang.get("social_label")), m(".aggregateEditors", socials)] : null),
 				])
 			: null
 	}
@@ -259,9 +259,9 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 		const instantMessengers = contact.messengerHandles.map((element) => this.renderMessengerHandle(element))
 		return websites.length > 0 || instantMessengers.length > 0
 			? m(".wrapping-row", [
-					m(".website.mt-l", websites.length > 0 ? [m(".h4", lang.get("websites_label")), m(".aggregateEditors", websites)] : null),
+					m(".website.mt-32", websites.length > 0 ? [m(".h4", lang.get("websites_label")), m(".aggregateEditors", websites)] : null),
 					m(
-						".messenger-handles.mt-l",
+						".messenger-handles.mt-32",
 						instantMessengers.length > 0 ? [m(".h4", lang.get("messenger_handles_label")), m(".aggregateEditors", instantMessengers)] : null,
 					),
 				])
@@ -286,10 +286,10 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 
 		return dates.length > 0 || relationships.length > 0
 			? m(".wrapping-row", [
-					m(".dates.mt-l", dates.length > 0 ? [m(".h4", lang.get("dates_label")), m(".aggregateEditors", dates)] : null),
+					m(".dates.mt-32", dates.length > 0 ? [m(".h4", lang.get("dates_label")), m(".aggregateEditors", dates)] : null),
 					m(
-						".relationships.mt-l",
-						relationships.length > 0 ? [m(".h4", lang.get("relationships_label")), m(".aggregateEditors", relationships)] : null,
+						".relationships.mt-32",
+						relationships.length > 0 ? [m(".h4", lang.get("relatedPeople_label")), m(".aggregateEditors", relationships)] : null,
 					),
 				])
 			: null
@@ -300,15 +300,15 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 		const phones = contact.phoneNumbers.map((element) => this.renderPhoneNumber(element))
 		return mailAddresses.length > 0 || phones.length > 0
 			? m(".wrapping-row", [
-					m(".mail.mt-l", mailAddresses.length > 0 ? [m(".h4", lang.get("email_label")), m(".aggregateEditors", [mailAddresses])] : null),
-					m(".phone.mt-l", phones.length > 0 ? [m(".h4", lang.get("phone_label")), m(".aggregateEditors", [phones])] : null),
+					m(".mail.mt-32", mailAddresses.length > 0 ? [m(".h4", lang.get("email_label")), m(".aggregateEditors", [mailAddresses])] : null),
+					m(".phone.mt-32", phones.length > 0 ? [m(".h4", lang.get("phone_label")), m(".aggregateEditors", [phones])] : null),
 				])
 			: null
 	}
 
 	private renderComment(contact: Contact): Children {
 		return contact.comment && contact.comment.trim().length > 0
-			? [m(".h4.mt-l", lang.get("comment_label")), m("p.mt-l.text-prewrap.text-break.selectable", contact.comment)]
+			? [m(".h4.mt-32", lang.get("comment_label")), m("p.mt-32.text-prewrap.text-break.selectable", contact.comment)]
 			: null
 	}
 
@@ -319,11 +319,12 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 			icon: Icons.ArrowForward,
 			size: ButtonSize.Compact,
 		})
+		const socialUrl = getSocialUrl(contactSocialId)
 		return m(TextField, {
 			label: getContactSocialTypeLabel(getContactSocialType(contactSocialId), contactSocialId.customTypeName),
 			value: contactSocialId.socialId,
 			isReadOnly: true,
-			injectionsRight: () => m(`a[href=${getSocialUrl(contactSocialId)}][target=_blank]`, showButton),
+			injectionsRight: () => (socialUrl != null ? m("a", { href: socialUrl, target: "_blank" }, showButton) : null),
 		})
 	}
 
@@ -338,7 +339,7 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 			label: getContactCustomWebsiteTypeToLabel(downcast(website.type), website.customTypeName),
 			value: website.url,
 			isReadOnly: true,
-			injectionsRight: () => m(`a[href=${getWebsiteUrl(website.url)}][target=_blank]`, showButton),
+			injectionsRight: () => m("a", { href: getWebsiteUrl(website.url), target: "_blank" }, showButton),
 		})
 	}
 
@@ -349,11 +350,12 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 			icon: Icons.ArrowForward,
 			size: ButtonSize.Compact,
 		})
+		const messengerUrl = getMessengerHandleUrl(messengerHandle)
 		return m(TextField, {
 			label: getContactMessengerHandleTypeToLabel(downcast(messengerHandle.type), messengerHandle.customTypeName),
 			value: messengerHandle.handle,
 			isReadOnly: true,
-			injectionsRight: () => m(`a[href=${getMessengerHandleUrl(messengerHandle)}][target=_blank]`, showButton),
+			injectionsRight: () => (messengerUrl !== "" ? m("a", { href: messengerUrl, target: "_blank" }, showButton) : null),
 		})
 	}
 
@@ -388,7 +390,7 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 			label: getContactPhoneNumberTypeLabel(phone.type as ContactPhoneNumberType, phone.customTypeName),
 			value: phone.number,
 			isReadOnly: true,
-			injectionsRight: () => m(`a[href="tel:${phone.number}"][target=_blank]`, callButton),
+			injectionsRight: () => m("a", { href: `tel:${phone.number}`, target: "_blank" }, callButton),
 		})
 	}
 
@@ -412,7 +414,7 @@ export class ContactViewer implements ClassComponent<ContactViewerAttrs> {
 			value: address.address,
 			isReadOnly: true,
 			type: TextFieldType.Area,
-			injectionsRight: () => m(`a[href="https://www.openstreetmap.org/search?query=${prepAddress}"][target=_blank]`, showButton),
+			injectionsRight: () => m("a", { href: `https://www.openstreetmap.org/search?query=${prepAddress}`, target: "_blank" }, showButton),
 		})
 	}
 }

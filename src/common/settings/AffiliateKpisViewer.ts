@@ -6,8 +6,7 @@ import { ColumnWidth, Table, TableLineAttrs } from "../gui/base/Table.js"
 import { mailLocator } from "../../mail-app/mailLocator.js"
 import { formatShortMonthYear2Digit } from "../misc/Formatter.js"
 import { AffiliateViewModel } from "./AffiliateViewModel.js"
-import { formatPrice } from "../subscription/PriceUtils.js"
-import { lang } from "../misc/LanguageViewModel.js"
+import { formatPrice } from "../subscription/utils/PriceUtils.js"
 import { LazyLoaded } from "@tutao/tutanota-utils"
 import { DateTime } from "luxon"
 
@@ -18,10 +17,10 @@ export class AffiliateKpisViewer implements UpdatableSettingsDetailsViewer {
 		return m(
 			ListColumnWrapper,
 			m(
-				".flex.flex-column.fill-absolute.plr-l",
-				m("h4.mt-l", "KPIs"),
+				".flex.flex-column.fill-absolute.plr-24",
+				m("h4.mt-32", "KPIs"),
 				m(
-					".overflow-auto.pt-s",
+					".overflow-auto.pt-8",
 					{ style: { height: "100%" } },
 					m(
 						"",

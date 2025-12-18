@@ -1,13 +1,10 @@
 import { assertWorkerOrNode, getApiBaseUrl, isAdminClient, isAndroidApp, isWebClient, isWorker } from "../../common/Env"
-import { ConnectionError, handleRestError, PayloadTooLargeError, ServiceUnavailableError, TooManyRequestsError } from "../../common/error/RestError"
+import { ConnectionError, handleRestError, PayloadTooLargeError } from "../../common/error/RestError"
 import { HttpMethod, MediaType, ServerModelInfo } from "../../common/EntityFunctions"
-import { assertNotNull, typedEntries, uint8ArrayToArrayBuffer } from "@tutao/tutanota-utils"
-import { SuspensionHandler } from "../SuspensionHandler"
+import { assertNotNull, newPromise, typedEntries, uint8ArrayToArrayBuffer } from "@tutao/tutanota-utils"
+import { isSuspensionResponse, SuspensionHandler } from "../SuspensionHandler"
 import { REQUEST_SIZE_LIMIT_DEFAULT, REQUEST_SIZE_LIMIT_MAP } from "../../common/TutanotaConstants"
 import { SuspensionError } from "../../common/error/SuspensionError.js"
-import { ApplicationTypesFacade } from "../facades/ApplicationTypesFacade"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 assertWorkerOrNode()
 
@@ -56,6 +53,7 @@ export class RestClient {
 		private readonly suspensionHandler: SuspensionHandler,
 		private readonly domainConfig: DomainConfig,
 		private readonly serverModelInfo: ServerModelInfo,
+		private readonly clientPlatform: string,
 	) {
 		this.id = 0
 	}
@@ -145,15 +143,16 @@ export class RestClient {
 							}
 						} else {
 							const suspensionTime = xhr.getResponseHeader("Retry-After") || xhr.getResponseHeader("Suspension-Time")
+							const isSuspensionResp = isSuspensionResponse(xhr.status, suspensionTime)
 
-							if (isSuspensionResponse(xhr.status, suspensionTime) && options.suspensionBehavior === SuspensionBehavior.Throw) {
+							if (isSuspensionResp && options.suspensionBehavior === SuspensionBehavior.Throw) {
 								reject(
 									new SuspensionError(
 										`blocked for ${suspensionTime}, not suspending (${xhr.status})`,
 										suspensionTime && (parseInt(suspensionTime) * 1000).toString(),
 									),
 								)
-							} else if (isSuspensionResponse(xhr.status, suspensionTime)) {
+							} else if (isSuspensionResp) {
 								this.suspensionHandler.activateSuspensionIfInactive(Number(suspensionTime), resourceURL)
 
 								resolve(this.suspensionHandler.deferRequest(() => this.request(path, method, options)))
@@ -262,7 +261,7 @@ export class RestClient {
 				} else {
 					xhr.send(options.body)
 				}
-			}, "restClient:request")
+			})
 		}
 	}
 
@@ -328,6 +327,7 @@ export class RestClient {
 		// don't add custom and content-type headers for non-CORS requests, otherwise it would not meet the 'CORS-Preflight simple request' requirements
 		if (!options.noCORS) {
 			headers["cv"] = env.versionNumber
+			headers["cp"] = this.clientPlatform
 			if (body instanceof Uint8Array) {
 				headers["Content-Type"] = MediaType.Binary
 			} else if (typeof body === "string") {
@@ -365,10 +365,6 @@ export function addParamsToUrl(url: URL, urlParams: Dict): URL {
 	}
 
 	return url
-}
-
-export function isSuspensionResponse(statusCode: number, suspensionTimeNumberString: string | null): boolean {
-	return Number(suspensionTimeNumberString) > 0 && (statusCode === TooManyRequestsError.CODE || statusCode === ServiceUnavailableError.CODE)
 }
 
 function logFailedRequest(method: HttpMethod, url: URL, xhr: XMLHttpRequest, options: RestClientOptions): void {

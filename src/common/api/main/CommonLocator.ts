@@ -44,7 +44,6 @@ import { WebMobileFacade } from "../../native/main/WebMobileFacade.js"
 import { OperationProgressTracker } from "./OperationProgressTracker.js"
 import { DomainConfigProvider } from "../common/DomainConfigProvider.js"
 import { MailAddressTableModel, UserInfo } from "../../settings/mailaddress/MailAddressTableModel.js"
-import { GroupInfo } from "../entities/sys/TypeRefs.js"
 import { lazy } from "@tutao/tutanota-utils"
 import { Router } from "../../gui/ScopedRouter.js"
 import { NativeInterfaceMain } from "../../native/main/NativeInterfaceMain.js"
@@ -72,6 +71,12 @@ import { SyncTracker } from "./SyncTracker.js"
 import { KeyVerificationFacade } from "../worker/facades/lazy/KeyVerificationFacade"
 import { SearchToken } from "../common/utils/QueryTokenUtils"
 import type { CalendarInviteHandler } from "../../../calendar-app/calendar/view/CalendarInvites"
+import { GroupSettingsModel } from "../../sharing/model/GroupSettingsModel"
+import { PublicEncryptionKeyProvider } from "../worker/facades/PublicEncryptionKeyProvider"
+import { IdentityKeyCreator } from "../worker/facades/lazy/IdentityKeyCreator"
+import { PublicIdentityKeyProvider } from "../worker/facades/PublicIdentityKeyProvider"
+import type { WhitelabelThemeGenerator } from "../../gui/WhitelabelThemeGenerator"
+import { LoginViewModel } from "../../login/LoginViewModel"
 
 export interface CommonLocator {
 	worker: WorkerClient
@@ -89,6 +94,7 @@ export interface CommonLocator {
 	desktopSettingsFacade: SettingsFacade
 	desktopSystemFacade: DesktopSystemFacade
 	themeController: ThemeController
+	whitelabelThemeGenerator: WhitelabelThemeGenerator
 
 	entityClient: EntityClient
 	loginFacade: LoginFacade
@@ -103,6 +109,8 @@ export interface CommonLocator {
 	bookingFacade: BookingFacade
 	mailAddressFacade: MailAddressFacade
 	keyVerificationFacade: KeyVerificationFacade
+	publicEncryptionKeyProvider: PublicEncryptionKeyProvider
+	publicIdentityKeyProvider: PublicIdentityKeyProvider
 	blobFacade: BlobFacade
 	userManagementFacade: UserManagementFacade
 	recoverCodeFacade: RecoverCodeFacade
@@ -113,6 +121,7 @@ export interface CommonLocator {
 	workerFacade: WorkerFacade
 	random: WorkerRandomizer
 	connectivityModel: WebsocketConnectivityModel
+	identityKeyCreator: IdentityKeyCreator
 
 	mailboxModel: MailboxModel
 
@@ -134,6 +143,8 @@ export interface CommonLocator {
 
 	domainConfigProvider(): DomainConfigProvider
 
+	loginViewModelFactory(): Promise<lazy<LoginViewModel>>
+
 	showSetupWizard(): void
 
 	mailAddressTableModelForOwnMailbox(): Promise<MailAddressTableModel>
@@ -145,6 +156,8 @@ export interface CommonLocator {
 	recipientsModel(): Promise<RecipientsModel>
 
 	recipientsSearchModel(): Promise<RecipientsSearchModel>
+
+	readonly groupSettingsModel: lazy<Promise<GroupSettingsModel>>
 
 	initialized: Promise<void>
 	throttledRouter: lazy<Router>

@@ -6,9 +6,7 @@ import { px, size } from "../../../../common/gui/size.js"
 import { client } from "../../../../common/misc/ClientDetector.js"
 import { assertMainOrNode } from "../../../../common/api/common/Env.js"
 import { debounceStart, noOp } from "@tutao/tutanota-utils"
-import { IconButton, IconButtonAttrs } from "../../../../common/gui/base/IconButton"
-import { Icons } from "../../../../common/gui/base/icons/Icons"
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
+import { newPromise } from "@tutao/tutanota-utils"
 
 assertMainOrNode()
 
@@ -42,14 +40,14 @@ export function showDateRangeSelectionDialog({
 	const form: Component = {
 		view: () =>
 			m(
-				".flex.col.pt",
+				".flex.col.pt-16",
 				m(
 					"",
 					{
 						style: {
 							display: "grid",
 							"grid-template-columns": "2fr 6fr 1fr",
-							"grid-gap": px(size.vpad_small),
+							"grid-gap": px(size.spacing_8),
 							"align-items": "center",
 						},
 					},
@@ -70,16 +68,7 @@ export function showDateRangeSelectionDialog({
 								nullSelectionText: optionalStartDate ? "unlimited_label" : undefined,
 							}),
 						),
-						startDate && optionalStartDate
-							? m(IconButton, {
-									icon: Icons.Cancel,
-									title: "remove_action",
-									click: () => {
-										startDate = null
-										warning = null
-									},
-								} satisfies IconButtonAttrs)
-							: m(".button-height.button-width-fixed"),
+						m(".button-height.button-width-fixed"),
 						m("", lang.get("dateTo_label")),
 						m(
 							".flex-grow.flex-space-between.flex-column",
@@ -97,7 +86,7 @@ export function showDateRangeSelectionDialog({
 						),
 					],
 				),
-				warning ? m(".mt.center", warning) : null,
+				warning ? m(".mt-16.center", warning) : null,
 			),
 	}
 	return newPromise((resolve) => {

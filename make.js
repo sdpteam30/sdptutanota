@@ -5,7 +5,7 @@ import { chalk } from "zx"
 
 await program
 	.usage("[options] [test|prod|local|host <url>]")
-	.addArgument(new Argument("stage").choices(["test", "prod", "local", "localSecure", "host"]).default("localSecure").argOptional())
+	.addArgument(new Argument("stage").choices(["test", "prod", "local", "localSecure", "host"]).default("local").argOptional())
 	.addArgument(new Argument("host").argOptional())
 	.addOption(new Option("-a, --app <type>", "app to build").choices(["mail", "calendar"]).default("mail"))
 	.option("-c, --clean", "Clean build directory")
@@ -13,7 +13,6 @@ await program
 	.option("--desktop-build-only", "Assemble desktop client without starting")
 	.option("-v, --verbose", "activate verbose logging in desktop client")
 	.option("-s, --serve", "Start a local server to serve the website")
-	.option("--ignore-migrations", "Dont check offline database migrations.")
 	.option("--network-debugging", "activate network debugging, sending attributeNames and attributeIds in the json request/response payloads", false)
 	.option("-D, --dev-tools", "Start the desktop client with DevTools open")
 	.action(async (stage, host, options) => {
@@ -27,7 +26,7 @@ await program
 			host = "https://app.local.tuta.com:9000"
 		}
 
-		const { clean, watch, serve, startDesktop, desktopBuildOnly, ignoreMigrations, app, networkDebugging, devTools } = options
+		const { clean, watch, serve, startDesktop, desktopBuildOnly, app, networkDebugging, devTools } = options
 
 		if (serve) {
 			console.error("--serve is currently disabled, point any server to ./build directory instead or build desktop")
@@ -41,7 +40,6 @@ await program
 				watch,
 				serve,
 				desktop: startDesktop || desktopBuildOnly,
-				ignoreMigrations,
 				networkDebugging,
 				app,
 			})
@@ -50,8 +48,7 @@ await program
 				const buildDir = app === "calendar" ? "build-calendar-app" : "build"
 				const env = Object.assign({}, process.env, { ELECTRON_ENABLE_SECURITY_WARNINGS: "TRUE", ELECTRON_START_WITH_DEV_TOOLS: devTools })
 				// we don't want to quit here because we want to keep piping output to our stdout.
-				spawn("npx", [`electron --inspect=5858 ./${buildDir}/`], {
-					shell: true,
+				spawn("node_modules/.bin/electron", ["--inspect=5858", `./${buildDir}/`], {
 					stdio: "inherit",
 					env: options.verbose ? Object.assign({}, env, { ELECTRON_ENABLE_LOGGING: 1 }) : env,
 				})

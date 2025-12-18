@@ -1,46 +1,43 @@
 import m, { Children, Component, Vnode } from "mithril"
 import { TextFieldType } from "../../../gui/base/TextField"
-import { MonospaceTextDisplay } from "../../../gui/base/MonospaceTextDisplay"
-import { lang, TranslationKey } from "../../../misc/LanguageViewModel"
+import { lang } from "../../../misc/LanguageViewModel"
 import { Card } from "../../../gui/base/Card"
 import { SingleLineTextField } from "../../../gui/base/SingleLineTextField"
 import { Icons } from "../../../gui/base/icons/Icons"
 import { ButtonColor, getColors } from "../../../gui/base/Button"
 import { LoginButton } from "../../../gui/base/buttons/LoginButton"
 import { KeyVerificationModel } from "../KeyVerificationModel"
-import { Icon } from "../../../gui/base/Icon"
+import { Icon, IconSize } from "../../../gui/base/Icon"
 import { theme } from "../../../gui/theme"
 import { debounce } from "@tutao/tutanota-utils"
-import { KeyVerificationMethodType } from "../../../api/common/TutanotaConstants"
+import { IdentityKeyVerificationMethod } from "../../../api/common/TutanotaConstants"
+import { getCleanedMailAddress } from "../../../misc/parsing/MailAddressParser"
+import { BootIcons } from "../../../gui/base/icons/BootIcons"
+import { TitleSection } from "../../../gui/TitleSection"
+import { FingerprintRow } from "../FingerprintRow"
 
 type VerificationByTextPageAttrs = {
 	model: KeyVerificationModel
 	goToSuccessPage: () => void
-}
-
-function isFingerprintMissing(model: KeyVerificationModel): boolean {
-	return model.getFingerprint() === ""
+	gotToMismatchPage: () => void
 }
 
 const debouncedFingerprintRequest = debounce(500, async (model: KeyVerificationModel, mailAddress: string) => {
-	const result = await model.loadFingerprintFromPublicKeyService(mailAddress)
+	await model.loadIdentityKeyForMailAddress(mailAddress)
 	m.redraw()
-	return result
 })
 
 export class VerificationByManualInputPage implements Component<VerificationByTextPageAttrs> {
 	view(vnode: Vnode<VerificationByTextPageAttrs>): Children {
 		const { model, goToSuccessPage } = vnode.attrs
 
-		const markAsVerifiedTranslationKey: TranslationKey = "keyManagement.markAsVerified_action"
-		return m(".pt.pb.flex.col.gap-vpad", [
-			m(Card, [
-				m(
-					"",
-					m(".h4.mb-0.pl-vpad-s", lang.get("keyManagement.textVerification_label")),
-					m("p.mt-xs.mb-s.pl-vpad-s", lang.get("keyManagement.verificationByTextMailAdress_label")),
-				),
-			]),
+		const publicIdentity = model.getPublicIdentity()
+
+		return m(".pt-16.pb-16.flex.col.gap-16", [
+			m(TitleSection, {
+				title: lang.get("keyManagement.textVerification_label"),
+				subTitle: lang.get("keyManagement.verificationByTextMailAdress_label"),
+			}),
 			m(
 				Card,
 				{
@@ -50,20 +47,22 @@ export class VerificationByManualInputPage implements Component<VerificationByTe
 					ariaLabel: lang.get("mailAddress_label"),
 					placeholder: lang.get("mailAddress_label"),
 					disabled: false,
-					classes: ["flex", "gap-vpad-s", "items-center", "pl-vpad-s"],
+					classes: ["flex", "gap-8", "items-center", "pl-8"],
 					leadingIcon: {
-						icon: Icons.At,
+						icon: BootIcons.User,
 						color: getColors(ButtonColor.Content).button,
 					},
-					value: model.mailAddress,
+					value: model.mailAddressInput,
 					type: TextFieldType.Text,
 
 					oninput: async (newValue) => {
-						model.mailAddress = newValue
-
-						if (model.validateMailAddress(newValue) == null) {
+						model.mailAddressInput = newValue
+						const cleanMailAddress = getCleanedMailAddress(newValue)
+						if (cleanMailAddress == null) {
+							return "mailAddressInvalid_msg"
+						} else {
 							try {
-								await debouncedFingerprintRequest(model, newValue)
+								debouncedFingerprintRequest(model, cleanMailAddress)
 							} catch (e) {
 								console.error("error while trying to fetch the public key service: ", e)
 							}
@@ -71,41 +70,55 @@ export class VerificationByManualInputPage implements Component<VerificationByTe
 					},
 				}),
 			),
-			isFingerprintMissing(model)
-				? null
-				: m(
-						Card,
-						{ classes: ["flex", "flex-column", "gap-vpad"] },
-						m(".pl-vpad-s", lang.get("keyManagement.verificationByText_label", { "{button}": lang.get(markAsVerifiedTranslationKey) })),
-						m(MonospaceTextDisplay, {
-							text: model.getFingerprint(),
-							placeholder: lang.get("keyManagement.invalidMailAddress_msg"),
-							chunkSize: 4,
-							border: false,
-							classes: ".mb-s",
+			publicIdentity
+				? [
+						m(
+							Card,
+							{ classes: ["flex", "flex-column", "gap-16"] },
+							m(
+								".pl-8",
+								lang.get("keyManagement.verificationByText_label", {
+									"{settings}": lang.get("settings_label"),
+									"{keyManagement}": lang.get("keyManagement_label"),
+								}),
+							),
+							m(FingerprintRow, {
+								mailAddress: publicIdentity.mailAddress,
+								publicKeyType: publicIdentity.trustDbEntry.publicIdentityKey.object.type,
+								publicKeyFingerprint: publicIdentity.fingerprint,
+								publicKeyVersion: publicIdentity.trustDbEntry.publicIdentityKey.version,
+							}),
+						),
+						m(LoginButton, {
+							class: "flex-center row center-vertically",
+							label: "yes_label",
+							onclick: async () => {
+								await model.trust(IdentityKeyVerificationMethod.text)
+								goToSuccessPage()
+							},
+							icon: m(Icon, {
+								icon: Icons.XCheckmark,
+								size: IconSize.PX20,
+								class: "mr-8 flex-center",
+							}),
 						}),
-					),
-			m(
-				".align-self-center.full-width",
-				m(LoginButton, {
-					label: markAsVerifiedTranslationKey,
-					onclick: async () => {
-						await model.trust()
-						await model.test.verified(KeyVerificationMethodType.text)
-						goToSuccessPage()
-					},
-					disabled: isFingerprintMissing(model),
-					icon: isFingerprintMissing(model)
-						? undefined
-						: m(Icon, {
-								icon: Icons.Checkmark,
-								class: "mr-xsm",
+						m(LoginButton, {
+							class: "flex-center row center-vertically",
+							label: "no_label",
+							onclick: async () => {
+								vnode.attrs.gotToMismatchPage()
+							},
+							icon: m(Icon, {
+								icon: Icons.XCross,
+								size: IconSize.PX20,
+								class: "mr-8 flex-center",
 								style: {
-									fill: theme.content_button_icon_selected,
+									fill: theme.surface,
 								},
 							}),
-				}),
-			),
+						}),
+					]
+				: null,
 		])
 	}
 }

@@ -28,7 +28,7 @@ import { IconButton, IconButtonAttrs } from "../gui/base/IconButton.js"
 import { ButtonSize } from "../gui/base/ButtonSize.js"
 import { MailAddressTableModel } from "./mailaddress/MailAddressTableModel.js"
 import { progressIcon } from "../gui/base/Icon.js"
-import { toFeatureType } from "../subscription/SubscriptionUtils.js"
+import { toFeatureType } from "../subscription/utils/SubscriptionUtils.js"
 import { EntityUpdateData, isUpdateForTypeRef } from "../api/common/utils/EntityUpdateUtils.js"
 import { UpdatableSettingsDetailsViewer } from "./Interfaces.js"
 
@@ -111,8 +111,8 @@ export class UserViewer implements UpdatableSettingsDetailsViewer {
 			injectionsRight: () => [m(IconButton, changePasswordButtonAttrs)],
 			isReadOnly: true,
 		} as const
-		return m("#user-viewer.fill-absolute.scroll.plr-l.pb-floating", [
-			m(".h4.mt-l", lang.get("userSettings_label")),
+		return m("#user-viewer.fill-absolute.scroll.plr-24.pb-floating", [
+			m(".h4.mt-32", lang.get("userSettings_label")),
 			m("", [
 				m(TextField, {
 					label: "mailAddress_label",
@@ -137,7 +137,7 @@ export class UserViewer implements UpdatableSettingsDetailsViewer {
 				this.renderUserStatusSelector(),
 			]),
 			m(this.secondFactorsForm),
-			this.groupsTableAttrs ? m(".h4.mt-l.mb-s", lang.get("groups_label")) : null,
+			this.groupsTableAttrs ? m(".h4.mt-32.mb-8", lang.get("groups_label")) : null,
 			this.groupsTableAttrs ? m(Table, this.groupsTableAttrs) : null,
 			this.mailAddressTableModel
 				? m(MailAddressTable, {

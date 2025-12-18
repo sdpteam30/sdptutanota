@@ -19,7 +19,7 @@ import {
 	WebsocketLeaderStatus,
 	WebsocketLeaderStatusTypeRef,
 } from "../entities/sys/TypeRefs.js"
-import { AppName, assertNotNull, binarySearch, delay, identity, lastThrow, ofClass, promiseMap, randomIntFromInterval, TypeRef } from "@tutao/tutanota-utils"
+import { AppName, binarySearch, delay, identity, lastThrow, Nullable, ofClass, promiseMap, randomIntFromInterval, TypeRef } from "@tutao/tutanota-utils"
 import { OutOfSyncError } from "../common/error/OutOfSyncError"
 import { CloseEventBusOption, GroupType, SECOND_MS } from "../common/TutanotaConstants"
 import { CancelledError } from "../common/error/CancelledError"
@@ -37,12 +37,10 @@ import { TypeModelResolver } from "../common/EntityFunctions.js"
 import { PhishingMarkerWebsocketDataTypeRef, ReportedMailFieldMarker } from "../entities/tutanota/TypeRefs"
 import { UserFacade } from "./facades/UserFacade"
 import { ExposedProgressTracker } from "../main/ProgressTracker.js"
-import { SyncTracker } from "../main/SyncTracker.js"
 import { Entity, ServerModelParsedInstance, ServerModelUntypedInstance } from "../common/EntityTypes"
 import { InstancePipeline } from "./crypto/InstancePipeline"
 import { EntityUpdateData, entityUpdateToUpdateData } from "../common/utils/EntityUpdateUtils"
 import { CryptoFacade } from "./crypto/CryptoFacade"
-import { Nullable } from "@tutao/tutanota-utils/dist/Utils"
 import { EntityAdapter } from "./crypto/EntityAdapter"
 import { EventInstancePrefetcher } from "./EventInstancePrefetcher"
 import { AttributeModel } from "../common/AttributeModel"
@@ -107,6 +105,8 @@ export interface EventBusListener {
 	onPhishingMarkersReceived(markers: ReportedMailFieldMarker[]): unknown
 
 	onError(tutanotaError: Error): void
+
+	onSyncDone(): unknown
 }
 
 export class EventBusClient {
@@ -159,7 +159,6 @@ export class EventBusClient {
 		private readonly socketFactory: (path: string) => WebSocket,
 		private readonly sleepDetector: SleepDetector,
 		private readonly progressTracker: ExposedProgressTracker,
-		private readonly syncTracker: SyncTracker,
 		private readonly typeModelResolver: TypeModelResolver,
 		private readonly cryptoFacade: CryptoFacade,
 		private readonly eventInstancePrefetcher: EventInstancePrefetcher,
@@ -241,25 +240,19 @@ export class EventBusClient {
 	 * Sends a close event to the server and finally closes the connection.
 	 * The state of this event bus client is reset and the client is terminated (does not automatically reconnect) except reconnect == true
 	 */
-	async close(closeOption: CloseEventBusOption): Promise<void> {
+	close(closeOption: CloseEventBusOption) {
 		console.log("ws close closeOption: ", closeOption, "state:", this.state)
 
 		switch (closeOption) {
 			case CloseEventBusOption.Terminate:
 				this.terminate()
-
 				break
-
 			case CloseEventBusOption.Pause:
 				this.state = EventBusState.Suspended
-
 				this.listener.onWebsocketStateChanged(WsConnectionState.connecting)
-
 				break
-
 			case CloseEventBusOption.Reconnect:
 				this.listener.onWebsocketStateChanged(WsConnectionState.connecting)
-
 				break
 		}
 
@@ -358,22 +351,13 @@ export class EventBusClient {
 				const untypedInstanceSanitized = AttributeModel.removeNetworkDebuggingInfoIfNeeded(untypedInstance)
 				const encryptedParsedInstance = await this.instancePipeline.typeMapper.applyJsTypes(serverTypeModel, untypedInstanceSanitized)
 				const entityAdapter = await EntityAdapter.from(serverTypeModel, encryptedParsedInstance, this.instancePipeline)
-				if (this.userFacade.hasGroup(assertNotNull(entityAdapter._ownerGroup))) {
-					// if the user was just assigned to a new group, it might it is not yet on the user facade,
-					// we can't decrypt the instance in that case.
-					const migratedEntity = await this.cryptoFacade.applyMigrations(typeRef, entityAdapter)
-					if (migratedEntity._ownerEncSessionKey) {
-						const sessionKey = await this.cryptoFacade.resolveSessionKey(migratedEntity)
-						const parsedInstance = await this.instancePipeline.cryptoMapper.decryptParsedInstance(
-							serverTypeModel,
-							encryptedParsedInstance,
-							sessionKey,
-						)
-						if (!hasError(parsedInstance)) {
-							// we do not want to process the instance if there are _errors (when decrypting)
-							return parsedInstance
-						}
-					}
+				const migratedEntity = await this.cryptoFacade.applyMigrations(typeRef, entityAdapter)
+				const sessionKey = await this.cryptoFacade.resolveSessionKey(migratedEntity)
+				const parsedInstance = await this.instancePipeline.cryptoMapper.decryptParsedInstance(serverTypeModel, encryptedParsedInstance, sessionKey)
+				if (!hasError(parsedInstance)) {
+					// we do not want to process the instance if there are _errors (when decrypting)
+					return parsedInstance
+				} else {
 					return null
 				}
 			} catch (e) {
@@ -526,7 +510,7 @@ export class EventBusClient {
 			// If the cache is clean then this is a clean cache (either ephemeral after first connect or persistent with empty DB).
 			// We need to record the time even if we don't process anything to later know if we are out of sync or not.
 			await this.cache.recordSyncTime()
-			this.syncTracker.markSyncAsDone()
+			this.listener.onSyncDone()
 		}
 	}
 
@@ -579,7 +563,6 @@ export class EventBusClient {
 		let totalExpectedBatches = 0
 		for (const batch of timeSortedEventBatches) {
 			const updates = await promiseMap(batch.events, async (event) => {
-				// const instance = await this.getInstanceFromEntityEvent(event)
 				return entityUpdateToUpdateData(this.typeModelResolver, event)
 			})
 			const batchWasAddedToQueue = this.addBatch(getElementId(batch), getListId(batch), updates, eventQueue)
@@ -605,7 +588,7 @@ export class EventBusClient {
 		// We don't have any missing update, we can just set the sync as finished
 		if (totalExpectedBatches === 0) {
 			this.eventQueue.getProgressMonitor()?.completed()
-			this.syncTracker.markSyncAsDone()
+			this.listener.onSyncDone()
 		} else {
 			// preload entity updates
 			await this.eventInstancePrefetcher.preloadEntities(allEventsFlatMap, progressMonitor)
@@ -633,7 +616,6 @@ export class EventBusClient {
 		// We try to detect whether event batches have already expired.
 		// If this happened we don't need to download anything, we need to purge the cache and start all over.
 		if (await this.cache.isOutOfSync()) {
-			this.syncTracker.markSyncAsDone()
 			// We handle it where we initialize the connection and purge the cache there.
 			throw new OutOfSyncError("some missed EntityEventBatches cannot be loaded any more")
 		}
@@ -661,7 +643,7 @@ export class EventBusClient {
 		}
 	}
 
-	private async terminate(): Promise<void> {
+	private terminate() {
 		this.state = EventBusState.Terminated
 
 		this.reset()
@@ -740,7 +722,7 @@ export class EventBusClient {
 			if (batch.batchId === this.lastInitialEventBatch) {
 				console.log("Reached final event, sync is done")
 				this.eventQueue.getProgressMonitor()?.completed()
-				this.syncTracker.markSyncAsDone()
+				this.listener.onSyncDone()
 			}
 		} catch (e) {
 			if (e instanceof ServiceUnavailableError) {

@@ -34,6 +34,7 @@ import { MoreInfoLink } from "../../misc/news/MoreInfoLink.js"
 import { AppLockMethod } from "../../native/common/generatedipc/AppLockMethod.js"
 import { MobileSystemFacade } from "../../native/common/generatedipc/MobileSystemFacade.js"
 import { UpdatableSettingsViewer } from "../Interfaces.js"
+import { UserController } from "../../api/main/UserController"
 
 assertMainOrNode()
 
@@ -86,6 +87,7 @@ export class LoginSettingsViewer implements UpdatableSettingsViewer {
 			size: ButtonSize.Compact,
 		}
 		const passwordAttrs: TextFieldAttrs = {
+			id: "password",
 			label: "password_label",
 			value: this._stars(),
 			oninput: this._stars,
@@ -113,6 +115,7 @@ export class LoginSettingsViewer implements UpdatableSettingsViewer {
 			showDropdown: () => true,
 		})
 		const recoveryCodeFieldAttrs: TextFieldAttrs = {
+			id: "recoverycode",
 			label: "recoveryCode_label",
 			helpLabel: () => {
 				return ifAllowedTutaLinks(locator.logins, InfoLink.RecoverCode, (link) => [m(MoreInfoLink, { link: link })])
@@ -140,8 +143,11 @@ export class LoginSettingsViewer implements UpdatableSettingsViewer {
 				},
 			],
 			selectedValue: locator.logins.getUserController().userSettingsGroupRoot.usageDataOptedIn,
-			selectionChangedHandler: (v) => {
-				this._usageTestModel.setOptInDecision(assertNotNull(v))
+			selectionChangedHandler: async (hasOptedIn) => {
+				if (hasOptedIn === true && !(await Dialog.confirm("ageConfirmationLong_msg", "paymentDataValidation_action"))) {
+					return
+				}
+				await this._usageTestModel.setOptInDecision(assertNotNull(hasOptedIn))
 			},
 			helpLabel: () => {
 				return ifAllowedTutaLinks(locator.logins, InfoLink.Usage, (link) => [
@@ -156,19 +162,19 @@ export class LoginSettingsViewer implements UpdatableSettingsViewer {
 		if (locator.logins.isUserLoggedIn()) {
 			const user = locator.logins.getUserController()
 			return m("", [
-				m("#user-settings.fill-absolute.scroll.plr-l.pb-xl", [
-					m(".h4.mt-l", lang.get("loginCredentials_label")),
-					this.renderName(user.userGroupInfo),
+				m("#user-settings.fill-absolute.scroll.plr-24.pb-48", [
+					m("#logincredentials.h4.mt-32", lang.get("loginCredentials_label")),
+					this.renderName(user),
 					m(TextField, mailAddressAttrs),
 					m(TextField, passwordAttrs),
 					user.isGlobalAdmin() ? m(TextField, recoveryCodeFieldAttrs) : null,
 					this.renderAppLockField(),
-					m(this._secondFactorsForm),
-					m(".h4.mt-l", lang.get("activeSessions_label")),
+					m("#2fa", m(this._secondFactorsForm)),
+					m("#activesessions.h4.mt-32", lang.get("activeSessions_label")),
 					this._renderActiveSessions(),
 					m(".small", lang.get("sessionsInfo_msg")),
-					m(".flex-space-between.items-center.mt-l.mb-s", [
-						m(".h4", lang.get("closedSessions_label")),
+					m(".flex-space-between.items-center.mt-32.mb-8", [
+						m("#closedsessions.h4", lang.get("closedSessions_label")),
 						m(ExpanderButton, {
 							label: "show_action",
 							expanded: this._closedSessionsExpanded(),
@@ -187,7 +193,7 @@ export class LoginSettingsViewer implements UpdatableSettingsViewer {
 					m(".small", lang.get("sessionsInfo_msg")),
 					this._usageTestModel.isCustomerOptedOut()
 						? null
-						: m("", [m(".h4.mt-l", lang.get("usageData_label")), m(DropDownSelector, usageDataOptInAttrs)]),
+						: m("#usagedata", [m(".h4.mt-32", lang.get("usageData_label")), m(DropDownSelector, usageDataOptInAttrs)]),
 				]),
 			])
 		} else {
@@ -195,18 +201,26 @@ export class LoginSettingsViewer implements UpdatableSettingsViewer {
 		}
 	}
 
-	private renderName(groupInfo: GroupInfo): Children {
+	private renderName(user: UserController): Children {
+		const groupInfo = user.userGroupInfo
+		const isAdmin = user.isGlobalAdmin()
+
 		return m(TextField, {
+			id: "name",
 			label: "name_label",
 			value: groupInfo.name,
 			isReadOnly: true,
+
+			// Users cannot mutate their own GroupInfo unless they're an admin; hide the edit button in case they can't
 			injectionsRight: () =>
-				m(IconButton, {
-					title: "edit_action",
-					click: () => this.onChangeName(groupInfo),
-					icon: Icons.Edit,
-					size: ButtonSize.Compact,
-				}),
+				isAdmin
+					? m(IconButton, {
+							title: "edit_action",
+							click: () => this.onChangeName(groupInfo),
+							icon: Icons.Edit,
+							size: ButtonSize.Compact,
+						})
+					: undefined,
 		})
 	}
 
@@ -235,6 +249,7 @@ export class LoginSettingsViewer implements UpdatableSettingsViewer {
 				await this.updateAppLockData()
 			}
 			return m(TextField, {
+				id: "unlockmethod",
 				label: "credentialsEncryptionMode_label",
 				value: this.appLockMethodName(this.appLockMethod ?? AppLockMethod.None),
 				isReadOnly: true,
@@ -249,6 +264,7 @@ export class LoginSettingsViewer implements UpdatableSettingsViewer {
 			const usedMode = this.credentialEncryptionMode ?? CredentialEncryptionMode.DEVICE_LOCK
 
 			return m(TextField, {
+				id: "unlockmethod",
 				label: "credentialsEncryptionMode_label",
 				value: this.credentialsEncryptionModeName(usedMode),
 				isReadOnly: true,

@@ -1,7 +1,8 @@
-import { Mail } from "../../../entities/tutanota/TypeRefs"
-import { lazyAsync } from "@tutao/tutanota-utils"
+import { Mail, MailDetailsBlobTypeRef } from "../../../entities/tutanota/TypeRefs"
+import { assertNotNull, lazy, lazyAsync } from "@tutao/tutanota-utils"
 import { MailIndexer } from "../../../../../mail-app/workerUtils/index/MailIndexer"
 import { CustomCacheHandler } from "./CustomCacheHandler"
+import { OfflineStoragePersistence } from "../../../../../mail-app/workerUtils/index/OfflineStoragePersistence"
 
 /**
  * Handles telling the indexer to index or un-index mail data on updates.

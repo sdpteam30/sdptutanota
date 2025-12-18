@@ -80,9 +80,6 @@ import("../mail-app/translations/en.js")
 
 		initCommonLocator(calendarLocator)
 
-		const { setupNavShortcuts } = await import("../common/misc/NavShortcuts.js")
-		setupNavShortcuts()
-
 		// this needs to stay after client.init
 		windowFacade.init(calendarLocator.logins, calendarLocator.connectivityModel, null)
 		if (isDesktop()) {
@@ -128,6 +125,7 @@ import("../mail-app/translations/en.js")
 						calendarLocator.cacheStorage,
 						calendarLocator.logins,
 						null,
+						calendarLocator.syncTracker,
 					),
 			)
 		}
@@ -282,11 +280,9 @@ import("../mail-app/translations/en.js")
 					// onmatch of the login view is called after the popstate handler, but before any asynchronous operations went ahead.
 					// duplicating the history entry allows us to keep the arguments for a single back button press and run our own code to handle it
 					m.route.set("/login", {
-						noAutoLogin: true,
 						keepSession: true,
 					})
 					m.route.set("/login", {
-						noAutoLogin: true,
 						keepSession: true,
 					})
 					return null
@@ -297,7 +293,6 @@ import("../mail-app/translations/en.js")
 					const { showGiftCardDialog } = await import("../common/misc/LoginUtils.js")
 					showGiftCardDialog(location.hash)
 					m.route.set("/login", {
-						noAutoLogin: true,
 						keepSession: true,
 					})
 					return null
@@ -333,7 +328,13 @@ import("../mail-app/translations/en.js")
 				},
 				calendarLocator.logins,
 			),
-			webauthnmobile: makeViewResolver<MobileWebauthnAttrs, MobileWebauthnView, { browserWebauthn: BrowserWebauthn }>(
+			webauthnmobile: makeViewResolver<
+				MobileWebauthnAttrs,
+				MobileWebauthnView,
+				{
+					browserWebauthn: BrowserWebauthn
+				}
+			>(
 				{
 					prepareRoute: async () => {
 						const { MobileWebauthnView } = await import("../common/login/MobileWebauthnView.js")

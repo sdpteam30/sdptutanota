@@ -3,7 +3,7 @@ import stream from "mithril/stream"
 import { Dialog, DialogType } from "../../gui/base/Dialog"
 import type { TableLineAttrs } from "../../gui/base/Table.js"
 import { ColumnWidth, Table } from "../../gui/base/Table.js"
-import { assert, assertNotNull, downcast, findAndRemove, neverNull, remove } from "@tutao/tutanota-utils"
+import { assert, assertNotNull, contains, downcast, findAndRemove, neverNull, remove } from "@tutao/tutanota-utils"
 import { Icons } from "../../gui/base/icons/Icons"
 import { lang } from "../../misc/LanguageViewModel"
 import { ButtonType } from "../../gui/base/Button.js"
@@ -22,12 +22,13 @@ import { showUserError } from "../../misc/ErrorHandlerImpl"
 import { getConfirmation } from "../../gui/base/GuiUtils"
 import type { GroupSharingTexts } from "../GroupGuiUtils"
 import { getTextsForGroupType } from "../GroupGuiUtils"
-import { ResolvableRecipient, ResolveMode } from "../../api/main/RecipientsModel"
+import { ResolvableRecipient } from "../../api/main/RecipientsModel"
 import { MailRecipientsTextField } from "../../gui/MailRecipientsTextField.js"
 import { cleanMailAddress, findRecipientWithAddress } from "../../api/common/utils/CommonCalendarUtils.js"
 import { showPlanUpgradeRequiredDialog } from "../../misc/SubscriptionDialogs.js"
 import { getMailAddressDisplayText } from "../../mailFunctionality/SharedMailUtils.js"
 import { IconButtonAttrs } from "../../gui/base/IconButton.js"
+import { KeyVerificationMismatchError } from "../../api/common/error/KeyVerificationMismatchError"
 
 export async function showGroupSharingDialog(groupInfo: GroupInfo, allowGroupNameOverride: boolean) {
 	const groupType = downcast(assertNotNull(groupInfo.groupType))
@@ -45,6 +46,7 @@ export async function showGroupSharingDialog(groupInfo: GroupInfo, allowGroupNam
 			locator.shareFacade,
 			locator.groupManagementFacade,
 			recipientsModel,
+			locator.groupSettingsModel,
 		),
 	).then((model) => {
 		model.onEntityUpdate.map(m.redraw.bind(m))
@@ -74,13 +76,23 @@ type GroupSharingDialogAttrs = {
 
 class GroupSharingDialogContent implements Component<GroupSharingDialogAttrs> {
 	view(vnode: Vnode<GroupSharingDialogAttrs>): Children {
-		const { model, allowGroupNameOverride, texts, dialog } = vnode.attrs
-		const groupName = getSharedGroupName(model.info, model.logins.getUserController(), allowGroupNameOverride)
-		return m(".flex.col.pt-s", [
+		const { model, texts, dialog } = vnode.attrs
+		return m(".flex.col.pt-8", [
 			m(Table, {
-				columnHeading: [lang.makeTranslation("column_heading", texts.participantsLabel(groupName))],
+				columnHeading: [
+					{
+						label: lang.makeTranslation("column_heading", texts.participantsLabel(model.groupNameData.name)),
+						//Only show help text if the shared name is different from the local name
+						helpText:
+							model.groupNameData.kind === "shared" && model.groupNameData.customName
+								? lang.makeTranslation("column_heading", texts.yourCustomNameLabel(model.groupNameData.customName))
+								: undefined,
+					},
+				],
 				columnWidths: [ColumnWidth.Largest, ColumnWidth.Largest],
-				lines: this._renderMemberInfos(model, texts, groupName, dialog).concat(this._renderGroupInvitations(model, texts, groupName)),
+				lines: this._renderMemberInfos(model, texts, model.groupNameData.name, dialog).concat(
+					this._renderGroupInvitations(model, texts, model.groupNameData.name),
+				),
 				showActionButtonColumn: true,
 				addButtonAttrs: hasCapabilityOnGroup(locator.logins.getUserController().user, model.group, ShareCapability.Invite)
 					? {
@@ -159,8 +171,8 @@ async function showAddParticipantDialog(model: GroupSharingModel, texts: GroupSh
 	const recipientsText = stream("")
 	const recipients = [] as Array<ResolvableRecipient>
 	const capability = stream<ShareCapability>(ShareCapability.Read)
-	const realGroupName = getSharedGroupName(model.info, locator.logins.getUserController(), false)
-	const customGroupName = getSharedGroupName(model.info, locator.logins.getUserController(), true)
+	const realGroupName = getSharedGroupName(model.info, locator.logins.getUserController().userSettingsGroupRoot, false)
+	const customGroupName = getSharedGroupName(model.info, locator.logins.getUserController().userSettingsGroupRoot, true)
 
 	const search = await locator.recipientsSearchModel()
 	const recipientsModel = await locator.recipientsModel()
@@ -194,7 +206,15 @@ async function showAddParticipantDialog(model: GroupSharingModel, texts: GroupSh
 						},
 					],
 					onRecipientAdded: (address, name, contact) =>
-						recipients.push(recipientsModel.resolve({ address, name, contact }, ResolveMode.Eager).whenResolved(() => m.redraw())),
+						recipients.push(
+							recipientsModel
+								.initialize({
+									address,
+									name,
+									contact,
+								})
+								.whenResolved(() => m.redraw()),
+						),
 					onRecipientRemoved: (address) =>
 						findAndRemove(recipients, (recipient) => cleanMailAddress(recipient.address) === cleanMailAddress(address)),
 					onTextChanged: recipientsText,
@@ -230,7 +250,7 @@ async function showAddParticipantDialog(model: GroupSharingModel, texts: GroupSh
 					return m("", customGroupName === realGroupName ? null : texts.yourCustomNameLabel(customGroupName))
 				},
 			}),
-			m(".pt", texts.addMemberMessage(customGroupName || realGroupName)),
+			m(".pt-16", texts.addMemberMessage(customGroupName || realGroupName)),
 		],
 		okAction: async () => {
 			if (recipients.length === 0) {
@@ -247,9 +267,23 @@ async function showAddParticipantDialog(model: GroupSharingModel, texts: GroupSh
 					dialog.close()
 					await sendShareNotificationEmail(model.info, invitedMailAddresses, texts)
 				} catch (e) {
-					if (e instanceof PreconditionFailedError) {
+					if (e instanceof KeyVerificationMismatchError) {
+						const failedRecipients: ResolvableRecipient[] = []
+
+						// Mark all recipients that have a KeyVerificationMismatch after hitting "Send"
+						for (const recipient of recipients) {
+							if (contains(e.data, recipient.address)) {
+								await recipient.markAsKeyVerificationMismatch()
+								failedRecipients.push(recipient)
+							}
+						}
+
+						await import("../../settings/keymanagement/KeyVerificationRecoveryDialog.js").then(
+							({ showMultiRecipientsKeyVerificationRecoveryDialog }) => showMultiRecipientsKeyVerificationRecoveryDialog(failedRecipients),
+						)
+					} else if (e instanceof PreconditionFailedError) {
 						if (locator.logins.getUserController().isGlobalAdmin()) {
-							const { getAvailablePlansWithSharing } = await import("../../subscription/SubscriptionUtils.js")
+							const { getAvailablePlansWithSharing } = await import("../../subscription/utils/SubscriptionUtils.js")
 							const plans = await getAvailablePlansWithSharing()
 							await showPlanUpgradeRequiredDialog(plans)
 						} else {

@@ -7,12 +7,11 @@ import type { MaybeTranslation, TranslationKey } from "../../misc/LanguageViewMo
 import { lang } from "../../misc/LanguageViewModel"
 import type { Shortcut } from "../../misc/KeyManager"
 import { focusNext, focusPrevious, keyManager } from "../../misc/KeyManager"
-import { getElevatedBackground } from "../theme"
+import { getElevatedBackground, theme, ThemeId } from "../theme"
 import { px, size } from "../size"
 import { HabReminderImage } from "./icons/Icons"
 import { windowFacade } from "../../misc/WindowFacade"
-import type { ButtonAttrs } from "./Button.js"
-import { Button, ButtonType } from "./Button.js"
+import { Button, ButtonAttrs, ButtonColor, ButtonType } from "./Button.js"
 import type { DialogHeaderBarAttrs } from "./DialogHeaderBar"
 import { DialogHeaderBar } from "./DialogHeaderBar"
 import { TextField, TextFieldType } from "./TextField.js"
@@ -21,14 +20,13 @@ import { DropDownSelector } from "./DropDownSelector.js"
 import { DEFAULT_ERROR, Keys, TabIndex } from "../../api/common/TutanotaConstants"
 import { AriaWindow } from "../AriaUtils"
 import { styles } from "../styles"
-import { $Promisable, assertNotNull, getAsLazy, identity, lazy, mapLazily, MaybeLazy, noOp, Thunk } from "@tutao/tutanota-utils"
+import { $Promisable, assertNotNull, getAsLazy, identity, lazy, mapLazily, MaybeLazy, newPromise, noOp, Thunk } from "@tutao/tutanota-utils"
 import type { DialogInjectionRightAttrs } from "./DialogInjectionRight"
 import { DialogInjectionRight } from "./DialogInjectionRight"
 import { assertMainOrNode } from "../../api/common/Env"
 import { isOfflineError } from "../../api/common/utils/ErrorUtils.js"
 import Stream from "mithril/stream"
 import { client } from "../../misc/ClientDetector"
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 assertMainOrNode()
 export const INPUT = "input, textarea, div[contenteditable='true']"
@@ -112,7 +110,7 @@ export class Dialog implements ModalComponent {
 		]
 
 		this.view = (): Children => {
-			const marginPx = px(size.hpad)
+			const marginPx = px(size.spacing_12)
 			const isEditLarge = dialogType === DialogType.EditLarge
 			const sidesMargin = styles.isSingleColumnLayout() && isEditLarge ? "4px" : marginPx
 			return m(
@@ -248,18 +246,18 @@ export class Dialog implements ModalComponent {
 	}
 
 	private getDialogStyle(dialogType: DialogType): string {
-		let dialogStyle = ".dialog.elevated-bg.flex-grow.border-radius-top"
+		let dialogStyle = ".dialog.elevated-bg.flex-grow.border-radius-top-8"
 
 		if (dialogType === DialogType.Progress) {
-			dialogStyle += ".dialog-width-s.dialog-progress.border-radius-bottom"
+			dialogStyle += ".dialog-width-s.dialog-progress.border-radius-bottom-8"
 		} else if (dialogType === DialogType.Alert) {
-			dialogStyle += ".dialog-width-alert.pt.border-radius-bottom"
+			dialogStyle += ".dialog-width-alert.pt-16.border-radius-bottom-8"
 		} else if (dialogType === DialogType.Reminder) {
-			dialogStyle += ".dialog-width-m.pt.flex.flex-column.border-radius-bottom"
+			dialogStyle += ".dialog-width-m.pt-16.flex.flex-column.border-radius-bottom-8"
 		} else if (dialogType === DialogType.EditSmall) {
-			dialogStyle += ".dialog-width-s.flex.flex-column.border-radius-bottom"
+			dialogStyle += ".dialog-width-s.flex.flex-column.border-radius-bottom-8"
 		} else if (dialogType === DialogType.EditMedium) {
-			dialogStyle += ".dialog-width-m.border-radius-bottom"
+			dialogStyle += ".dialog-width-m.border-radius-bottom-8"
 		} else if (dialogType === DialogType.EditLarge || dialogType === DialogType.EditLarger) {
 			dialogStyle += ".dialog-width-l"
 		}
@@ -382,7 +380,7 @@ export class Dialog implements ModalComponent {
 						{
 							"data-testid": testId,
 						},
-						[lines.map((line) => m(".text-break.selectable", line)), typeof infoToAppend === "function" ? infoToAppend() : null],
+						[m(".text-break.selectable", lines.join("\n")), typeof infoToAppend === "function" ? infoToAppend() : null],
 					),
 					m(".flex-center.dialog-buttons", m(Button, buttonAttrs)),
 				],
@@ -436,7 +434,7 @@ export class Dialog implements ModalComponent {
 			dialog = new Dialog(DialogType.Alert, {
 				view: () =>
 					m("", [
-						m(".dialog-contentButtonsBottom.text-break", [m(Button, downloadButtonAttrs), m(".pt", lang.get("saveDownloadNotPossibleIos_msg"))]),
+						m(".dialog-contentButtonsBottom.text-break", [m(Button, downloadButtonAttrs), m(".pt-16", lang.get("saveDownloadNotPossibleIos_msg"))]),
 						m(".flex-center.dialog-buttons", m(Button, closeButtonAttrs)),
 					]),
 			})
@@ -516,7 +514,7 @@ export class Dialog implements ModalComponent {
 					? null
 					: m(
 							".flex-center.dialog-buttons",
-							buttons.map((a) => m(Button, a)),
+							buttons.map((a) => m(Button, { colors: ButtonColor.Dialog, ...a })),
 						),
 			],
 		})
@@ -560,6 +558,36 @@ export class Dialog implements ModalComponent {
 	}
 
 	/**
+	 * show a dialog with several buttons on the bottom and return the option that was selected.
+	 *
+	 * @return the choice the user made or null if the user escaped without selecting anything
+	 */
+	static choiceCancellable<T>(
+		message: MaybeTranslation,
+		choices: Array<{
+			text: MaybeTranslation
+			value: T
+		}>,
+	): Promise<T | null> {
+		return newPromise((resolve) => {
+			let selection: T | null = null
+			const choose = (choice: T) => {
+				selection = choice
+				dialog.onClose()
+			}
+
+			const buttonAttrs = choices.map((choice) => {
+				return {
+					label: choice.text,
+					click: () => choose(choice.value),
+					type: ButtonType.Secondary,
+				}
+			})
+			const dialog = Dialog.confirmMultiple(message, buttonAttrs, () => resolve(selection))
+		})
+	}
+
+	/**
 	 * Shows a (not-cancellable) multiple-choice dialog.
 	 * @returns the selected option.
 	 */
@@ -592,7 +620,7 @@ export class Dialog implements ModalComponent {
 
 			const dialog = new Dialog(DialogType.Alert, {
 				view: () =>
-					m(".flex.flex-column.pl-l.pr-l.pb-s", [
+					m(".flex.flex-column.pl-24.pr-24.pb-8", [
 						m("#dialog-message.dialog-max-height.text-break.text-prewrap.selectable.scroll", getContent()),
 						buttonAttrs.length === 0
 							? null
@@ -660,7 +688,7 @@ export class Dialog implements ModalComponent {
 				middle: lang.makeTranslation("title", title()),
 			}
 			saveDialog = new Dialog(DialogType.EditMedium, {
-				view: () => m("", [m(DialogHeaderBar, actionBarAttrs), m(".plr-l.pb.text-break", m(child))]),
+				view: () => m("", [m(DialogHeaderBar, actionBarAttrs), m(".plr-24.pb-16.text-break", m(child))]),
 			})
 				.setCloseHandler(closeAction)
 				.show()
@@ -681,13 +709,13 @@ export class Dialog implements ModalComponent {
 			dialog = new Dialog(DialogType.EditMedium, {
 				view: () =>
 					m(
-						".plr-l",
+						".plr-24",
 						m(ImageWithOptionsDialog, {
 							image: `${window.tutao.appState.prefixWithoutFile}/images/update/update_needed_illu_${
 								client.isCalendarApp() ? "calendar" : "mail"
 							}.svg`,
 							titleText: "updateNeeded_msg",
-							messageText: "outdatedClient_msg",
+							messageText: allowDefer ? "updateFound_label" : "outdatedClient_msg",
 							mainActionText: "update_action",
 							mainActionClick: () => {
 								updateConfirm()
@@ -753,10 +781,10 @@ export class Dialog implements ModalComponent {
 		return new Dialog(DialogType.Reminder, {
 			view: () => [
 				m(".dialog-contentButtonsBottom.text-break.scroll", [
-					m(".h2.pb", title),
+					m(".h2.pb-16", title),
 					m(".flex-direction-change.items-center", [
-						m("#dialog-message.pb.selectable", typeof message === "function" ? message() : message),
-						m("img.dialog-img.mb.bg-white.border-radius", {
+						m("#dialog-message.pb-16.selectable", typeof message === "function" ? message() : message),
+						m("img.dialog-img.mb-16.bg-white.border-radius", {
 							style: {
 								"min-width": "150px",
 							},
@@ -769,6 +797,37 @@ export class Dialog implements ModalComponent {
 					buttonAttrs.map((a) => m(Button, a)),
 				),
 			],
+		})
+	}
+
+	static async showUnsubscribeFinishedDialog(success: boolean): Promise<void> {
+		const { ImageWithOptionsDialog } = await import("../dialogs/ImageWithOptionsDialog")
+		return newPromise((resolve) => {
+			let dialog: Dialog
+
+			const closeAction = () => {
+				dialog.close()
+				setTimeout(() => resolve(), DefaultAnimationTime)
+			}
+
+			dialog = new Dialog(DialogType.EditMedium, {
+				view: () =>
+					m(
+						".plr-48",
+						m(ImageWithOptionsDialog, {
+							image: `${window.tutao.appState.prefixWithoutFile}/images/newsletter-unsubscribe/unsubscribe_${success ? "success" : "failure"}_${getUnsubscribeImageSuffix(theme.themeId)}.svg`,
+							titleText: success ? "unsubscribeSuccessful_title" : "unsubscribeFailed_title",
+							messageText: success ? "unsubscribeSuccessful_msg" : "unsubscribeFailed_msg",
+							mainActionText: "ok_action",
+							mainActionClick: () => {
+								closeAction()
+							},
+							subActionText: null,
+							subActionClick: () => {},
+						}),
+					),
+			})
+			dialog.show()
 		})
 	}
 
@@ -801,10 +860,11 @@ export class Dialog implements ModalComponent {
 		)
 
 		const doCancel = () => {
+			if (!allowCancel) return
+
 			if (cancelAction) {
 				cancelAction(dialog)
 			}
-
 			dialog.close()
 		}
 
@@ -859,7 +919,7 @@ export class Dialog implements ModalComponent {
 		dialog = new Dialog(type, {
 			view: () => [
 				m(DialogHeaderBar, actionBarAttrs),
-				m(".dialog-max-height.plr-l.pb.text-break.scroll", ["function" === typeof child ? child() : m(child)]),
+				m(".dialog-max-height.plr-24.pb-16.text-break.scroll", ["function" === typeof child ? child() : m(child)]),
 			],
 		}).setCloseHandler(doCancel)
 		dialog.addShortcut({
@@ -1007,7 +1067,7 @@ export class Dialog implements ModalComponent {
 	static largeDialog(headerBarAttrs: DialogHeaderBarAttrs, child: Component): Dialog {
 		return new Dialog(DialogType.EditLarge, {
 			view: () => {
-				return m("", [m(DialogHeaderBar, headerBarAttrs), m(".dialog-container.scroll", m(".fill-absolute.plr-l", m(child)))])
+				return m("", [m(DialogHeaderBar, headerBarAttrs), m(".dialog-container.scroll", m(".fill-absolute.plr-24", m(child)))])
 			},
 		})
 	}
@@ -1019,7 +1079,7 @@ export class Dialog implements ModalComponent {
 					/** fixed-height header with a title, left and right buttons that's fixed to the top of the dialog's area */
 					headerBarAttrs.noHeader ? null : m(DialogHeaderBar, headerBarAttrs),
 					/** variable-size child container that may be scrollable. */
-					m(".dialog-container.scroll.hide-outline", m(".fill-absolute.plr-l", m(child, childAttrs))),
+					m(".dialog-container.scroll.hide-outline", m(".fill-absolute.plr-24", m(child, childAttrs))),
 				]),
 		})
 	}
@@ -1036,7 +1096,7 @@ export class Dialog implements ModalComponent {
 					/** fixed-height header with a title, left and right buttons that's fixed to the top of the dialog's area */
 					headerBarAttrs.noHeader ? null : m(DialogHeaderBar, headerBarAttrs),
 					/** variable-size child container that may be scrollable. */
-					m(".scroll.hide-outline.plr-l.flex-grow", { style: { "overflow-x": "hidden" } }, m(child, childAttrs)),
+					m(".scroll.hide-outline.plr-24.flex-grow", { style: { "overflow-x": "hidden" } }, m(child, childAttrs)),
 				]),
 		})
 	}
@@ -1047,7 +1107,7 @@ export class Dialog implements ModalComponent {
 				/** fixed-height header with a title, left and right buttons that's fixed to the top of the dialog's area */
 				headerBarAttrs.noHeader ? null : m(DialogHeaderBar, headerBarAttrs),
 				/** variable-size child container that may be scrollable. */
-				m(".scroll.hide-outline.plr-l", child()),
+				m(".scroll.hide-outline.plr-24", child()),
 			],
 		})
 	}
@@ -1090,3 +1150,18 @@ export class Dialog implements ModalComponent {
 
 export type stringValidator = (arg0: string) => (TranslationKey | null) | Promise<TranslationKey | null>
 windowFacade.addKeyboardSizeListener(Dialog.onKeyboardSizeChanged)
+
+function getUnsubscribeImageSuffix(themeId: string): ThemeId {
+	switch (themeId) {
+		case "light":
+			return "light"
+		case "dark":
+			return "dark"
+		case "light_secondary":
+			return "light_secondary"
+		case "dark_secondary":
+			return "dark_secondary"
+		default:
+			return "light"
+	}
+}

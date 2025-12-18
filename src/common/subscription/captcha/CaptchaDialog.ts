@@ -1,4 +1,4 @@
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils.js"
+import { newPromise, uint8ArrayToBase64 } from "@tutao/tutanota-utils"
 import { Dialog, DialogType } from "../../gui/base/Dialog.js"
 import { locator } from "../../api/main/CommonLocator.js"
 import { RegistrationCaptchaService } from "../../api/entities/sys/Services.js"
@@ -6,11 +6,9 @@ import { CaptchaChallenge, createRegistrationCaptchaServiceData } from "../../ap
 import { DialogHeaderBar, DialogHeaderBarAttrs } from "../../gui/base/DialogHeaderBar.js"
 import { Button, ButtonAttrs, ButtonType } from "../../gui/base/Button.js"
 import m, { Children } from "mithril"
-import { theme } from "../../gui/theme.js"
-import { getColorLuminance, isMonochrome } from "../../gui/base/Color.js"
 import { TextField } from "../../gui/base/TextField.js"
 import { lang } from "../../misc/LanguageViewModel.js"
-import { uint8ArrayToBase64 } from "@tutao/tutanota-utils"
+import { px } from "../../gui/size"
 
 const enum CaptchaType {
 	Visual,
@@ -141,37 +139,27 @@ export function showCaptchaDialog(audioChallenge: CaptchaChallenge, visualChalle
 		dialog = new Dialog(DialogType.EditSmall, {
 			view: () => renderDialogContent(actionBarAttrs, viewModel),
 		})
-			.setCloseHandler(cancelAction)
-			.show()
+		dialog.setFocusOnLoadFunction(() => {})
+		dialog.setCloseHandler(cancelAction).show()
 	})
 }
 
 function renderVisualCaptcha(viewModel: CaptchaDialogViewModel) {
-	// The captcha is black-on-white, which will not look correct on anything where the background is not
-	// white. We can use CSS filters to fix this.
-	let captchaFilter = {}
-	if (theme.elevated_bg != null && isMonochrome(theme.elevated_bg)) {
-		captchaFilter = {
-			filter: `invert(${1.0 - getColorLuminance(theme.elevated_bg)}`,
-		}
-	}
-
 	return m(
 		".flex-grow",
 
 		[
 			m("", viewModel.visualCaptchaDescription),
-			m("img.pt-ml.center-h.block", {
+			m("img.pt-24.center-h.block.full-width", {
 				src: viewModel.getVisualData(),
 				alt: lang.get("captchaDisplay_label"),
-				style: captchaFilter,
 			}),
 		],
 	)
 }
 
 function renderAudioCaptcha(viewModel: CaptchaDialogViewModel) {
-	return m(".flex.col.flex-grow.gap-vpad-s", [
+	return m(".flex.col.flex-grow.gap-8", [
 		m("", viewModel.audioCaptchaDescription),
 		m(
 			"div.full-width.flex.col.justify-center",
@@ -187,27 +175,68 @@ function renderAudioCaptcha(viewModel: CaptchaDialogViewModel) {
 function renderDialogContent(actionBarAttrs: DialogHeaderBarAttrs, viewModel: CaptchaDialogViewModel): Children {
 	const toggleLabel = viewModel.getSelectedCaptchaType() === CaptchaType.Visual ? "tryAudioCaptcha_action" : "tryVisualCaptcha_action"
 
+	let cleanup: (() => void) | undefined
+
 	return [
 		m(DialogHeaderBar, actionBarAttrs),
 		m(
-			".pt.plr-l.pb.flex.col.column-gap.justify-center",
+			".pt-16.plr-24.pb-16.flex.col#captcha_wrapper",
 			{
-				style: { "min-height": "350px" },
+				style: {
+					flex: "1 1 auto",
+					minHeight: 0,
+					overflowY: "auto",
+					WebkitOverflowScrolling: "touch",
+				},
+				oncreate: ({ dom }) => {
+					const wrapper = dom as HTMLElement
+
+					const vv = (window as any).visualViewport as VisualViewport | undefined
+					const updateForKeyboard = () => {
+						if (!vv) return
+						const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+						wrapper.style.scrollPaddingBottom = px(kb + 24)
+					}
+					vv?.addEventListener("resize", updateForKeyboard)
+					vv?.addEventListener("scroll", updateForKeyboard)
+					updateForKeyboard()
+
+					const onFocusIn = (e: Event) => {
+						const t = e.target as HTMLElement
+						if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+							requestAnimationFrame(() => {
+								setTimeout(() => {
+									wrapper.scrollTo({ top: wrapper.scrollHeight, behavior: "smooth" })
+								}, 50)
+							})
+						}
+					}
+					wrapper.addEventListener("focusin", onFocusIn)
+
+					cleanup = () => {
+						wrapper.removeEventListener("focusin", onFocusIn)
+						vv?.removeEventListener("resize", updateForKeyboard)
+						vv?.removeEventListener("scroll", updateForKeyboard)
+					}
+				},
+				onremove: () => cleanup?.(),
 			},
-			[
+			m(".flex.col.justify-start#captcha_content", [
 				viewModel.getSelectedCaptchaType() === CaptchaType.Visual ? renderVisualCaptcha(viewModel) : renderAudioCaptcha(viewModel),
+
 				m(TextField, {
 					label: lang.makeTranslation("captcha_input", lang.get("captchaInput_label")),
 					helpLabel: () => lang.get("captchaInputInfo_msg"),
 					value: viewModel.currentInput,
 					oninput: (value) => (viewModel.currentInput = value),
 				}),
+
 				m(Button, {
 					label: toggleLabel,
 					type: ButtonType.Secondary,
-					click: (_) => viewModel.toggleCaptchaType(),
+					click: () => viewModel.toggleCaptchaType(),
 				} satisfies ButtonAttrs),
-			],
+			]),
 		),
 	]
 }

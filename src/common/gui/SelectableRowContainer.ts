@@ -1,5 +1,4 @@
 import m, { ClassComponent, Vnode } from "mithril"
-import { stateBgActive, stateBgHover } from "./builtinThemes.js"
 import { theme } from "./theme.js"
 import { styles } from "./styles.js"
 import { px, size } from "./size.js"
@@ -21,16 +20,17 @@ export class SelectableRowContainer implements ClassComponent<SelectableRowConta
 
 	view({ attrs, children }: Vnode<SelectableRowContainerAttrs>) {
 		return m(
-			".flex.mb-xs.border-radius.pt-m.pb-m.pl.pr.ml-s",
+			".flex.mb-4.border-radius.pt-12.pb-12.pl-12.pr-12.ml-8",
 			{
 				style: {
-					paddingTop: "14px",
+					paddingTop: "12px",
 					paddingBottom: "12px",
 					// this is an adjustment to keep tha columns aligned, space between columns is too big otherwise.
 					// this is an obscure place to put it and ideally should not be done here or should be passed down here.
-					marginRight: styles.isSingleColumnLayout() ? px(size.hpad_small) : "0",
+					marginRight: styles.isSingleColumnLayout() ? px(size.spacing_8) : "0",
 					transition: `background 200ms`,
 				},
+				tabindex: "0",
 				oncreate: ({ dom }) => {
 					this.dom = dom as HTMLElement
 					this.updateDomBg()
@@ -43,19 +43,19 @@ export class SelectableRowContainer implements ClassComponent<SelectableRowConta
 				// Highlight the row when it is tabbed into
 				onfocus: () => {
 					if (SelectableRowContainer.isUsingKeyboard()) {
-						this.setBackground(stateBgActive)
+						this.setBackground(theme.state_bg_active)
 					}
 				},
 				onblur: () => {
 					if (SelectableRowContainer.isUsingKeyboard()) {
 						if (this.selected && !styles.isSingleColumnLayout()) {
-							this.setBackground(stateBgHover)
+							this.setBackground(theme.state_bg_hover)
 						} else {
-							this.setBackground(theme.list_bg)
+							this.setBackground(theme.surface)
 						}
 					}
 				},
-				onpointerdown: () => this.setBackground(stateBgActive),
+				onpointerdown: () => this.setBackground(theme.state_bg_active),
 				onpointerup: this.updateDomBg,
 				onpointercancel: this.updateDomBg,
 				onpointerleave: this.updateDomBg,
@@ -77,7 +77,7 @@ export class SelectableRowContainer implements ClassComponent<SelectableRowConta
 		// In the single column view, a row may be 'selected' by the URL still linking to a specific mail
 		// So do not highlight in that case but in just multiselect mode and keyboard navigation
 		const highlight = styles.isSingleColumnLayout() ? (this.isInMultiselect || isUsingKeyboard) && this.selected : this.selected
-		this.setBackground(highlight ? stateBgHover : theme.list_bg)
+		this.setBackground(highlight ? theme.state_bg_hover : theme.surface)
 	}
 }
 
@@ -98,6 +98,11 @@ export function shouldAlwaysShowMultiselectCheckbox() {
 }
 
 // delay by 2 frames roughly so that the browser has time to do heavy stuff with layout
-export const selectableRowAnimParams: KeyframeAnimationOptions = { duration: DefaultAnimationTime, easing: "ease-in-out", fill: "forwards", delay: 36 }
+export const selectableRowAnimParams: KeyframeAnimationOptions = {
+	duration: DefaultAnimationTime,
+	easing: "ease-in-out",
+	fill: "forwards",
+	delay: 36,
+}
 export const scaleXHide = "scaleX(0)"
 export const scaleXShow = "scaleX(1)"
