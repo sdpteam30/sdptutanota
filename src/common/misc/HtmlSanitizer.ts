@@ -338,7 +338,18 @@ export class HtmlSanitizer {
 			let attribute = htmlNode.attributes.getNamedItem(attrName)
 
 			if (attribute) {
-				if (config.usePlaceholderForInlineImages && attribute.value.startsWith("cid:")) {
+				if (config.blockExternalContent && attribute.value.startsWith("cid:")) {
+					// Block inline images (cid:) when external content is blocked
+					// This prevents inline images from loading until user clicks "Show" or "Known sender"
+					this.externalContent++
+					const cid = attribute.value.substring(4)
+					this.inlineImageCids.push(cid)
+					htmlNode.setAttribute("draft-" + attribute.name, attribute.value)
+					htmlNode.setAttribute("cid", cid)
+					attribute.value = PREVENT_EXTERNAL_IMAGE_LOADING_ICON
+					htmlNode.style.maxWidth = "100px"
+					htmlNode.classList.add("tutanota-placeholder")
+				} else if (config.usePlaceholderForInlineImages && attribute.value.startsWith("cid:")) {
 					// replace embedded image with local image until the embedded image is loaded and ready to be shown.
 					const cid = attribute.value.substring(4)
 
