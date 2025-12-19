@@ -4,10 +4,10 @@ import { downcast, isSameTypeRef, TypeRef } from "@tutao/tutanota-utils"
 import { MailRow } from "../../mail/view/MailRow"
 import { ListElementListModel } from "../../../common/misc/ListElementListModel.js"
 import { List, ListAttrs, MultiselectMode, RenderConfig } from "../../../common/gui/base/List.js"
-import { size } from "../../../common/gui/size.js"
+import { component_size, size } from "../../../common/gui/size.js"
 import { KindaContactRow } from "../../contacts/view/ContactListView.js"
 import { SearchableTypes } from "./SearchViewModel.js"
-import { CalendarEvent, CalendarEventTypeRef, Contact, ContactTypeRef, Mail, MailFolder } from "../../../common/api/entities/tutanota/TypeRefs.js"
+import { CalendarEvent, CalendarEventTypeRef, Contact, ContactTypeRef, Mail, MailSet } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import ColumnEmptyMessageBox from "../../../common/gui/base/ColumnEmptyMessageBox.js"
 import { BootIcons } from "../../../common/gui/base/icons/BootIcons.js"
 import { theme } from "../../../common/gui/theme.js"
@@ -17,6 +17,8 @@ import { KindaCalendarRow } from "../../../calendar-app/calendar/gui/CalendarRow
 import { AllIcons } from "../../../common/gui/base/Icon.js"
 import type { SearchToken } from "../../../common/api/common/utils/QueryTokenUtils"
 import { shouldAlwaysShowMultiselectCheckbox } from "../../../common/gui/SelectableRowContainer"
+import { ListColumnWrapper } from "../../../common/gui/ListColumnWrapper"
+import { CalendarInfoBase } from "../../../calendar-app/calendar/model/CalendarModel"
 
 assertMainOrNode()
 
@@ -31,11 +33,12 @@ export class SearchResultListEntry {
 export interface SearchListViewAttrs {
 	listModel: ListElementListModel<SearchResultListEntry>
 	onSingleSelection: (item: SearchResultListEntry) => unknown
-	currentType: TypeRef<Mail> | TypeRef<Contact> | TypeRef<CalendarEvent>
+	currentType: TypeRef<Mail | Contact | CalendarEvent>
 	isFreeAccount: boolean
 	cancelCallback: () => unknown | null
-	getLabelsForMail: (mail: Mail) => MailFolder[]
+	getLabelsForMail: (mail: Mail) => MailSet[]
 	highlightedStrings: readonly SearchToken[]
+	availableCalendars: ReadonlyArray<CalendarInfoBase>
 }
 
 export class SearchListView implements Component<SearchListViewAttrs> {
@@ -53,42 +56,46 @@ export class SearchListView implements Component<SearchListViewAttrs> {
 		this.attrs = attrs
 		const { icon, renderConfig } = this.getRenderItems(attrs.currentType)
 
-		return attrs.listModel.isEmptyAndDone()
-			? m(ColumnEmptyMessageBox, {
-					icon,
-					message: "searchNoResults_msg",
-					color: theme.list_message_bg,
-				})
-			: m(List, {
-					state: attrs.listModel.state,
-					renderConfig,
-					onLoadMore: () => {
-						this.listModel.loadMore()
-					},
-					onRetryLoading: () => {
-						this.listModel.retryLoading()
-					},
-					onSingleSelection: (item: SearchResultListEntry) => {
-						this.listModel.onSingleSelection(item)
-						attrs.onSingleSelection(item)
-					},
-					onSingleTogglingMultiselection: (item: SearchResultListEntry) => {
-						this.listModel.onSingleInclusiveSelection(item, styles.isSingleColumnLayout())
-					},
-					onRangeSelectionTowards: (item: SearchResultListEntry) => {
-						this.listModel.selectRangeTowards(item)
-					},
-					onStopLoading: () => {
-						if (attrs.cancelCallback != null) {
-							attrs.cancelCallback()
-						}
+		return m(
+			ListColumnWrapper,
+			{ headerContent: null, class: styles.isSingleColumnLayout() ? undefined : "column-resize-margin" },
+			attrs.listModel.isEmptyAndDone()
+				? m(ColumnEmptyMessageBox, {
+						icon,
+						message: "searchNoResults_msg",
+						color: theme.on_surface_variant,
+					})
+				: m(List, {
+						state: attrs.listModel.state,
+						renderConfig,
+						onLoadMore: () => {
+							this.listModel.loadMore()
+						},
+						onRetryLoading: () => {
+							this.listModel.retryLoading()
+						},
+						onSingleSelection: (item: SearchResultListEntry) => {
+							this.listModel.onSingleSelection(item)
+							attrs.onSingleSelection(item)
+						},
+						onSingleTogglingMultiselection: (item: SearchResultListEntry) => {
+							this.listModel.onSingleInclusiveSelection(item, styles.isSingleColumnLayout())
+						},
+						onRangeSelectionTowards: (item: SearchResultListEntry) => {
+							this.listModel.selectRangeTowards(item)
+						},
+						onStopLoading: () => {
+							if (attrs.cancelCallback != null) {
+								attrs.cancelCallback()
+							}
 
-						this.listModel.stopLoading()
-					},
-				} satisfies ListAttrs<SearchResultListEntry, SearchResultListRow>)
+							this.listModel.stopLoading()
+						},
+					} satisfies ListAttrs<SearchResultListEntry, SearchResultListRow>),
+		)
 	}
 
-	private getRenderItems(type: TypeRef<Mail> | TypeRef<Contact> | TypeRef<CalendarEvent>): {
+	private getRenderItems(type: TypeRef<Mail | Contact | CalendarEvent>): {
 		icon: AllIcons
 		renderConfig: RenderConfig<SearchResultListEntry, SearchResultListRow>
 	} {
@@ -111,18 +118,20 @@ export class SearchListView implements Component<SearchListViewAttrs> {
 	}
 
 	private readonly calendarRenderConfig: RenderConfig<SearchResultListEntry, SearchResultListRow> = {
-		itemHeight: size.list_row_height,
+		itemHeight: component_size.list_row_height,
 		multiselectionAllowed: MultiselectMode.Disabled,
 		swipe: null,
 		createElement: (dom) => {
-			const row: SearchResultListRow = new SearchResultListRow(new KindaCalendarRow(dom, () => this.attrs.highlightedStrings))
+			const row: SearchResultListRow = new SearchResultListRow(
+				new KindaCalendarRow(dom, this.attrs.availableCalendars, () => this.attrs.highlightedStrings),
+			)
 			m.render(dom, row.render())
 			return row
 		},
 	}
 
 	private readonly mailRenderConfig: RenderConfig<SearchResultListEntry, SearchResultListRow> = {
-		itemHeight: size.list_row_height,
+		itemHeight: component_size.list_row_height,
 		multiselectionAllowed: MultiselectMode.Enabled,
 		swipe: null,
 		createElement: (dom) => {
@@ -140,7 +149,7 @@ export class SearchListView implements Component<SearchListViewAttrs> {
 	}
 
 	private readonly contactRenderConfig: RenderConfig<SearchResultListEntry, SearchResultListRow> = {
-		itemHeight: size.list_row_height,
+		itemHeight: component_size.list_row_height,
 		multiselectionAllowed: MultiselectMode.Enabled,
 		swipe: null,
 		createElement: (dom) => {
@@ -160,8 +169,6 @@ export class SearchListView implements Component<SearchListViewAttrs> {
 
 export class SearchResultListRow implements VirtualRow<SearchResultListEntry> {
 	top: number
-	// set from List
-	domElement: HTMLElement | null = null
 
 	// this is our own entry which we need for some reason (probably easier to deal with than a lot of sum type entries)
 	private _entity: SearchResultListEntry | null = null
@@ -177,7 +184,6 @@ export class SearchResultListRow implements VirtualRow<SearchResultListEntry> {
 	}
 
 	update(entry: SearchResultListEntry, selected: boolean, isInMultiSelect: boolean): void {
-		this._delegate.domElement = this.domElement
 		this._entity = entry
 
 		this._delegate.update(downcast(entry.entry), selected, isInMultiSelect)

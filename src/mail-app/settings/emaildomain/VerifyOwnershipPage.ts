@@ -12,7 +12,7 @@ import { downcast, isEmpty, ofClass } from "@tutao/tutanota-utils"
 import { locator } from "../../../common/api/main/CommonLocator"
 import { assertMainOrNode } from "../../../common/api/common/Env"
 import { createDnsRecordTable } from "./DnsRecordTable.js"
-import { getAvailableMatchingPlans } from "../../../common/subscription/SubscriptionUtils.js"
+import { getAvailableMatchingPlans } from "../../../common/subscription/utils/SubscriptionUtils.js"
 import { getCustomMailDomains } from "../../../common/api/common/utils/CustomerUtils.js"
 import { LoginButton } from "../../../common/gui/base/buttons/LoginButton.js"
 
@@ -39,7 +39,7 @@ export class VerifyOwnershipPage implements WizardPageN<AddDomainData> {
 	view(vnode: Vnode<WizardPageAttrs<AddDomainData>>): Children {
 		const a = vnode.attrs
 		return [
-			m("h4.mt-l.text-center", lang.get("verifyDomainOwnership_title")),
+			m("h4.mt-32.text-center", lang.get("verifyDomainOwnership_title")),
 			m(
 				"p",
 				lang.get("verifyDomainOwnershipExplanation_msg", {
@@ -49,7 +49,7 @@ export class VerifyOwnershipPage implements WizardPageN<AddDomainData> {
 			m("p", lang.get("verifyOwnershipTXTrecord_msg")),
 			createDnsRecordTable([vnode.attrs.data.expectedVerificationRecord]),
 			m(
-				".flex-center.full-width.pt-l.mb-l",
+				".flex-center.full-width.pt-32.mb-32",
 				m(LoginButton, {
 					label: "next_action",
 					class: "small-login-button",

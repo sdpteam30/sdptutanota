@@ -1,7 +1,7 @@
 import { CredentialEncryptionMode } from "../../misc/credentials/CredentialEncryptionMode.js"
 import { DesktopConfigKey } from "../config/ConfigKeys.js"
 import { Aes256Key, Argon2IDExports, generateKeyFromPassphraseArgon2id, KEY_LENGTH_BYTES_AES_256 } from "@tutao/tutanota-crypto"
-import { base64ToUint8Array, Thunk, uint8ArrayToBase64 } from "@tutao/tutanota-utils"
+import { base64ToUint8Array, newPromise, Thunk, uint8ArrayToBase64 } from "@tutao/tutanota-utils"
 import { KeyPermanentlyInvalidatedError } from "../../api/common/error/KeyPermanentlyInvalidatedError.js"
 import { CryptoError } from "@tutao/tutanota-crypto/error.js"
 import { CancelledError } from "../../api/common/error/CancelledError.js"
@@ -10,8 +10,6 @@ import { DesktopConfig } from "../config/DesktopConfig.js"
 import { CommonNativeFacade } from "../../native/common/generatedipc/CommonNativeFacade.js"
 import { LanguageViewModel } from "../../misc/LanguageViewModel.js"
 import { DesktopCredentialsMode } from "./CredentialCommons.js"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 export class AppPassHandler {
 	constructor(
@@ -36,19 +34,19 @@ export class AppPassHandler {
 	async removeAppPassWrapper(dataWithAppPassWrapper: Uint8Array, encryptionMode: DesktopCredentialsMode): Promise<Uint8Array> {
 		// our mode is not app Pass, so there is no wrapper to remove
 		if (encryptionMode !== CredentialEncryptionMode.APP_PASSWORD) return dataWithAppPassWrapper
-		const appPassKey = await this.deriveKeyFromAppPass()
-		if (appPassKey == null) throw new KeyPermanentlyInvalidatedError("can't remove app pass wrapper without salt")
 
-		try {
-			return this.crypto.aesDecryptBytes(appPassKey, dataWithAppPassWrapper)
-		} catch (e) {
-			if (e instanceof CryptoError) {
+		while (true) {
+			const appPassKey = await this.deriveKeyFromAppPass()
+			if (appPassKey == null) throw new KeyPermanentlyInvalidatedError("can't remove app pass wrapper without salt")
+
+			try {
+				return this.crypto.aesDecryptBytes(appPassKey, dataWithAppPassWrapper)
+			} catch (e) {
+				if (!(e instanceof CryptoError)) {
+					throw e
+				}
 				const nativeFacade = await this.getCurrentCommonNativeFacade()
-				//noinspection ES6MissingAwait
-				nativeFacade.showAlertDialog("invalidPassword_msg")
-				throw new CancelledError("app Pass verification failed")
-			} else {
-				throw e
+				await nativeFacade.showAlertDialog("invalidPassword_msg")
 			}
 		}
 	}

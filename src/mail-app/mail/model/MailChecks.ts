@@ -1,11 +1,11 @@
 //@bundleInto:common
 
-import { Mail, MailFolder } from "../../../common/api/entities/tutanota/TypeRefs.js"
+import { Mail, MailSet } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { MailModel } from "./MailModel.js"
 import { FolderSystem } from "../../../common/api/common/mail/FolderSystem.js"
 import { MailSetKind, SystemFolderType } from "../../../common/api/common/TutanotaConstants.js"
 
-export function isSubfolderOfType(system: FolderSystem, folder: MailFolder, type: SystemFolderType): boolean {
+export function isSubfolderOfType(system: FolderSystem, folder: MailSet, type: SystemFolderType): boolean {
 	const systemFolder = system.getSystemFolderByType(type)
 	return systemFolder != null && system.checkFolderForAncestor(folder, systemFolder._id)
 }
@@ -24,10 +24,24 @@ export async function isMailInSpamOrTrash(mail: Mail, mailModel: MailModel): Pro
 	}
 }
 
+export async function isMailInSpam(mail: Mail, mailModel: MailModel): Promise<boolean> {
+	const folders = await mailModel.getMailboxFoldersForMail(mail)
+	const mailFolder = folders?.getFolderByMail(mail)
+	if (folders && mailFolder) {
+		return isSpamFolder(folders, mailFolder)
+	} else {
+		return false
+	}
+}
+
+export function isSpamFolder(system: FolderSystem, folder: MailSet): boolean {
+	return folder.folderType === MailSetKind.SPAM || isSubfolderOfType(system, folder, MailSetKind.SPAM)
+}
+
 /**
- * Returns true if given folder is the {@link MailFolderType.SPAM} or {@link MailFolderType.TRASH} folder, or a descendant of those folders.
+ * Returns true if given folder is the {@link MailFolderType.SPAM} or {@link MailFolderType.TRASH} folder, or a descendant of those mailSets.
  */
-export function isSpamOrTrashFolder(system: FolderSystem, folder: MailFolder): boolean {
+export function isSpamOrTrashFolder(system: FolderSystem, folder: MailSet): boolean {
 	// not using isOfTypeOrSubfolderOf because checking the type first is cheaper
 	return (
 		folder.folderType === MailSetKind.TRASH ||
@@ -37,6 +51,6 @@ export function isSpamOrTrashFolder(system: FolderSystem, folder: MailFolder): b
 	)
 }
 
-export function isOfTypeOrSubfolderOf(system: FolderSystem, folder: MailFolder, type: SystemFolderType): boolean {
+export function isOfTypeOrSubfolderOf(system: FolderSystem, folder: MailSet, type: SystemFolderType): boolean {
 	return folder.folderType === type || isSubfolderOfType(system, folder, type)
 }

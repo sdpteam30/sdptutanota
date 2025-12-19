@@ -1,11 +1,11 @@
 import { styles } from "./styles"
-import { px, size } from "./size"
+import { component_size, font_size, layout_size, px, size } from "./size"
 import { client } from "../misc/ClientDetector"
 import { lang } from "../misc/LanguageViewModel"
 import { noselect, position_absolute } from "./mixins"
 import { assertMainOrNode, isAdminClient, isApp, isElectronClient } from "../api/common/Env"
-import { getContentButtonIconBackground, getElevatedBackground, getNavigationMenuBg, theme } from "./theme"
-import { goEuropeanBlue, stateBgActive, stateBgFocus, stateBgHover, stateBgLike } from "./builtinThemes.js"
+import { getElevatedBackground, getNavigationMenuBg, theme } from "./theme"
+import { goEuropeanBlue } from "./builtinThemes.js"
 import { FontIcons } from "./base/icons/FontIcons.js"
 import { DefaultAnimationTime } from "./animation/Animations.js"
 import { locator } from "../api/main/CommonLocator.js"
@@ -32,8 +32,9 @@ export function getFonts(): string {
 	return fonts.join(", ")
 }
 
-export const boxShadow = `0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23)`
-const searchBarShadow = "0px 2px 4px rgb(0, 0, 0, 0.12)"
+export const boxShadowHigh = `0 10px 20px rgba(0,0,0,0.10), 0 6px 6px rgba(0,0,0,0.10)`
+export const boxShadowMedium = "0px 0px 4px 2px rgba(0, 0, 0, 0.12)"
+export const boxShadowLow = "0px 2px 4px rgb(0, 0, 0, 0.08)"
 
 const scrollbarWidthHeight = px(18)
 styles.registerStyle("main", () => {
@@ -42,18 +43,18 @@ styles.registerStyle("main", () => {
 		"#link-tt": isElectronClient()
 			? {
 					"pointer-events": "none",
-					"font-size": px(size.font_size_small),
-					"padding-left": px(size.hpad_small),
-					"padding-right": px(size.hpad_small),
-					"padding-top": px(size.vpad_xs),
+					"font-size": px(font_size.small),
+					"padding-left": px(size.spacing_4),
+					"padding-right": px(size.spacing_4),
+					"padding-top": px(size.spacing_4),
 					position: "fixed",
-					bottom: px(size.vpad_xs),
-					left: px(size.vpad_xs),
+					bottom: px(size.spacing_4),
+					left: px(size.spacing_4),
 					"text-align": "center",
-					color: theme.content_bg,
+					color: theme.surface,
 					"text-decoration": "none",
-					"background-color": theme.content_fg,
-					border: "1px solid " + theme.content_bg,
+					"background-color": theme.on_surface,
+					border: "1px solid " + theme.surface,
 					opacity: 0,
 					transition: "opacity .1s linear",
 					"font-family": "monospace",
@@ -155,7 +156,7 @@ styles.registerStyle("main", () => {
 			position: "fixed",
 			// Fix body for iOS & Safari
 			// It is inlined to "transparent" in HTML so we have to overwrite it.
-			"background-color": `${theme.content_bg} !important`,
+			"background-color": `${theme.surface} !important`,
 		},
 		"button, textarea": {
 			padding: 0,
@@ -172,19 +173,19 @@ styles.registerStyle("main", () => {
 			overflow: "hidden",
 			// see: https://www.smashingmagazine.com/2015/11/using-system-ui-fonts-practical-guide/ and github
 			"font-family": getFonts(),
-			"font-size": px(size.font_size_base),
-			"line-height": size.line_height,
-			color: theme.content_fg,
+			"font-size": px(font_size.base),
+			"line-height": font_size.line_height,
+			color: theme.on_surface,
 			"-webkit-text-size-adjust": "none", // fix for safari browser
 		},
 		"small, .small": {
-			"font-size": px(size.font_size_small),
+			"font-size": px(font_size.small),
 		},
 		".smaller": {
-			"font-size": px(size.font_size_smaller),
+			"font-size": px(font_size.smaller),
 		},
 		".normal-font-size": {
-			"font-size": px(size.font_size_base),
+			"font-size": px(font_size.base),
 		},
 		".b": {
 			"font-weight": "bold",
@@ -232,10 +233,10 @@ styles.registerStyle("main", () => {
 			"font-weight": "normal",
 		},
 		".navigation-menu-bg": {
-			background: theme.navigation_menu_bg,
+			background: theme.surface_container_high,
 		},
 		".navigation-menu-icon-bg": {
-			background: theme.navigation_menu_icon,
+			background: theme.on_secondary,
 		},
 		".nota-bg": {
 			background: theme.tuta_color_nota,
@@ -244,7 +245,7 @@ styles.registerStyle("main", () => {
 			"border-color": theme.tuta_color_nota,
 		},
 		".border-accent": {
-			"border-color": theme.content_accent,
+			"border-color": theme.primary,
 		},
 		".border-sm": {
 			"border-style": "solid",
@@ -267,25 +268,25 @@ styles.registerStyle("main", () => {
 			"border-left-width": "2px",
 		},
 		".big": {
-			"font-size": px(size.font_size_base * 2.5),
+			"font-size": px(font_size.base * 2.5),
 		},
 		"h1, .h1": {
-			"font-size": px(size.font_size_base * 2),
+			"font-size": px(font_size.base * 2),
 		},
 		"h2, .h2": {
-			"font-size": px(size.font_size_base * 1.8),
+			"font-size": px(font_size.base * 1.8),
 		},
 		"h3, .h3": {
-			"font-size": px(size.font_size_base * 1.6),
+			"font-size": px(font_size.base * 1.6),
 		},
 		"h4, .h4": {
-			"font-size": px(size.font_size_base * 1.4),
+			"font-size": px(font_size.base * 1.4),
 		},
 		"h5, .h5": {
-			"font-size": px(size.font_size_base * 1.2),
+			"font-size": px(font_size.base * 1.2),
 		},
 		"h6, .h6": {
-			"font-size": px(size.font_size_base * 1.1),
+			"font-size": px(font_size.base * 1.1),
 		},
 		"input, button, select, textarea": {
 			"font-family": "inherit",
@@ -296,13 +297,13 @@ styles.registerStyle("main", () => {
 			margin: 0,
 			border: "none",
 			height: "1px",
-			"background-color": theme.list_border,
+			"background-color": theme.outline_variant,
 		},
 		".border": {
-			border: `1px solid ${theme.content_border}`,
+			border: `1px solid ${theme.outline}`,
 		},
 		".border-top": {
-			"border-top": `1px solid ${theme.content_border}`,
+			"border-top": `1px solid ${theme.outline_variant}`,
 		},
 		"#shadow-mail-body.break-pre pre": {
 			"white-space": "pre-wrap",
@@ -326,358 +327,334 @@ styles.registerStyle("main", () => {
 		".m-0": {
 			margin: 0,
 		},
-		".mt": {
-			"margin-top": px(size.vpad),
-		},
-		".mt-xxs": {
-			"margin-top": px(2),
-		},
-		".mt-xs": {
-			"margin-top": px(size.vpad_xs),
-		},
-		".mt-xsm-15": {
-			"margin-top": px(size.vpad_xsm * 1.5),
-		},
-		".mt-s": {
-			"margin-top": px(size.vpad_small),
-		},
-		".mt-m": {
-			"margin-top": px(size.hpad),
-		},
-		".mt-l": {
-			"margin-top": px(size.vpad_large),
-		},
-		".mt-xl": {
-			"margin-top": px(size.vpad_xl),
-		},
-		".mt-form": {
-			"margin-top": px(size.hpad_medium),
-		},
-		".mt-hpad-small": {
-			"margin-top": px(size.hpad_small),
-		},
-		".mb-0": {
-			"margin-bottom": 0,
-		},
-		".mb": {
-			"margin-bottom": px(size.vpad),
-		},
-		".mb-s": {
-			"margin-bottom": px(size.vpad_small),
-		},
-		".mb-xs": {
-			"margin-bottom": px(size.vpad_xs),
-		},
-		".mb-xsm-15": {
-			"margin-bottom": px(size.vpad_xsm * 1.5),
-		},
-		".mb-l": {
-			"margin-bottom": px(size.vpad_large),
-		},
-		".mb-xl": {
-			"margin-bottom": px(size.vpad_xl),
-		},
-		".mb-xxl": {
-			"margin-bottom": px(size.vpad_xxl),
-		},
-		".mlr": {
-			"margin-left": px(size.hpad),
-			"margin-right": px(size.hpad),
-		},
-		".mlr-button": {
-			"margin-left": px(size.hpad_button),
-			"margin-right": px(size.hpad_button),
-		},
-		".mlr-l": {
-			"margin-left": px(size.hpad_large),
-			"margin-right": px(size.hpad_large),
-		},
-		".ml-xsm": {
-			"margin-left": px(size.vpad_xsm),
-		},
-		".mr-xxs": {
-			"margin-right": px(size.vpad_xxs),
-		},
-		".mr-xsm": {
-			"margin-right": px(size.vpad_xsm),
-		},
-		".mt-xsm": {
-			"margin-top": px(size.vpad_xsm),
-		},
-		".mb-xsm": {
-			"margin-bottom": px(size.vpad_xsm),
-		},
-		".mr-s": {
-			"margin-right": px(size.vpad_small),
-		},
-		".mr-xs": {
-			"margin-right": px(size.vpad_xs),
-		},
-		".ml-s": {
-			"margin-left": px(size.vpad_small),
-		},
-		".ml-m": {
-			"margin-left": px(size.hpad_medium),
-		},
-		".ml-l": {
-			"margin-left": px(size.hpad_large),
-		},
-		".mr-m": {
-			"margin-right": px(size.hpad_medium),
-		},
-		".mr-l": {
-			"margin-right": px(size.hpad_large),
-		},
-		".mlr-s": {
-			"margin-left": px(size.hpad_small),
-			"margin-right": px(size.hpad_small),
-		},
-		".mlr-xs": {
-			"margin-left": px(size.vpad_xs),
-			"margin-right": px(size.vpad_xs),
-		},
-		".ml-hpad_small": {
-			"margin-left": px(size.hpad_small),
-		},
-		".mr-hpad-small": {
-			"margin-right": px(size.hpad_small),
-		},
 		".mtb-0": {
 			"margin-top": px(0),
 			"margin-bottom": px(0),
 		},
-		".mr": {
-			"margin-right": px(size.hpad),
+		".mt-4": {
+			"margin-top": px(size.spacing_4),
 		},
-		".ml": {
-			"margin-left": px(size.hpad),
+		".mt-8": {
+			"margin-top": px(size.spacing_8),
+		},
+		".mt-12": {
+			"margin-top": px(size.spacing_12),
+		},
+		".mt-16": {
+			"margin-top": px(size.spacing_16),
+		},
+		".mt-24": {
+			"margin-top": px(size.spacing_24),
+		},
+		".mt-32": {
+			"margin-top": px(size.spacing_32),
+		},
+		".mt-48": {
+			"margin-top": px(size.spacing_48),
+		},
+		".mt-64": {
+			"margin-top": px(size.spacing_64),
+		},
+		".mb-0": {
+			"margin-bottom": 0,
+		},
+		".mb-4": {
+			"margin-bottom": px(size.spacing_4),
+		},
+		".mb-8": {
+			"margin-bottom": px(size.spacing_8),
+		},
+		".mb-12": {
+			"margin-bottom": px(size.spacing_12),
+		},
+		".mb-16": {
+			"margin-bottom": px(size.spacing_16),
+		},
+		".mb-24": {
+			"margin-bottom": px(size.spacing_24),
+		},
+		".mb-32": {
+			"margin-bottom": px(size.spacing_32),
+		},
+		".mb-48": {
+			"margin-bottom": px(size.spacing_48),
+		},
+		".mb-64": {
+			"margin-bottom": px(size.spacing_64),
+		},
+		".mlr-4": {
+			"margin-left": px(size.spacing_4),
+			"margin-right": px(size.spacing_4),
+		},
+		".mlr-8": {
+			"margin-left": px(size.spacing_8),
+			"margin-right": px(size.spacing_8),
+		},
+		".mlr-12": {
+			"margin-left": px(size.spacing_12),
+			"margin-right": px(size.spacing_12),
+		},
+		".mlr-16": {
+			"margin-left": px(size.spacing_16),
+			"margin-right": px(size.spacing_16),
+		},
+		".mlr-24": {
+			"margin-left": px(size.spacing_24),
+			"margin-right": px(size.spacing_24),
+		},
+		".mlr-32": {
+			"margin-left": px(size.spacing_32),
+			"margin-right": px(size.spacing_32),
+		},
+		".mlr-48": {
+			"margin-left": px(size.spacing_48),
+			"margin-right": px(size.spacing_48),
+		},
+		".mlr-64": {
+			"margin-left": px(size.spacing_64),
+			"margin-right": px(size.spacing_64),
+		},
+		".mr-4": {
+			"margin-right": px(size.spacing_4),
+		},
+		".mr-8": {
+			"margin-right": px(size.spacing_8),
+		},
+		".mr-12": {
+			"margin-right": px(size.spacing_12),
+		},
+		".mr-16": {
+			"margin-right": px(size.spacing_16),
+		},
+		".mr-24": {
+			"margin-right": px(size.spacing_24),
+		},
+		".mr-32": {
+			"margin-right": px(size.spacing_32),
+		},
+		".mr-48": {
+			"margin-right": px(size.spacing_48),
+		},
+		".mr-64": {
+			"margin-right": px(size.spacing_64),
+		},
+		".ml-4": {
+			"margin-left": px(size.spacing_4),
+		},
+		".ml-8": {
+			"margin-left": px(size.spacing_8),
+		},
+		".ml-12": {
+			"margin-left": px(size.spacing_12),
+		},
+		".ml-16": {
+			"margin-left": px(size.spacing_16),
+		},
+		".ml-24": {
+			"margin-left": px(size.spacing_24),
+		},
+		".ml-32": {
+			"margin-left": px(size.spacing_32),
+		},
+		".ml-48": {
+			"margin-left": px(size.spacing_48),
+		},
+		".ml-64": {
+			"margin-left": px(size.spacing_64),
+		},
+		".mt-negative-8": {
+			"margin-top": px(-size.spacing_8),
+		},
+		".mt-negative-24": {
+			"margin-top": px(-size.spacing_24),
+		},
+		".mr-negative-8": {
+			"margin-right": px(-size.spacing_8),
+		},
+		".mr-negative-24": {
+			"margin-right": px(-size.spacing_24),
+		},
+		".ml-negative-8": {
+			"margin-left": px(-size.spacing_8),
+		},
+		".ml-negative-24": {
+			"margin-left": px(-size.spacing_24),
 		},
 		// paddings
 		".p0": {
 			padding: "0",
 		},
-		".p-xsm": {
-			padding: px(size.vpad_xsm),
+		".p-4": {
+			padding: px(size.spacing_4),
 		},
-		".pt": {
-			"padding-top": px(size.vpad),
+		".p-8": {
+			padding: px(size.spacing_8),
+		},
+		".p-12": {
+			padding: px(size.spacing_12),
+		},
+		".p-16": {
+			padding: px(size.spacing_16),
+		},
+		".p-24": {
+			padding: px(size.spacing_24),
+		},
+		".p-32": {
+			padding: px(size.spacing_32),
+		},
+		".p-48": {
+			padding: px(size.spacing_48),
+		},
+		".p-64": {
+			padding: px(size.spacing_64),
 		},
 		".pt-0": {
 			"padding-top": 0,
 		},
-		".pt-s": {
-			"padding-top": px(size.vpad_small),
+		".pt-4": {
+			"padding-top": px(size.spacing_4),
 		},
-		".pt-l": {
-			"padding-top": px(size.vpad_large),
+		".pt-8": {
+			"padding-top": px(size.spacing_8),
 		},
-		".pt-m": {
-			"padding-top": px(size.hpad),
+		".pt-12": {
+			"padding-top": px(size.spacing_12),
 		},
-		".pt-ml": {
-			"padding-top": px(size.vpad_ml),
+		".pt-16": {
+			"padding-top": px(size.spacing_16),
 		},
-		".pt-xl": {
-			"padding-top": px(size.vpad_xl),
+		".pt-24": {
+			"padding-top": px(size.spacing_24),
 		},
-		".pt-xxs": {
-			"padding-top": px(size.vpad_xxs),
+		".pt-32": {
+			"padding-top": px(size.spacing_32),
 		},
-		".pt-xs": {
-			"padding-top": px(size.vpad_xs),
+		".pt-48": {
+			"padding-top": px(size.spacing_48),
 		},
-		".pt-hpad-button": {
-			"padding-top": px(size.hpad_button),
+		".pt-64": {
+			"padding-top": px(size.spacing_64),
 		},
 		".pb-0": {
 			"padding-bottom": 0,
 		},
-		".pb": {
-			"padding-bottom": px(size.vpad),
+		".pb-4": {
+			"padding-bottom": px(size.spacing_4),
 		},
-		".pb-2": {
-			"padding-bottom": "2px",
+		".pb-8": {
+			"padding-bottom": px(size.spacing_8),
 		},
-		// for dropdown toggles
-		".pb-s": {
-			"padding-bottom": px(size.vpad_small),
+		".pb-12": {
+			"padding-bottom": px(size.spacing_12),
+		},
+		".pb-16": {
+			"padding-bottom": px(size.spacing_16),
+		},
+		".pb-24": {
+			"padding-bottom": px(size.spacing_24),
+		},
+		".pb-32": {
+			"padding-bottom": px(size.spacing_32),
+		},
+		".pb-48": {
+			"padding-bottom": px(size.spacing_48),
+		},
+		".pb-64": {
+			"padding-bottom": px(size.spacing_64),
+		},
+		".pb-floating": {
+			"padding-bottom": px(component_size.button_floating_size + size.spacing_24),
+		},
+		".plr-4": {
+			"padding-left": px(size.spacing_4),
+			"padding-right": px(size.spacing_4),
+		},
+		".plr-8": {
+			"padding-left": px(size.spacing_8),
+			"padding-right": px(size.spacing_8),
+		},
+		".plr-12": {
+			"padding-left": px(size.spacing_12),
+			"padding-right": px(size.spacing_12),
+		},
+		".plr-16": {
+			"padding-left": px(size.spacing_16),
+			"padding-right": px(size.spacing_16),
+		},
+		".plr-24": {
+			"padding-left": px(size.spacing_24),
+			"padding-right": px(size.spacing_24),
+		},
+		".plr-32": {
+			"padding-left": px(size.spacing_32),
+			"padding-right": px(size.spacing_32),
+		},
+		".plr-48": {
+			"padding-left": px(size.spacing_48),
+			"padding-right": px(size.spacing_48),
+		},
+		".plr-64": {
+			"padding-left": px(size.spacing_64),
+			"padding-right": px(size.spacing_64),
+		},
+		".pl-4": {
+			"padding-left": px(size.spacing_4),
+		},
+		".pl-8": {
+			"padding-left": px(size.spacing_8),
+		},
+		".pl-12": {
+			"padding-left": px(size.spacing_12),
+		},
+		".pl-16": {
+			"padding-left": px(size.spacing_16),
+		},
+		".pl-24": {
+			"padding-left": px(size.spacing_24),
+		},
+		".pl-32": {
+			"padding-left": px(size.spacing_32),
+		},
+		".pl-48": {
+			"padding-left": px(size.spacing_48),
+		},
+		".pl-64": {
+			"padding-left": px(size.spacing_64),
+		},
+		".pr-4": {
+			"padding-right": px(size.spacing_4),
+		},
+		".pr-8": {
+			"padding-right": px(size.spacing_8),
+		},
+		".pr-12": {
+			"padding-right": px(size.spacing_12),
+		},
+		".pr-16": {
+			"padding-right": px(size.spacing_16),
+		},
+		".pr-24": {
+			"padding-right": px(size.spacing_24),
+		},
+		".pr-32": {
+			"padding-right": px(size.spacing_32),
+		},
+		".pr-48": {
+			"padding-right": px(size.spacing_48),
+		},
+		".pr-64": {
+			"padding-right": px(size.spacing_64),
 		},
 		".drag": {
 			"touch-action": "auto",
 		},
-		".pb-xxs": {
-			"padding-bottom": px(size.vpad_xxs),
-		},
-		".pb-xs": {
-			"padding-bottom": px(size.vpad_xs),
-		},
-		".pb-l": {
-			"padding-bottom": px(size.vpad_large),
-		},
-		".pb-xl": {
-			"padding-bottom": px(size.vpad_xl),
-		},
-		".pb-m": {
-			"padding-bottom": px(size.hpad),
-		},
-		".pb-ml": {
-			"padding-bottom": px(size.vpad_ml),
-		},
-		".pb-floating": {
-			"padding-bottom": px(size.button_floating_size + size.hpad_large),
-		},
-		".pb-hpad-button": {
-			"padding-bottom": px(size.hpad_button),
-		},
-		// allow scrolling across the floating button
-		".plr": {
-			"padding-left": px(size.hpad),
-			"padding-right": px(size.hpad),
-		},
-		".pl": {
-			"padding-left": px(size.hpad),
-		},
-		".pl-s": {
-			"padding-left": px(size.hpad_small),
-		},
-		".pl-m": {
-			"padding-left": px(size.hpad),
-		},
-		".pl-xs": {
-			"padding-left": px(size.vpad_xs),
-		},
-		".pl-vpad-m": {
-			"padding-left": px(size.vpad),
-		},
-		".pl-vpad-s": {
-			"padding-left": px(size.vpad_small),
-		},
-		".pl-vpad-l": {
-			"padding-left": px(size.vpad_large),
-		},
-		".pr": {
-			"padding-right": px(size.hpad),
-		},
-		".plr-unit": {
-			"padding-right": px(size.vpad_unit),
-			"padding-left": px(size.vpad_unit),
-		},
-		".pr-xs": {
-			"padding-right": px(size.vpad_xs),
-		},
-		".pr-s": {
-			"padding-right": px(size.hpad_small),
-		},
-		".pr-vpad-s": {
-			"padding-right": px(size.vpad_small),
-		},
-		".pr-vpad-m": {
-			"padding-right": px(size.vpad),
-		},
-		".pr-vpad-l": {
-			"padding-right": px(size.vpad_large),
-		},
-		".plr-vpad": {
-			"padding-left": px(size.vpad),
-			"padding-right": px(size.vpad),
-		},
-		".pr-m": {
-			"padding-right": px(size.vpad),
-		},
-		".plr-s": {
-			"padding-left": px(size.hpad_small),
-			"padding-right": px(size.hpad_small),
-		},
-		".plr-sm": {
-			"padding-left": px(6),
-			"padding-right": px(6),
-		},
-		".plr-m": {
-			"padding-left": px(size.hpad),
-			"padding-right": px(size.hpad),
-		},
-		// p-l will be overwritten in media query mobile
-		".plr-l": {
-			"padding-left": px(size.hpad_large),
-			"padding-right": px(size.hpad_large),
-		},
-		".plr-2l": {
-			"padding-left": px(size.hpad_large * 2),
-			"padding-right": px(size.hpad_large * 2),
-		},
-		".ptb-button-double": {
-			"padding-top": px(size.hpad_button * 2),
-			"padding-bottom": px(size.hpad_button * 2),
-		},
-		".pl-l": {
-			"padding-left": px(size.hpad_large),
-		},
-		".pr-l": {
-			"padding-right": px(size.hpad_large),
-		},
-		".plr-button": {
-			"padding-left": px(size.hpad_button),
-			"padding-right": px(size.hpad_button),
-		},
-		".plr-button-double": {
-			"padding-left": px(size.hpad_button * 2),
-			"padding-right": px(size.hpad_button * 2),
-		},
-		".plr-nav-button": {
-			"padding-left": px(size.hpad_nav_button),
-			"padding-right": px(size.hpad_nav_button),
-		},
-		".pl-button": {
-			"padding-left": px(size.hpad_button),
-		},
-		".mr-button": {
-			"margin-right": px(size.hpad_button),
-		},
-		".ml-button": {
-			"margin-left": px(size.hpad_button),
-		},
-		".mt-negative-hpad-button": {
-			"margin-top": px(-size.hpad_button),
-		},
-		".mt-negative-s": {
-			"margin-top": px(-size.vpad_small),
-		},
-		".mt-negative-m": {
-			"margin-top": px(-size.vpad),
-		},
-		".mt-negative-l": {
-			"margin-top": px(-size.hpad_large),
-		},
-		".mr-negative-s": {
-			"margin-right": px(-size.hpad_button),
-		},
-		".mr-negative-l": {
-			"margin-right": px(-size.hpad_large),
-		},
-		".ml-negative-s": {
-			"margin-left": px(-size.hpad_button),
-		},
-		// negative margin to handle the default padding of a button
-		".ml-negative-l": {
-			"margin-left": px(-size.hpad_large),
-		},
-		".ml-negative-xs": {
-			"margin-left": px(-3),
-		},
-		".ml-negative-bubble": {
-			"margin-left": px(-7),
-		},
-		".mr-negative-m": {
-			"margin-right": px(-(size.hpad_button + size.hpad_nav_button)),
-		},
-		// negative margin to handle the padding of a nav button
 		".fixed-bottom-right": {
 			position: "fixed",
-			bottom: px(size.hpad),
-			right: px(size.hpad_large),
+			bottom: px(size.spacing_12),
+			right: px(size.spacing_24),
 		},
-		".mr-negative-xs": {
-			"margin-right": px(-3),
+		".mr-negative-4": {
+			"margin-right": px(-size.base_4),
 		},
 		// common setting
 		".text-ellipsis": {
@@ -704,8 +681,11 @@ styles.registerStyle("main", () => {
 			"min-width": 0,
 			"white-space": "nowrap",
 		},
+		".w-auto": {
+			width: "auto",
+		},
 		".min-width-l": {
-			"min-width": px(size.icon_segment_control_button_width),
+			"min-width": px(component_size.icon_segment_control_button_width),
 		},
 		".min-width-0": {
 			"min-width": 0,
@@ -776,24 +756,15 @@ styles.registerStyle("main", () => {
 		".will-change-alpha": {
 			"will-change": "alpha",
 		},
-		".after-as-border-bottom:after": {
-			// Hacky solution to create a border that extends the whole parent
-			content: "''",
-			width: "100vw",
-			height: "1px",
-			background: theme.content_border,
-			position: "absolute",
-			bottom: "-1px",
-		},
 		// borders
 		".border-bottom": {
-			"border-bottom": `1px solid ${theme.content_border}`,
+			"border-bottom": `1px solid ${theme.outline_variant}`,
 		},
 		".border-right": {
-			"border-right": `1px solid ${theme.content_border}`,
+			"border-right": `1px solid ${theme.outline_variant}`,
 		},
 		".border-left": {
-			"border-left": `1px solid ${theme.content_border}`,
+			"border-left": `1px solid ${theme.outline_variant}`,
 		},
 		// colors
 		".bg-transparent": {
@@ -812,68 +783,58 @@ styles.registerStyle("main", () => {
 			color: "black",
 		},
 		".content-fg": {
-			color: theme.content_fg,
+			color: theme.on_surface,
 		},
 		".content-accent-fg": {
-			color: theme.content_accent,
+			color: theme.primary,
 		},
 		".content-accent-accent": {
-			"accent-color": theme.content_accent,
+			"accent-color": theme.primary,
 		},
 		".icon-accent svg": {
-			fill: theme.content_accent,
+			fill: theme.primary,
 		},
 		".svg-content-fg path": {
-			fill: theme.content_fg,
+			fill: theme.on_surface,
 		},
 		".content-bg": {
-			"background-color": theme.content_bg,
+			"background-color": theme.surface,
 		},
 		".nav-bg": {
-			"background-color": theme.navigation_bg,
+			"background-color": theme.surface_container,
 		},
 		".content-hover:hover": {
-			color: theme.content_accent,
+			color: theme.primary,
 		},
 		".no-hover": {
 			"pointer-events": "none",
-		},
-		".content-message-bg": {
-			"background-color": theme.content_message_bg,
-		},
-		".button-bubble-bg": {
-			"background-color": theme.button_bubble_bg,
 		},
 		".elevated-bg": {
 			"background-color": getElevatedBackground(),
 		},
 		".list-bg": {
-			"background-color": theme.list_bg,
+			"background-color": theme.surface,
 		},
 		".list-accent-fg": {
-			color: theme.list_accent_fg,
+			color: theme.primary,
 		},
 		".svg-list-accent-fg path": {
-			fill: theme.list_accent_fg,
+			fill: theme.primary,
 		},
 		".bg-accent-fg": {
-			"background-color": theme.list_accent_fg,
+			"background-color": theme.primary,
 		},
 		".list-border-bottom": {
-			"border-bottom": `1px solid ${theme.list_border}`,
+			"border-bottom": `1px solid ${theme.outline_variant}`,
 		},
-		".accent-bg-translucent": {
-			background: `${theme.content_accent}2C`,
-			color: theme.content_accent,
-		},
-		".button-bg": {
-			background: theme.content_button,
-			color: theme.navigation_bg,
-			opacity: "0.5",
+		".disabled-button": {
+			background: `${hexToRGBAString(theme.on_surface, 0.1)}`,
+			color: `${hexToRGBAString(theme.on_surface, 0.38)}`,
+			"pointer-events": "none",
 		},
 		".accent-bg": {
-			"background-color": theme.content_accent,
-			color: theme.content_button_icon_selected,
+			"background-color": theme.primary,
+			color: theme.on_primary,
 		},
 		".go-european-button": {
 			"background-color": "#FEDC59",
@@ -883,7 +844,7 @@ styles.registerStyle("main", () => {
 			"justify-content": "center",
 			"align-items": "center",
 			height: "54px !important",
-			gap: px(size.hpad_button),
+			gap: px(size.spacing_8),
 		},
 		".go-european-button-legacy": {
 			"background-color": "#FEDC59",
@@ -892,7 +853,7 @@ styles.registerStyle("main", () => {
 			display: "flex",
 			"justify-content": "center",
 			"align-items": "center",
-			gap: px(size.hpad_button),
+			gap: px(size.spacing_8),
 		},
 		"go-european-button-icon": {
 			display: "inline-block",
@@ -900,10 +861,10 @@ styles.registerStyle("main", () => {
 			height: px(30),
 		},
 		".accent-fg": {
-			color: theme.content_button_icon,
+			color: theme.on_primary,
 		},
 		".accent-fg path": {
-			fill: theme.content_button_icon,
+			fill: theme.on_primary,
 		},
 		".red": {
 			"background-color": "#840010",
@@ -938,6 +899,11 @@ styles.registerStyle("main", () => {
 		".abs": {
 			position: "absolute",
 		},
+		".abs-center-horizontally": {
+			left: 0,
+			right: 0,
+			margin: "0 auto",
+		},
 		".fixed": {
 			position: "fixed",
 		},
@@ -969,7 +935,7 @@ styles.registerStyle("main", () => {
 			"-webkit-overflow-scrolling": "touch",
 		},
 		"*": {
-			"scrollbar-color": `${theme.content_button} transparent`,
+			"scrollbar-color": `${theme.on_surface_variant} transparent`,
 			"scrollbar-width": "thin",
 		},
 		"::-webkit-scrollbar": !client.isMobileDevice()
@@ -981,7 +947,7 @@ styles.registerStyle("main", () => {
 			: {},
 		"::-webkit-scrollbar-thumb": !client.isMobileDevice()
 			? {
-					background: theme.content_button,
+					background: theme.on_surface_variant,
 					// reduce the background
 					"border-left": "15px solid transparent",
 					"background-clip": "padding-box",
@@ -997,7 +963,7 @@ styles.registerStyle("main", () => {
 			width: "6px",
 		},
 		".visible-scrollbar::-webkit-scrollbar-thumb": {
-			background: theme.content_button,
+			background: theme.on_surface_variant,
 			"border-radius": "3px",
 		},
 		// we are trying to handle 3 cases:
@@ -1023,10 +989,13 @@ styles.registerStyle("main", () => {
 			"padding-right": "16px",
 		},
 		".dropdown-info + .dropdown-button": {
-			"border-top": `1px solid ${theme.content_border}`,
+			"border-top": `1px solid ${theme.outline_variant}`,
 		},
 		".dropdown-info + .dropdown-info": {
 			"padding-top": "0",
+		},
+		".text-no-wrap": {
+			"text-wrap": "nowrap",
 		},
 		".text-wrap": {
 			"text-wrap": "auto",
@@ -1044,25 +1013,28 @@ styles.registerStyle("main", () => {
 			"text-align": "start",
 		},
 		".statusTextColor": {
-			color: theme.content_accent,
+			color: theme.primary,
 		},
 		".button-height": {
-			height: px(size.button_height),
+			height: px(component_size.button_height),
+		},
+		".min-height-0": {
+			"min-height": px(0),
 		},
 		".button-min-height": {
-			"min-height": px(size.button_height),
+			"min-height": px(component_size.button_height),
 		},
 		".button-min-width": {
-			"min-width": px(size.button_height),
+			"min-width": px(component_size.button_height),
 		},
 		".button-width-fixed": {
-			width: px(size.button_height),
+			width: px(component_size.button_height),
 		},
 		".large-button-height": {
-			height: px(size.button_floating_size),
+			height: px(component_size.button_floating_size),
 		},
 		".large-button-width": {
-			width: px(size.button_floating_size),
+			width: px(component_size.button_floating_size),
 		},
 		".notification-min-width": {
 			"min-width": px(400),
@@ -1121,6 +1093,11 @@ styles.registerStyle("main", () => {
 			"flex-direction": "column",
 			"justify-content": "center",
 		},
+		".flex-v-start": {
+			display: "flex",
+			"flex-direction": "column",
+			"justify-content": "start",
+		},
 		".flex-direction-change": {
 			display: "flex",
 			"justify-content": "center",
@@ -1142,12 +1119,6 @@ styles.registerStyle("main", () => {
 		".col-reverse": {
 			"flex-direction": "column-reverse",
 		},
-		".column-gap": {
-			"column-gap": px(size.hpad),
-		},
-		".column-gap-s": {
-			"column-gap": px(size.hpad_small),
-		},
 		".grid": {
 			display: "grid",
 		},
@@ -1157,32 +1128,38 @@ styles.registerStyle("main", () => {
 		".fill-grid-column": {
 			"grid-row": "1 / -1",
 		},
-		".gap": {
-			gap: px(size.vpad_unit),
+		".gap-1": {
+			gap: px(1),
 		},
-		".gap-vpad": {
-			gap: px(size.vpad),
+		".gap-4": {
+			gap: px(size.spacing_4),
 		},
-		".gap-vpad-xs": {
-			gap: px(size.vpad_xsm),
+		".gap-8": {
+			gap: px(size.spacing_8),
 		},
-		".gap-vpad-s": {
-			gap: px(size.vpad_small),
+		".gap-12": {
+			gap: px(size.spacing_12),
 		},
-		".gap-vpad-xs-15": {
-			gap: px(size.vpad_xsm * 1.5),
+		".gap-16": {
+			gap: px(size.spacing_16),
 		},
-		".gap-vpad-s-15": {
-			gap: px(size.vpad_small * 1.5),
+		".gap-24": {
+			gap: px(size.spacing_24),
 		},
-		".gap-hpad": {
-			gap: px(size.hpad),
+		".gap-32": {
+			gap: px(size.spacing_32),
 		},
-		".gap-vpad-xxl": {
-			gap: px(size.vpad_xxl),
+		".gap-48": {
+			gap: px(size.spacing_48),
 		},
-		".gap-vpad-l": {
-			gap: px(size.vpad_large),
+		".gap-64": {
+			gap: px(size.spacing_64),
+		},
+		".column-gap-12": {
+			"column-gap": px(size.spacing_12),
+		},
+		".column-gap-4": {
+			"column-gap": px(size.spacing_4),
 		},
 		".flex": {
 			display: "flex",
@@ -1315,42 +1292,46 @@ styles.registerStyle("main", () => {
 			transition: "flex 200ms linear",
 		},
 		".border-radius": {
-			"border-radius": px(size.border_radius),
+			"border-radius": px(size.radius_8),
 		},
-		".border-radius-top": {
-			"border-top-left-radius": px(size.border_radius),
-			"border-top-right-radius": px(size.border_radius),
+		".border-radius-top-8": {
+			"border-top-left-radius": px(size.radius_8),
+			"border-top-right-radius": px(size.radius_8),
 		},
-		".border-radius-top-left-big": {
-			"border-top-left-radius": px(size.border_radius_larger),
+		".border-radius-top-12": {
+			"border-top-left-radius": px(size.radius_12),
+			"border-top-right-radius": px(size.radius_12),
 		},
-		".border-radius-top-right-big": {
-			"border-top-right-radius": px(size.border_radius_larger),
+		".border-radius-top-left-12": {
+			"border-top-left-radius": px(size.radius_12),
 		},
-		".border-radius-bottom": {
-			"border-bottom-left-radius": px(size.border_radius),
-			"border-bottom-right-radius": px(size.border_radius),
+		".border-radius-top-right-12": {
+			"border-top-right-radius": px(size.radius_12),
 		},
-		".border-radius-small": {
-			"border-radius": px(size.border_radius_small),
+		".border-radius-bottom-8": {
+			"border-bottom-left-radius": px(size.radius_8),
+			"border-bottom-right-radius": px(size.radius_8),
 		},
-		".border-radius-big": {
-			"border-radius": px(size.border_radius_larger),
+		".border-radius-4": {
+			"border-radius": px(size.radius_4),
 		},
-		".border-radius-m": {
-			"border-radius": px(size.border_radius_medium),
+		".border-radius-12": {
+			"border-radius": px(size.radius_12),
 		},
-		".border-radius-top-left-m": {
-			"border-top-left-radius": px(size.border_radius_medium),
+		".border-radius-8": {
+			"border-radius": px(size.radius_8),
 		},
-		".border-radius-bottom-left-m": {
-			"border-bottom-left-radius": px(size.border_radius_medium),
+		".border-radius-top-left-8": {
+			"border-top-left-radius": px(size.radius_8),
 		},
-		".border-radius-bottom-right-m": {
-			"border-bottom-right-radius": px(size.border_radius_medium),
+		".border-radius-bottom-left-8": {
+			"border-bottom-left-radius": px(size.radius_8),
 		},
-		".border-radius-top-right-m": {
-			"border-top-right-radius": px(size.border_radius_medium),
+		".border-radius-bottom-right-8": {
+			"border-bottom-right-radius": px(size.radius_8),
+		},
+		".border-radius-top-right-8": {
+			"border-top-right-radius": px(size.radius_8),
 		},
 		".settings-item": {
 			border: 0,
@@ -1360,41 +1341,41 @@ styles.registerStyle("main", () => {
 			margin: 0,
 			"flex-shrink": 0,
 			"-webkit-tap-highlight-color": "rgba(255, 255, 255, 0)",
-			"padding-bottom": px(size.icon_size_small),
-			"padding-top": px(size.icon_size_small),
-			"border-bottom": `1px solid ${theme.button_bubble_bg} !important`,
+			"padding-bottom": px(size.icon_12),
+			"padding-top": px(size.icon_12),
+			"border-bottom": `1px solid ${theme.outline_variant} !important`,
 		},
 		".settings-item:last-child": {
 			"border-bottom": "none !important",
 		},
 		".editor-border": {
-			border: `2px solid ${theme.content_border}`,
-			"padding-top": px(size.vpad_small),
-			"padding-bottom": px(size.vpad_small),
-			"padding-left": px(size.hpad),
-			"padding-right": px(size.hpad),
+			border: `2px solid ${theme.outline}`,
+			"padding-top": px(size.spacing_8),
+			"padding-bottom": px(size.spacing_8),
+			"padding-left": px(size.spacing_12),
+			"padding-right": px(size.spacing_12),
 		},
 		".editor-border-active": {
-			border: `3px solid ${theme.content_accent}`,
-			"padding-top": px(size.vpad_small - 1),
-			"padding-bottom": px(size.vpad_small - 1),
-			"padding-left": px(size.hpad - 1),
-			"padding-right": px(size.hpad - 1),
+			border: `3px solid ${theme.primary}`,
+			"padding-top": px(size.spacing_8 - 1),
+			"padding-bottom": px(size.spacing_8 - 1),
+			"padding-left": px(size.spacing_12 - 1),
+			"padding-right": px(size.spacing_12 - 1),
 		},
 		".editor-no-top-border": {
 			"border-top-color": "transparent",
 		},
 		// icon
 		".icon": {
-			height: px(size.icon_size_medium),
-			width: px(size.icon_size_medium),
+			height: px(size.icon_16),
+			width: px(size.icon_16),
 		},
 		".icon > svg": {
-			height: px(size.icon_size_medium),
-			width: px(size.icon_size_medium),
+			height: px(size.icon_16),
+			width: px(size.icon_16),
 		},
 		// a bit cursed solution to make the visible icon not too huge relative to the tiny "close" icon that we have but also to keep the size consistent
-		// with icon-large so that the text field doesn't jump around
+		// with icon-24 so that the text field doesn't jump around
 		".icon-progress-search": {
 			height: `${px(20)} !important`,
 			width: `${px(20)} !important`,
@@ -1405,14 +1386,14 @@ styles.registerStyle("main", () => {
 		},
 		".search-bar": {
 			transition: "all 200ms",
-			"background-color": stateBgLike,
+			"background-color": theme.surface_container_high,
 		},
 		".search-bar:hover": {
-			"background-color": stateBgHover,
+			"background-color": theme.state_bg_hover,
 		},
 		".search-bar[focused=true]": {
-			"background-color": theme.content_bg,
-			"box-shadow": searchBarShadow,
+			"background-color": theme.surface,
+			"box-shadow": boxShadowLow,
 		},
 		".fab-shadow": {
 			"box-shadow": "0px 8px 12px 6px rgba(0, 0, 0, 0.15), 0px 4px 4px rgba(0, 0, 0, 0.3)",
@@ -1426,52 +1407,52 @@ styles.registerStyle("main", () => {
 			width: px(15),
 		},
 		".icon-small": {
-			height: px(size.icon_size_small),
-			width: px(size.icon_size_small),
+			height: px(size.icon_12),
+			width: px(size.icon_12),
 		},
 		".icon-small > svg": {
-			height: px(size.icon_size_small),
-			width: px(size.icon_size_small),
+			height: px(size.icon_12),
+			width: px(size.icon_12),
 		},
-		".icon-large": {
-			height: px(size.icon_size_large),
-			width: px(size.icon_size_large),
+		".icon-24": {
+			height: px(size.icon_24),
+			width: px(size.icon_24),
 		},
-		".icon-medium-large": {
-			height: px(size.icon_size_medium_large),
-			width: px(size.icon_size_medium_large),
+		".icon-20": {
+			height: px(size.icon_20),
+			width: px(size.icon_20),
 		},
-		".icon-medium-large > svg": {
-			height: px(size.icon_size_medium_large),
-			width: px(size.icon_size_medium_large),
+		".icon-20 > svg": {
+			height: px(size.icon_20),
+			width: px(size.icon_20),
 		},
-		".icon-large > svg": {
-			height: px(size.icon_size_large),
-			width: px(size.icon_size_large),
+		".icon-24 > svg": {
+			height: px(size.icon_24),
+			width: px(size.icon_24),
 		},
-		".icon-xl": {
-			height: px(size.icon_size_xl),
-			width: px(size.icon_size_xl),
+		".icon-32": {
+			height: px(size.icon_32),
+			width: px(size.icon_32),
 		},
-		".icon-xl > svg": {
-			height: px(size.icon_size_xl),
-			width: px(size.icon_size_xl),
+		".icon-32 > svg": {
+			height: px(size.icon_32),
+			width: px(size.icon_32),
 		},
-		".icon-xxl": {
-			height: px(size.icon_size_xxl),
-			width: px(size.icon_size_xxl),
+		".icon-64": {
+			height: px(size.icon_64),
+			width: px(size.icon_64),
 		},
-		".icon-xxl > svg": {
-			height: px(size.icon_size_xxl),
-			width: px(size.icon_size_xxl),
+		".icon-64 > svg": {
+			height: px(size.icon_64),
+			width: px(size.icon_64),
 		},
-		".icon-message-box": {
-			height: px(size.icon_message_box),
-			width: px(size.icon_message_box),
+		".icon-80": {
+			height: px(size.icon_80),
+			width: px(size.icon_80),
 		},
-		".icon-message-box > svg": {
-			height: px(size.icon_message_box),
-			width: px(size.icon_message_box),
+		".icon-80 > svg": {
+			height: px(size.icon_80),
+			width: px(size.icon_80),
 		},
 		".icon-progress > svg": {
 			"animation-name": "rotate-icon",
@@ -1483,27 +1464,27 @@ styles.registerStyle("main", () => {
 		},
 		".icon-button": {
 			"border-radius": "25%",
-			width: px(size.button_height),
-			height: px(size.button_height),
-			"max-width": px(size.button_height),
-			"max-height": px(size.button_height),
+			width: px(component_size.button_height),
+			height: px(component_size.button_height),
+			"max-width": px(component_size.button_height),
+			"max-height": px(component_size.button_height),
 		},
 		".center-h": {
 			margin: "0 auto",
 		},
 		".toggle-button": {
 			"border-radius": "25%",
-			width: px(size.button_height),
-			height: px(size.button_height),
-			"max-width": px(size.button_height),
-			"max-height": px(size.button_height),
+			width: px(component_size.button_height),
+			height: px(component_size.button_height),
+			"max-width": px(component_size.button_height),
+			"max-height": px(component_size.button_height),
 		},
 		".wizard-next-button": {
 			"margin-top": "auto",
-			"margin-bottom": px(size.vpad),
+			"margin-bottom": px(size.spacing_16),
 		},
 		".wizard-breadcrumb": {
-			border: `1px solid ${getContentButtonIconBackground()}`,
+			border: `1px solid ${theme.outline}`,
 			color: "inherit",
 			"transition-property": "border-width, border-color, color, background-color",
 			"transition-duration": `${DefaultAnimationTime - 70}ms`,
@@ -1511,42 +1492,42 @@ styles.registerStyle("main", () => {
 			"will-change": "border-width, border-color, color",
 		},
 		".wizard-breadcrumb-active": {
-			border: `2px solid ${theme.content_accent}`,
-			color: theme.content_accent,
+			border: `2px solid ${theme.primary}`,
+			color: theme.primary,
 			"transition-property": "border-width, border-color, color, background-color",
 			"transition-duration": `${DefaultAnimationTime - 70}ms`,
 			"transition-timing-function": "ease-out",
 			"will-change": "border-width, color, background-color",
 		},
 		".wizard-breadcrumb-previous": {
-			border: `1px solid ${theme.content_accent}`,
+			border: `1px solid ${theme.primary}`,
 			color: "inherit",
-			"background-color": theme.content_accent,
+			"background-color": theme.primary,
 			"transition-property": "border-width, border-color, color, background-color",
 			"transition-duration": `${DefaultAnimationTime - 70}ms`,
 			"transition-timing-function": "ease-out",
 			"will-change": "border-width, border-color, color, background-color",
 		},
 		".wizard-breadcrumb-line": {
-			"border-top": `3px dotted ${theme.content_border}`,
+			"border-top": `3px dotted ${theme.outline_variant}`,
 			height: 0,
 			transition: `border-top-color ${DefaultAnimationTime}ms ease-out`,
 			"will-change": "border-top-style, border-top-color",
 		},
 		".wizard-breadcrumb-line-active": {
-			"border-top": `3px solid ${theme.content_accent}`,
+			"border-top": `3px solid ${theme.primary}`,
 			height: 0,
 			transition: `border-top-color ${DefaultAnimationTime}ms ease-out`,
 		},
 		".compact": {
-			width: `${size.button_height_compact}px !important`,
-			height: `${size.button_height_compact}px !important`,
+			width: `${component_size.button_height_compact}px !important`,
+			height: `${component_size.button_height_compact}px !important`,
 		},
 		".large": {
-			width: `${size.button_floating_size}px`,
-			height: `${size.button_floating_size}px`,
-			"max-width": `${size.button_floating_size}px`,
-			"max-height": `${size.button_floating_size}px`,
+			width: `${component_size.button_floating_size}px`,
+			height: `${component_size.button_floating_size}px`,
+			"max-width": `${component_size.button_floating_size}px`,
+			"max-height": `${component_size.button_floating_size}px`,
 		},
 		// state-bg is a simulation of a "state layer" from Material but without an additional layer
 		// We don't exactly follow transparency for it because we combine transparency with light grey color which works well on both light and dark themes
@@ -1556,22 +1537,25 @@ styles.registerStyle("main", () => {
 			// undoing our default button styling
 			opacity: "1 !important",
 		},
+		".state-bg.selected": {
+			background: theme.state_bg_active,
+		},
 		// Only enable hover for mouse and keyboard navigation (not touch) because
 		// :hover will bet stuck after the touch on mobile.
 		// Use :where() to not count towards specificity, otherwise this is more specific
 		// than :active (which is unconditional
 		":where(.mouse-nav) .state-bg:hover, :where(.keyboard-nav) .state-bg:hover": {
-			background: stateBgHover,
+			background: theme.state_bg_hover,
 			"transition-duration": ".3s",
 		},
 		":where(.keyboard-nav) .state-bg:focus": {
-			background: stateBgFocus,
+			background: theme.state_bg_focus,
 			"transition-duration": ".3s",
 			// disable default focus indicator because we have our own for this element
 			outline: "none",
 		},
 		".state-bg:active, .state-bg[pressed=true]": {
-			background: stateBgActive,
+			background: theme.state_bg_active,
 			"transition-duration": ".3s",
 		},
 		// State layer roughly like in Material 3.
@@ -1583,7 +1567,7 @@ styles.registerStyle("main", () => {
 			outline: "none",
 		},
 		".state-bg-2::before": {
-			"background-color": `var(--state-bg-color, ${theme.content_fg})`,
+			"background-color": `var(--state-bg-color, ${theme.on_surface})`,
 			opacity: "0",
 			transition: "opacity 0.6s",
 			content: "''",
@@ -1651,10 +1635,13 @@ styles.registerStyle("main", () => {
 		".mt-safe-inset": {
 			"margin-top": "env(safe-area-inset-top)",
 		},
+		".pb-safe-inset": {
+			"padding-bottom": "env(safe-area-inset-bottom)",
+		},
 		// header
 		".header-nav": {
-			height: px(size.navbar_height),
-			"background-color": theme.navigation_bg,
+			height: px(component_size.navbar_height),
+			"background-color": theme.surface_container,
 			"z-index": 2,
 		},
 		".bottom-nav": {
@@ -1663,26 +1650,26 @@ styles.registerStyle("main", () => {
             to set all nav elements to border-box, we must make sure to not break any existing styling
             */
 			"box-sizing": "border-box",
-			"border-top": `1px solid ${theme.navigation_border}`,
-			height: `calc(${size.bottom_nav_bar}px + env(safe-area-inset-bottom))`,
-			background: theme.header_bg,
+			"border-top": `1px solid ${theme.outline_variant}`,
+			height: `calc(${component_size.bottom_nav_bar}px + env(safe-area-inset-bottom))`,
+			background: theme.surface,
 			"padding-bottom": "env(safe-area-inset-bottom)",
 			"z-index": 2,
 		},
 		".notification-overlay-content": {
-			"margin-left": px(size.vpad),
-			"margin-right": px(size.vpad),
-			"padding-top": px(size.vpad),
+			"margin-left": px(size.spacing_16),
+			"margin-right": px(size.spacing_16),
+			"padding-top": px(size.spacing_16),
 		},
 		".logo-circle": {
-			width: px(size.button_icon_bg_size),
-			height: px(size.button_icon_bg_size),
+			width: px(component_size.button_icon_bg_size),
+			height: px(component_size.button_icon_bg_size),
 			"border-radius": "50%",
 			overflow: "hidden",
 		},
 		".dot": {
-			width: px(size.dot_size),
-			height: px(size.dot_size),
+			width: px(component_size.dot_size),
+			height: px(component_size.dot_size),
 			"border-radius": "50%",
 			overflow: "hidden",
 			"margin-top": px(6),
@@ -1691,14 +1678,14 @@ styles.registerStyle("main", () => {
 			position: "relative",
 		},
 		".logo-text": {
-			height: px(size.header_logo_height),
+			height: px(component_size.header_logo_height),
 			width: px(128),
 		},
 		".logo-height": {
-			height: px(size.header_logo_height),
+			height: px(component_size.header_logo_height),
 		},
 		".logo-height > svg, .logo-height > img": {
-			height: px(size.header_logo_height),
+			height: px(component_size.header_logo_height),
 		},
 		".custom-logo": {
 			width: px(200),
@@ -1709,7 +1696,7 @@ styles.registerStyle("main", () => {
 			width: "0px",
 			height: "22px",
 			"margin-left": "2px",
-			"border-color": theme.navigation_border,
+			"border-color": theme.outline_variant,
 			"border-width": "1px",
 			"border-style": "solid",
 		},
@@ -1730,37 +1717,37 @@ styles.registerStyle("main", () => {
 			"max-width": px(350),
 		},
 		".dialog-header": {
-			"border-bottom": `1px solid ${theme.content_border}`,
-			height: px(size.button_height + 1),
+			"border-bottom": `1px solid ${theme.outline_variant}`,
+			height: px(component_size.button_height + 1),
 		},
 		".dialog-header-line-height": {
-			"line-height": px(size.button_height),
+			"line-height": px(component_size.button_height),
 		},
 		".dialog-progress": {
 			"text-align": "center",
-			padding: px(size.hpad_large),
-			width: `calc(100% - ${2 * size.hpad}px)`,
+			padding: px(size.spacing_24),
+			width: `calc(100% - ${2 * size.spacing_12}px)`,
 		},
 		".faq-items img": {
 			"max-width": "100%",
 			height: "auto",
 		},
-		".dialog-container": position_absolute(size.button_height + 1, 0, 0, 0),
+		".dialog-container": position_absolute(component_size.button_height + 1, 0, 0, 0),
 		".dialog-contentButtonsBottom": {
-			padding: `0 ${px(size.hpad_large)} ${px(size.vpad)} ${px(size.hpad_large)}`,
+			padding: `0 ${px(size.spacing_24)} ${px(size.spacing_16)} ${px(size.spacing_24)}`,
 		},
 		".dialog-img": {
 			width: px(150),
 			height: "auto",
 		},
 		".dialog-buttons": {
-			"border-top": `1px solid ${theme.content_border}`,
+			"border-top": `1px solid ${theme.outline_variant}`,
 		},
 		".dialog-buttons > button": {
 			flex: "1",
 		},
 		".dialog-buttons > button:not(:first-child)": {
-			"border-left": `1px solid ${theme.content_border}`,
+			"border-left": `1px solid ${theme.outline_variant}`,
 			"margin-left": "0",
 		},
 		".dialog-height-small": {
@@ -1775,7 +1762,11 @@ styles.registerStyle("main", () => {
 			"padding-top": "env(safe-area-inset-top)",
 		},
 		".list-border-right": {
-			"border-right": `1px solid ${theme.list_border}`,
+			"border-right": `1px solid ${theme.outline_variant}`,
+		},
+		".column-resize-margin": {
+			// prevent overlap of scrollbar with resize element
+			"margin-right": px(layout_size.column_resize_element_width),
 		},
 		".folders": {
 			"margin-bottom": px(12),
@@ -1785,7 +1776,7 @@ styles.registerStyle("main", () => {
 			position: "relative",
 		},
 		".template-list-row": {
-			"border-left": px(size.border_selection) + " solid transparent",
+			"border-left": px(size.radius_4) + " solid transparent",
 			"align-items": "center",
 			position: "relative",
 		},
@@ -1794,23 +1785,23 @@ styles.registerStyle("main", () => {
 			"padding-right": px(4),
 			"border-radius": px(8),
 			"line-height": px(16),
-			"font-size": px(size.font_size_small),
+			"font-size": px(font_size.small),
 			"font-weight": "bold",
 			"min-width": px(16),
 			"min-height": px(16),
 			"text-align": "center",
 		},
 		".row-selected": {
-			"border-color": `${theme.list_accent_fg} !important`,
-			color: `${theme.list_accent_fg}`,
+			"border-color": `${theme.primary} !important`,
+			color: `${theme.primary}`,
 		},
 		".hoverable-list-item:hover": {
-			"border-color": `${theme.list_accent_fg} !important`,
-			color: `${theme.list_accent_fg}`,
+			"border-color": `${theme.primary} !important`,
+			color: `${theme.primary}`,
 		},
 		".expander": {
-			height: px(size.button_height),
-			"min-width": px(size.button_height),
+			height: px(component_size.button_height),
+			"min-width": px(component_size.button_height),
 		},
 		// mail view editor
 		".mail-viewer-firstLine": {
@@ -1825,9 +1816,12 @@ styles.registerStyle("main", () => {
 		".input": {
 			outline: "none",
 		},
+		".input::placeholder": {
+			color: theme.on_surface_variant,
+		},
 		"blockquote.tutanota_quote, blockquote[type=cite]": {
-			"border-left": `1px solid ${theme.content_accent}`,
-			"padding-left": px(size.hpad),
+			"border-left": `1px solid ${theme.primary}`,
+			"padding-left": px(size.spacing_12),
 			"margin-left": px(0),
 			"margin-right": px(0),
 		},
@@ -1849,18 +1843,17 @@ styles.registerStyle("main", () => {
 			position: "absolute",
 			left: 0,
 			right: 0,
-			height: px(size.list_row_height),
+			height: px(component_size.list_row_height),
 		},
 		".odd-row": {
-			"background-color": theme.list_bg,
+			"background-color": theme.surface,
 		},
 		".list-loading": {
 			bottom: 0,
 		},
-		// mail list
 		".teamLabel": {
-			color: theme.list_alternate_bg,
-			"background-color": theme.list_accent_fg,
+			color: theme.on_primary,
+			"background-color": theme.primary,
 		},
 		".ion": {
 			display: "inline-block",
@@ -1894,14 +1887,11 @@ styles.registerStyle("main", () => {
 			width: "initial",
 			"margin-left": "auto",
 		},
-		".ml-between-s > :not(:first-child)": {
-			"margin-left": px(size.hpad_small),
+		".ml-between-4 > :not(:first-child)": {
+			"margin-left": px(size.spacing_4),
 		},
-		".mt-between-s > :not(:first-child)": {
-			"margin-top": px(size.hpad_small),
-		},
-		".mt-between-m > :not(:first-child)": {
-			"margin-top": px(size.hpad),
+		".mt-between-4 > :not(:first-child)": {
+			"margin-top": px(size.spacing_4),
 		},
 		// dropdown
 		".dropdown-panel": {
@@ -1909,6 +1899,7 @@ styles.registerStyle("main", () => {
 			width: 0,
 			height: 0,
 			overflow: "hidden", // while the dropdown is slided open we do not want to show the scrollbars. overflow-y is later overwritten to show scrollbars if necessary
+			"border-radius": px(size.radius_8),
 		},
 		".dropdown-panel-scrollable": {
 			position: "absolute",
@@ -1919,42 +1910,36 @@ styles.registerStyle("main", () => {
 		".dropdown-panel.fit-content, .dropdown-panel.fit-content .dropdown-content": {
 			"min-width": "fit-content",
 		},
-		".dropdown-content:first-child": {
-			"padding-top": px(size.vpad_small),
-		},
-		".dropdown-content:last-child": {
-			"padding-bottom": px(size.vpad_small),
-		},
 		".dropdown-content, .dropdown-content > *": {
 			width: "100%",
 		},
 		".dropdown-shadow": {
-			"box-shadow": boxShadow,
+			"box-shadow": boxShadowHigh,
 		},
 		".minimized-shadow": {
 			// shadow params: 1.offset-x 2.offset-y 3.blur 4.spread 5.color
-			"box-shadow": `0px 0px 4px 2px ${theme.header_box_shadow_bg}`, // similar to header bar shadow
+			"box-shadow": boxShadowMedium,
 		},
 		//dropdown filter bar
 		".dropdown-bar": {
 			"border-style": "solid",
 			"border-width": "0px 0px 1px 0px",
-			"border-color": theme.content_border,
+			"border-color": theme.outline,
 			"padding-bottom": "1px",
 			"z-index": 1,
-			"border-radius": `${size.border_radius}px ${size.border_radius}px 0 0`,
-			color: theme.content_fg,
+			"border-radius": `${size.radius_8}px ${size.radius_8}px 0 0`,
+			color: theme.on_surface,
 		},
 		".dropdown-bar:focus": {
 			"border-style": "solid",
 			"border-width": "0px 0px 2px 0px",
-			"border-color": `${theme.content_accent}`,
+			"border-color": `${theme.primary}`,
 			"padding-bottom": "0px",
 		},
 		".dropdown-button": {
-			height: px(size.button_height),
-			"padding-left": px(size.vpad),
-			"padding-right": px(size.vpad),
+			height: px(component_size.button_height),
+			"padding-left": px(size.spacing_16),
+			"padding-right": px(size.spacing_16),
 		},
 		"button, .nav-button": {
 			border: 0,
@@ -1984,113 +1969,110 @@ styles.registerStyle("main", () => {
 				}
 			: {},
 		".button-icon": {
-			width: px(size.button_icon_bg_size),
-			height: px(size.button_icon_bg_size),
-			"border-radius": px(size.button_icon_bg_size),
-			"min-width": px(size.button_icon_bg_size),
+			width: px(component_size.button_icon_bg_size),
+			height: px(component_size.button_icon_bg_size),
+			"border-radius": px(component_size.button_icon_bg_size),
+			"min-width": px(component_size.button_icon_bg_size),
 		},
 		".login": {
 			width: "100%",
-			"border-radius": px(size.border_radius),
+			"border-radius": px(size.radius_8),
 		},
 		".small-login-button": {
 			width: "260px",
 		},
 		".button-content": {
-			height: px(size.button_height),
-			"min-width": px(size.button_height),
+			height: px(component_size.button_height),
+			"min-width": px(component_size.button_height),
 		},
 		".text-bubble": {
-			"padding-top": px(size.text_bubble_tpad),
+			"padding-top": px(size.spacing_24),
 		},
 		".bubble": {
-			"border-radius": px(size.border_radius),
-			"background-color": theme.button_bubble_bg,
-			color: theme.button_bubble_fg,
+			"border-radius": px(size.radius_8),
+			"background-color": theme.surface_container_high,
+			color: theme.on_surface,
 		},
 		".keyword-bubble": {
 			"max-width": "300px",
-			"border-radius": px(size.border_radius),
-			"margin-bottom": px(size.vpad_small / 2),
-			"margin-right": px(size.vpad_small / 2),
-			"background-color": theme.button_bubble_bg,
-			padding: `${px(size.vpad_small / 2)} ${px(size.vpad_small)} ${px(size.vpad_small / 2)} ${px(size.vpad_small)}`,
+			"border-radius": px(size.radius_8),
+			"margin-bottom": px(size.spacing_8 / 2),
+			"margin-right": px(size.spacing_8 / 2),
+			"background-color": theme.surface_container_high,
+			color: theme.on_surface,
+			padding: `${px(size.spacing_8 / 2)} ${px(size.spacing_8)} ${px(size.spacing_8 / 2)} ${px(size.spacing_8)}`,
 		},
 		".keyword-bubble-no-padding": {
 			"max-width": "300px",
-			"border-radius": px(size.border_radius),
-			margin: px(size.vpad_small / 2),
-			"background-color": theme.button_bubble_bg,
+			"border-radius": px(size.radius_8),
+			margin: px(size.spacing_8 / 2),
+			"background-color": theme.surface_container_high,
+			color: theme.on_surface,
 		},
 		".bubble-color": {
-			"background-color": theme.button_bubble_bg,
-			color: theme.button_bubble_fg,
+			"background-color": theme.surface_container_high,
+			color: theme.on_surface,
 		},
 		mark: {
-			// 'background-color': theme.content_button,
-			// 'color': theme.content_button_icon,
-			"background-color": theme.content_accent,
-			color: theme.content_button_icon_selected,
+			"background-color": theme.primary,
+			color: theme.on_primary,
 		},
 		".segmentControl": {
 			// same border as for bubble buttons
-			"border-top": `${px((size.button_height - size.button_height_bubble) / 2)} solid transparent`,
-			"border-bottom": `${px((size.button_height - size.button_height_bubble) / 2)} solid transparent`,
+			"border-top": `${px((component_size.button_height - component_size.button_height_bubble) / 2)} solid transparent`,
+			"border-bottom": `${px((component_size.button_height - component_size.button_height_bubble) / 2)} solid transparent`,
 		},
 		".segmentControl-border": {
-			border: `1px solid ${theme.content_border}`,
-			"padding-top": px(1),
-			"padding-bottom": px(1),
-			"padding-left": px(1),
-			"padding-right": px(1),
+			border: `1px solid ${theme.outline}`,
+			padding: "1px",
 		},
 		".segmentControl-border-active": {
-			border: `2px solid ${theme.content_accent}`,
-			"padding-top": px(0),
-			"padding-bottom": px(0),
-			"padding-left": px(0),
-			"padding-right": px(0),
+			border: `2px solid ${theme.primary}`,
+			color: theme.primary,
+			"font-weight": "bold",
+			padding: "2px",
 		},
 		".segmentControlItem": {
 			cursor: "pointer",
 			background: "transparent",
 		},
 		".segmentControlItem:last-child": {
-			"border-bottom-right-radius": px(size.border_radius_small),
-			"border-top-right-radius": px(size.border_radius_small),
+			"border-bottom-right-radius": px(size.radius_4),
+			"border-top-right-radius": px(size.radius_4),
 		},
 		".segmentControlItem:first-child": {
-			"border-bottom-left-radius": px(size.border_radius_small),
-			"border-top-left-radius": px(size.border_radius_small),
+			"border-bottom-left-radius": px(size.radius_4),
+			"border-top-left-radius": px(size.radius_4),
 		},
 
 		// IconSegmentControl
 		".icon-segment-control": {
-			"border-radius": px(size.border_radius),
+			"border-radius": px(size.radius_8),
 		},
 		".icon-segment-control-item": {
 			// Make thin border between items via border-right
-			"border-top": `1px solid ${stateBgHover}`,
-			"border-bottom": `1px solid ${stateBgHover}`,
-			"border-right": `0.5px solid ${stateBgHover}`,
-			width: px(size.icon_segment_control_button_width),
-			height: px(size.icon_segment_control_button_height),
+			"border-top": `1px solid ${theme.outline_variant}`,
+			"border-bottom": `1px solid ${theme.outline_variant}`,
+			"border-right": `0.5px solid ${theme.outline_variant}`,
+			width: px(component_size.icon_segment_control_button_width),
+			height: px(component_size.icon_segment_control_button_height),
 			cursor: "pointer",
 			background: "transparent",
 		},
 		".icon-segment-control-item[active]": {
-			background: stateBgHover,
+			background: theme.secondary_container,
+			color: theme.on_secondary_container,
 			"transition-duration": ".3s",
 		},
 		".icon-segment-control-item:first-child": {
-			"border-bottom-left-radius": px(size.border_radius),
-			"border-top-left-radius": px(size.border_radius),
-			"border-left": `1px solid ${stateBgHover}`,
+			"border-bottom-left-radius": px(size.radius_8),
+			"border-top-left-radius": px(size.radius_8),
+			"border-left": `1px solid ${theme.outline_variant}`,
 		},
 		".icon-segment-control-item:last-child": {
-			"border-bottom-right-radius": px(size.border_radius),
-			"border-top-right-radius": px(size.border_radius),
-			"border-right": `1px solid ${stateBgHover}`,
+			"border-bottom-right-radius": px(size.radius_8),
+			"border-top-right-radius": px(size.radius_8),
+			"border-right": `1px solid ${theme.outline_variant}`,
 		},
 		".payment-logo": {
 			// that's the size of the SVG and it seems to be a good size
@@ -2113,21 +2095,21 @@ styles.registerStyle("main", () => {
 		".wrapping-row": {
 			display: "flex",
 			"flex-flow": "row wrap",
-			"margin-right": px(-size.hpad_large),
+			"margin-right": px(-size.spacing_24),
 		},
 		".wrapping-row > *": {
 			flex: "1 0 40%",
-			"margin-right": px(size.hpad_large),
+			"margin-right": px(size.spacing_24),
 			"min-width": px(200), // makes sure the row is wrapped with too large content
 		},
 		".non-wrapping-row": {
 			display: "flex",
 			"flex-flow": "row",
-			"margin-right": px(-size.hpad_large),
+			"margin-right": px(-size.spacing_24),
 		},
 		".non-wrapping-row > *": {
 			flex: "1 0 40%",
-			"margin-right": px(size.hpad_large),
+			"margin-right": px(size.spacing_24),
 		},
 		// text input field
 		".inputWrapper": {
@@ -2146,7 +2128,7 @@ styles.registerStyle("main", () => {
 			background: "transparent",
 			width: "100%",
 			overflow: "hidden",
-			color: theme.content_fg,
+			color: theme.on_surface,
 		},
 		".input-no-clear::-ms-clear": {
 			// remove the clear (x) button from edge input fields
@@ -2162,7 +2144,7 @@ styles.registerStyle("main", () => {
 			width: "100%",
 		},
 		".table-header-border tr:first-child": {
-			"border-bottom": `1px solid ${theme.content_border}`,
+			"border-bottom": `1px solid ${theme.outline_variant}`,
 		},
 		".table td": {
 			"vertical-align": "middle",
@@ -2171,13 +2153,13 @@ styles.registerStyle("main", () => {
 			padding: 0,
 		},
 		".column-width-small": {
-			width: px(size.column_width_s_desktop),
+			width: px(layout_size.column_width_s_desktop),
 		},
 		".column-width-largest": {},
 		".buyOptionBox": {
 			position: "relative",
 			display: "inline-block",
-			border: `1px solid ${theme.content_border}`,
+			border: `1px solid ${theme.outline}`,
 			width: "100%",
 			padding: px(10),
 		},
@@ -2230,10 +2212,10 @@ styles.registerStyle("main", () => {
 			},
 		},
 		".buyOptionBox.active": {
-			border: `1px solid ${theme.content_accent}`,
+			border: `1px solid ${theme.primary}`,
 		},
 		".buyOptionBox.highlighted": {
-			border: `2px solid ${theme.content_accent}`,
+			border: `2px solid ${theme.primary}`,
 			padding: px(9),
 		},
 		".info-badge": {
@@ -2245,7 +2227,7 @@ styles.registerStyle("main", () => {
 			height: px(16),
 			"text-align": "center",
 			color: "white",
-			background: theme.content_button,
+			background: theme.on_surface_variant,
 		},
 		".tooltip": {
 			position: "relative",
@@ -2253,8 +2235,8 @@ styles.registerStyle("main", () => {
 		},
 		".tooltip .tooltiptext": {
 			visibility: "hidden",
-			"background-color": theme.content_button,
-			color: theme.content_bg,
+			"background-color": theme.on_surface_variant,
+			color: theme.surface,
 			"text-align": "center",
 			padding: "5px 5px",
 			"border-radius": px(6),
@@ -2283,8 +2265,7 @@ styles.registerStyle("main", () => {
 			},
 		},
 		".info-badge:active": {
-			background: theme.content_bg,
-			color: theme.content_button,
+			background: theme.on_surface,
 		},
 		".tooltip:hover .tooltiptext, .tooltip[expanded=true] .tooltiptext": {
 			visibility: "visible",
@@ -2292,11 +2273,11 @@ styles.registerStyle("main", () => {
 		".ribbon-horizontal": {
 			position: "absolute",
 			"margin-bottom": "80px",
-			background: theme.content_accent,
+			background: theme.primary,
 			top: "69px",
 			left: "-6px",
 			right: "-6px",
-			color: theme.content_bg,
+			color: theme.surface,
 		},
 		".ribbon-horizontal.nota": {
 			background: theme.tuta_color_nota,
@@ -2312,7 +2293,7 @@ styles.registerStyle("main", () => {
 			position: "absolute",
 			height: 0,
 			width: 0,
-			"border-left": `6px solid ${theme.content_accent}`,
+			"border-left": `6px solid ${theme.primary}`,
 			"border-bottom": "6px solid transparent",
 			bottom: "-6px",
 			right: 0,
@@ -2331,7 +2312,7 @@ styles.registerStyle("main", () => {
 			position: "absolute",
 			height: 0,
 			width: 0,
-			"border-right": `6px solid ${theme.content_accent}`,
+			"border-right": `6px solid ${theme.primary}`,
 			"border-bottom": "6px solid transparent",
 			bottom: "-6px",
 			left: 0,
@@ -2363,9 +2344,9 @@ styles.registerStyle("main", () => {
 			// reset browser style
 			margin: "0",
 			display: "block",
-			width: px(size.checkbox_size),
-			height: px(size.checkbox_size),
-			border: `2px solid ${theme.content_button}`,
+			width: px(component_size.checkbox_size),
+			height: px(component_size.checkbox_size),
+			border: `${px(component_size.checkbox_border_size)} solid ${theme.outline}`,
 			"border-radius": "3px",
 			position: "relative",
 			transition: `border ${DefaultAnimationTime}ms cubic-bezier(.4,.0,.23,1)`,
@@ -2375,7 +2356,7 @@ styles.registerStyle("main", () => {
 			opacity: "1",
 		},
 		".checkbox:checked": {
-			border: `7px solid ${theme.content_accent}`,
+			border: `7px solid ${theme.primary}`,
 			opacity: "1",
 		},
 		".checkbox:checked:after": {
@@ -2393,7 +2374,7 @@ styles.registerStyle("main", () => {
 			right: 0,
 			bottom: 0,
 			"line-height": "12px",
-			color: theme.content_bg,
+			color: theme.surface,
 			"align-items": "center",
 			width: "12px",
 			height: "12px",
@@ -2406,7 +2387,7 @@ styles.registerStyle("main", () => {
 			// position relative to the inner size of checkbox (inside the border)
 			top: "-10px",
 			left: "-10px",
-			"border-radius": px(size.border_radius),
+			"border-radius": px(size.radius_8),
 			// position is relate to padding and we animate padding so to keep the checkbox in place we also animate position so it looks like it doesn't move
 			transition: `all ${DefaultAnimationTime}ms cubic-bezier(.4,.0,.23,1)`,
 		},
@@ -2416,66 +2397,42 @@ styles.registerStyle("main", () => {
 			left: "-15px",
 		},
 		".checkbox:hover:before": {
-			background: stateBgHover,
+			background: theme.state_bg_hover,
 		},
 		".checkbox:active:before": {
-			background: stateBgActive,
+			background: theme.state_bg_active,
 		},
 		".list-checkbox": {
 			opacity: "0.4",
 		},
 		".calendar-alternate-background": {
-			background: `${theme.list_alternate_bg} !important`,
+			background: `${theme.surface_container} !important`,
 		},
 		".calendar-day:hover": {
-			background: theme.list_alternate_bg,
-		},
-		".calendar-day:hover .calendar-day-header-button": {
-			opacity: 1,
-		},
-		".calendar-day-header-button": {
-			opacity: 0,
-		},
-		".calendar-hour": {
-			"border-bottom": `1px solid ${theme.content_border}`,
-			height: px(size.calendar_hour_height),
-			flex: "1 0 auto",
-		},
-		".calendar-hour:hover": {
-			background: theme.list_alternate_bg,
+			background: theme.surface_container,
 		},
 		".calendar-column-border": {
-			"border-right": `1px solid ${theme.list_border}`,
+			"border-right": `1px solid ${theme.outline_variant}`,
 		},
 		".calendar-column-border:nth-child(7)": {
 			"border-right": "none",
 		},
-		".calendar-hour-margin": {
-			"margin-left": px(size.calendar_hour_width),
-		},
-		".calendar-hour-column": {
-			width: px(size.calendar_hour_width),
-		},
-		".calendar-days-header-row": {
-			height: px(size.calendar_days_header_height),
-		},
 		".calendar-day": {
-			"border-top": `1px solid ${theme.list_border}`,
+			"border-top": `1px solid ${theme.outline_variant}`,
 			transition: "background 0.4s",
-			background: theme.list_bg,
+			background: theme.surface,
 		},
 		".cursor-pointer": {
 			cursor: "pointer",
 		},
 		".calendar-day-indicator": {
 			// overridden for mobile
-			height: px(size.calendar_days_header_height),
-			"line-height": px(size.calendar_days_header_height),
+			"line-height": px(layout_size.calendar_days_header_height),
 			"text-align": "center",
 			"font-size": "14px",
 		},
 		".calendar-day .calendar-day-indicator:hover": {
-			background: theme.list_message_bg,
+			background: theme.surface_container,
 			opacity: 0.7,
 		},
 		".calendar-day-number": {
@@ -2484,33 +2441,40 @@ styles.registerStyle("main", () => {
 		},
 		".calendar-event": {
 			"border-radius": px(4),
-			border: ` ${size.calendar_event_border}px solid ${theme.content_bg}`,
+			border: ` ${layout_size.calendar_event_border}px solid ${theme.surface}`,
 			"padding-left": "4px",
 			"font-weight": "600",
 			"box-sizing": "content-box",
 		},
 		".calendar-current-day-circle": {
-			"background-color": theme.content_button,
+			"background-color": theme.primary,
+		},
+		".calendar-current-day-circle-small": {
+			"background-color": theme.primary,
 		},
 		".calendar-selected-day-circle": {
-			"background-color": theme.content_accent,
+			"background-color": theme.secondary_container,
 		},
 		".weekday-button-unselected-circle": {
-			border: `${px(1)} solid ${theme.content_accent}`,
+			border: `${px(1)} solid ${theme.primary}`,
 		},
 		".weekday-button-unselected-text": {
-			color: theme.content_accent,
+			color: theme.primary,
 		},
 		".weekday-selector": {
-			margin: `${px(size.vpad_small)} 0`,
+			margin: `${px(size.spacing_8)} 0`,
 			height: "44px",
 		},
 		".calendar-current-day-text": {
-			color: theme.content_bg,
+			color: theme.on_primary,
+			"font-weight": "bold",
+		},
+		".calendar-current-day-text-small": {
+			color: theme.on_primary,
 			"font-weight": "bold",
 		},
 		".calendar-selected-day-text": {
-			color: theme.content_bg,
+			color: theme.on_secondary_container,
 			"font-weight": "bold",
 		},
 		".animation-reverse": {
@@ -2560,13 +2524,19 @@ styles.registerStyle("main", () => {
 			},
 		},
 		".calendar-bubble-more-padding-day .calendar-event": {
-			border: `1px solid ${theme.list_bg}`,
+			border: `1px solid ${theme.surface}`,
 		},
 		".darker-hover:hover": {
 			filter: "brightness(95%)",
 		},
 		".darkest-hover:hover": {
 			filter: "brightness(70%)",
+		},
+		".event-continues-left-indicator": {
+			"clip-path": "polygon(100% 0, 100% 100%, 0% 100%, 100% 50%, 0% 0%)",
+		},
+		".event-continues-right-indicator": {
+			"clip-path": "polygon(0 0%, 100% 50%, 0 100%)",
 		},
 		".event-continues-left": {
 			"border-top-left-radius": 0,
@@ -2614,7 +2584,7 @@ styles.registerStyle("main", () => {
 		},
 		".calendar-long-events-header": {
 			overflow: "hidden",
-			"border-bottom": `1px solid ${theme.content_border}`,
+			"border-bottom": `1px solid ${theme.outline_variant}`,
 		},
 		".calendar-month-week-number": {
 			"font-size": "12px",
@@ -2648,18 +2618,7 @@ styles.registerStyle("main", () => {
 		".custom-color-container .inputWrapper:before": {
 			// slash in content is content alt. so that it's ignored by screen readers
 			content: '"#" / ""',
-			color: theme.content_message_bg,
-		},
-		".success-container": {
-			"background-color": theme.success_container_color,
-			color: theme.on_success_container_color,
-		},
-		".error-container": {
-			"background-color": theme.error_container_color,
-			color: theme.on_error_container_color,
-		},
-		".on-success-container-color": {
-			color: theme.on_success_container_color,
+			color: theme.on_surface,
 		},
 		".calendar-invite-field": {
 			"min-width": "80px",
@@ -2675,7 +2634,7 @@ styles.registerStyle("main", () => {
 			position: "sticky",
 		},
 		".text-fade": {
-			color: theme.content_button,
+			color: theme.on_surface_variant,
 		},
 		".no-appearance input, .no-appearance input::-webkit-outer-spin-button, .no-appearance input::-webkit-inner-spin-button": {
 			"-webkit-appearance": "none",
@@ -2692,7 +2651,7 @@ styles.registerStyle("main", () => {
 				"justify-content": "center",
 			},
 			".column-width-small": {
-				width: px(size.column_width_s_mobile),
+				width: px(layout_size.column_width_s_mobile),
 			},
 			// Speed up SVG rendering in the onboarding wizard by disabling antialiasing
 			"svg, img": {
@@ -2709,18 +2668,18 @@ styles.registerStyle("main", () => {
 			cursor: "pointer",
 		},
 		".switch-month-button svg": {
-			fill: theme.navigation_button,
+			fill: theme.on_surface_variant,
 		},
 		"drawer-menu": {
-			width: px(size.drawer_menu_width),
+			width: px(layout_size.drawer_menu_width),
 			background: getNavigationMenuBg(),
 		},
 		".menu-shadow": {
 			"box-shadow": "0 4px 5px 2px rgba(0,0,0,0.14), 0 4px 5px 2px rgba(0,0,0,0.14), 0 4px 5px 2px rgba(0,0,0,0.14)",
 		},
 		".big-input input": {
-			"font-size": px(size.font_size_base * 1.4),
-			"line-height": `${px(size.font_size_base * 1.4 + 2)} !important`,
+			"font-size": px(font_size.base * 1.4),
+			"line-height": `${px(font_size.base * 1.4 + 2)} !important`,
 		},
 		".hidden-until-focus": {
 			position: "absolute",
@@ -2734,23 +2693,22 @@ styles.registerStyle("main", () => {
 			transform: "translate(-50%)",
 			opacity: "1",
 		},
-		[`@media (max-width: ${size.desktop_layout_width - 1}px)`]: {
+		[`@media (max-width: ${layout_size.desktop_layout_width - 1}px)`]: {
 			".main-view": {
 				top: 0,
 				bottom: 0,
 			},
 			".fixed-bottom-right": {
-				bottom: px(size.hpad_large_mobile + size.bottom_nav_bar),
-				right: px(size.hpad_large_mobile),
+				bottom: px(size.spacing_8 + component_size.bottom_nav_bar),
+				right: px(size.spacing_8),
 			},
 			".custom-logo": {
 				width: px(40),
 			},
 			".notification-overlay-content": {
-				"padding-top": px(size.vpad_small),
+				"padding-top": px(size.spacing_8),
 			},
 			".calendar-day-indicator": {
-				height: "20px",
 				"line-height": "20px",
 				"text-align": "center",
 				"font-size": "14px",
@@ -2760,7 +2718,7 @@ styles.registerStyle("main", () => {
 				width: "20px",
 			},
 			".calendar-hour-margin": {
-				"margin-left": px(size.calendar_hour_width_mobile),
+				"margin-left": px(layout_size.calendar_hour_width_mobile),
 			},
 			".calendar-month-week-number": {
 				"font-size": "10px",
@@ -2791,7 +2749,7 @@ styles.registerStyle("main", () => {
 			},
 			".noscreen": {
 				display: "initial",
-				color: `${lightTheme.content_fg}`,
+				color: `${lightTheme.on_surface}`,
 			},
 			".print": {
 				color: "black",
@@ -2801,8 +2759,8 @@ styles.registerStyle("main", () => {
 			"html, body": {
 				position: "initial",
 				overflow: "visible !important",
-				color: lightTheme.content_fg,
-				"background-color": `${lightTheme.content_bg} !important`,
+				color: lightTheme.on_surface,
+				"background-color": `${lightTheme.surface} !important`,
 			},
 			// overwrite position "fixed" otherwise only one page will be printed.
 			".header-nav": {
@@ -2833,8 +2791,8 @@ styles.registerStyle("main", () => {
 				display: "block",
 			},
 			'.mail-viewer, [data-testid="collapsed-mail-view"]': {
-				color: `${lightTheme.content_fg} !important`,
-				"background-color": `${lightTheme.content_bg}`,
+				color: `${lightTheme.on_surface} !important`,
+				"background-color": `${lightTheme.on_surface}`,
 			},
 			"#mail-body": {
 				overflow: "visible",
@@ -2910,8 +2868,8 @@ styles.registerStyle("main", () => {
 			"text-align": "left",
 		},
 		".bonus-month": {
-			background: theme.content_accent,
-			color: theme.content_bg,
+			background: theme.primary,
+			color: theme.surface,
 			width: px(100),
 			"min-width": px(100),
 			height: px(100),
@@ -2919,7 +2877,7 @@ styles.registerStyle("main", () => {
 			"border-radius": px(100),
 		},
 		".day-events-indicator": {
-			"background-color": theme.content_accent,
+			"background-color": theme.primary,
 			"border-radius": "50%",
 			display: "inline-block",
 			height: "5px",
@@ -2930,14 +2888,8 @@ styles.registerStyle("main", () => {
 			left: 0,
 			right: 0,
 		},
-		".faded-day": {
-			color: theme.navigation_menu_icon,
-		},
-		".faded-text": {
-			color: theme.content_message_bg,
-		},
 		".svg-text-content-bg text": {
-			fill: theme.content_bg,
+			fill: theme.surface,
 		},
 		".overflow-auto": {
 			overflow: "auto",
@@ -2947,19 +2899,19 @@ styles.registerStyle("main", () => {
 			"border-radius": "25%",
 		},
 		".posb-ml": {
-			bottom: px(size.vpad_ml),
+			bottom: px(size.spacing_24),
 		},
 		".posr-ml": {
-			right: px(size.vpad_ml),
+			right: px(size.spacing_24),
 		},
 		".mb-small-line-height": {
-			"margin-bottom": px(size.line_height * size.font_size_small),
+			"margin-bottom": px(font_size.line_height * font_size.small),
 		},
 		".tutaui-card-container": {
 			"box-sizing": "border-box",
-			"background-color": theme.content_bg,
-			"border-radius": px(size.border_radius_medium),
-			padding: px(size.vpad_small),
+			"background-color": theme.surface,
+			"border-radius": px(size.radius_8),
+			padding: px(size.spacing_8),
 			height: "fit-content",
 		},
 		".tutaui-card-container-divide": {
@@ -2967,47 +2919,48 @@ styles.registerStyle("main", () => {
 		},
 		".tutaui-card-container-divide > *:not(:last-child)": {
 			"border-radius": "0",
-			"border-bottom": `1px solid ${theme.button_bubble_bg}`,
+			"border-bottom": `1px solid ${theme.outline_variant}`,
 		},
 		".tutaui-text-field, .child-text-editor [role='textbox']": {
 			display: "block",
 			"box-sizing": "border-box",
 			"background-color": "transparent",
 			border: "none",
-			"border-radius": px(size.border_radius_medium),
-			color: theme.content_fg,
+			"border-radius": px(size.radius_8),
+			color: theme.on_surface,
 			width: "100%",
-			padding: px(size.vpad_small),
+			padding: px(size.spacing_8),
 			transition: `background-color .1s ease-out`,
-			"caret-color": theme.content_accent,
+			"caret-color": theme.primary,
 		},
 		".child-text-editor [role='textbox']:focus-visible": {
 			outline: "medium invert color",
 		},
 		".tutaui-text-field:focus, .child-text-editor [role='textbox']:focus": {
-			"background-color": theme.button_bubble_bg,
+			"background-color": theme.surface_container_high,
 		},
 		".tutaui-text-field::placeholder": {
-			color: theme.content_message_bg,
+			color: theme.on_surface_variant,
 		},
 		".text-editor-placeholder": {
 			position: "absolute",
-			top: px(size.vpad_small),
-			left: px(size.vpad_small),
-			color: theme.content_message_bg,
+			top: px(size.spacing_8),
+			left: px(size.spacing_8),
+			color: theme.on_surface_variant,
 		},
 		".tutaui-switch": {
 			display: "flex",
 			"align-items": "center",
-			gap: px(size.vpad_small),
+			gap: px(size.spacing_8),
 		},
 		".tutaui-toggle-pill": {
 			position: "relative",
 			display: "block",
 			width: "45.5px",
 			height: "28px",
-			"background-color": theme.content_message_bg,
-			"border-radius": px(size.vpad_small * 4),
+			"background-color": theme.surface_container_high,
+			"border-radius": px(size.spacing_8 * 4),
+			border: `2px solid ${theme.outline}`,
 			transition: `background-color ${DefaultAnimationTime}ms ease-out`,
 		},
 		".tutaui-toggle-pill:after": {
@@ -3021,41 +2974,50 @@ styles.registerStyle("main", () => {
 			"-ms-transform": "translateY(-50%)",
 			transform: "translateY(-50%)",
 			margin: "0 4px",
-			"background-color": "#fff",
+			"background-color": theme.outline,
 			"border-radius": "50%",
 			left: 0,
 			transition: `left ${DefaultAnimationTime}ms ease-out`,
 		},
-		".payment-interval.light:after": {
-			"background-color": "#fff",
-		},
-		".payment-interval.dark:after": {
-			"background-color": "#303030",
-		},
 		".tutaui-toggle-pill.checked": {
-			"background-color": theme.content_accent,
+			"background-color": theme.primary,
+			border: `2px solid ${theme.primary}`,
 		},
 		".tutaui-toggle-pill.checked:after": {
 			left: "calc(100% - 29px)",
+			"background-color": theme.on_primary,
 		},
 		".tutaui-toggle-pill input[type='checkbox']": {
 			"z-index": "-1",
 			visibility: "hidden",
 			position: "absolute",
 		},
+		".payment-interval": {
+			"background-color": theme.surface_container_high,
+		},
+		".payment-interval.checked": {
+			border: `2px solid ${theme.outline}`,
+			"background-color": theme.surface_container_high,
+		},
+		".payment-interval:after": {
+			"background-color": theme.on_surface,
+		},
+		".payment-interval.checked:after": {
+			"background-color": theme.on_surface,
+		},
 		".tutaui-select-trigger": {
 			display: "flex",
 			"justify-content": "space-between",
 			"align-items": "center",
-			gap: px(size.vpad_small),
+			gap: px(size.spacing_8),
 		},
 		".fit-content": {
 			width: "fit-content",
 		},
 		".tutaui-button-outline": {
-			border: "2px solid",
-			"border-radius": px(size.border_radius_medium),
-			padding: px(size.border_radius_medium),
+			border: "1px solid",
+			"border-radius": px(size.radius_8),
+			padding: px(size.radius_8),
 			"text-align": "center",
 		},
 		".unstyled-list": {
@@ -3066,13 +3028,13 @@ styles.registerStyle("main", () => {
 		".time-selection-grid": {
 			display: "grid",
 			"grid-template-columns": "2fr 6fr 3fr",
-			"grid-gap": px(size.vpad_small),
+			"grid-gap": px(size.spacing_8),
 			"align-items": "center",
 		},
 		".repeats-every-grid": {
 			display: "grid",
 			"grid-template-columns": "6fr 3fr",
-			"column-gap": px(size.vpad_small),
+			"column-gap": px(size.spacing_8),
 		},
 		".time-selection-grid > *": {
 			overflow: "hidden",
@@ -3110,8 +3072,8 @@ styles.registerStyle("main", () => {
 			height: "20px",
 		},
 		".outlined": {
-			border: `2px solid ${theme.content_border}`,
-			"border-radius": px(size.border_radius_medium),
+			border: `2px solid ${theme.outline}`,
+			"border-radius": px(size.radius_8),
 		},
 		".capitalize": {
 			"text-transform": "capitalize",
@@ -3123,10 +3085,10 @@ styles.registerStyle("main", () => {
 			height: "fit-content",
 		},
 		".min-h-s": {
-			"min-height": px(size.vpad_xl * 4),
+			"min-height": px(size.spacing_48 * 4),
 		},
 		".border-content-message-bg": {
-			"border-color": theme.content_message_bg,
+			"border-color": theme.outline,
 		},
 		".border-radius-bottom-0": {
 			"border-bottom-right-radius": px(0),
@@ -3159,21 +3121,21 @@ styles.registerStyle("main", () => {
 		},
 		".search-highlight": {
 			"font-weight": "bold",
-			"background-color": theme.highlight_bg,
-			color: theme.highlight_fg,
+			"background-color": theme.secondary_container,
+			color: theme.on_secondary_container,
 			"border-radius": "3px",
 		},
 		".clip": {
 			overflow: "clip",
 		},
 		".skeleton-bg-1": {
-			background: theme.navigation_border,
+			background: theme.surface_container_high,
 		},
 		".skeleton-bg-2": {
-			background: theme.navigation_bg,
+			background: theme.surface,
 		},
 		".skeleton-border-1": {
-			"border-color": theme.navigation_border,
+			"border-color": theme.surface_container_high,
 		},
 		".skeleton:after": {
 			position: "absolute",
@@ -3181,9 +3143,9 @@ styles.registerStyle("main", () => {
 			width: "100%",
 			height: "100%",
 			background: `linear-gradient(90deg,
-				${hexToRGBAString(theme.content_button_icon, 0)},
-				${hexToRGBAString(theme.content_button_icon, 0.3)},
-				${hexToRGBAString(theme.content_button_icon, 0)})`,
+				${hexToRGBAString(theme.on_surface_variant, 0)},
+				${hexToRGBAString(theme.on_surface_variant, 0.1)},
+				${hexToRGBAString(theme.on_surface_variant, 0)})`,
 			transform: "translateX(-100%)",
 			animation: "1.5s loading ease-in-out infinite",
 		},
@@ -3193,21 +3155,19 @@ styles.registerStyle("main", () => {
 			},
 		},
 		".time-indicator": {
-			position: "absolute",
-			background: theme.content_accent,
+			background: theme.primary,
 			height: px(2),
 			width: "100%",
-			"z-index": 1,
 		},
-		".time-indicator:before": {
-			content: "''",
-			display: "block",
-			width: "12px",
-			height: "12px",
-			background: theme.content_accent,
-			position: "absolute",
-			transform: "translate(-50%, calc(-50% + 1px))",
-			"border-radius": "50%",
+		".time-badge": {
+			background: theme.primary,
+			"border-radius": px(size.radius_12),
+			color: theme.on_primary,
+			"line-height": px(20),
+		},
+		".interactable-cell:hover": {
+			background: theme.surface_container,
+			cursor: "pointer",
 		},
 	}
 })

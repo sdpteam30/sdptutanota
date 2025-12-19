@@ -1,15 +1,16 @@
 import o from "@tutao/otest"
-import { APPLICATION_TYPES_HASH_HEADER, isSuspensionResponse, RestClient } from "../../../../../src/common/api/worker/rest/RestClient.js"
+import { APPLICATION_TYPES_HASH_HEADER, RestClient } from "../../../../../src/common/api/worker/rest/RestClient.js"
 import { HttpMethod, MediaType, ServerModelInfo } from "../../../../../src/common/api/common/EntityFunctions.js"
 import { ResourceError } from "../../../../../src/common/api/common/error/RestError.js"
 import { defer, noOp } from "@tutao/tutanota-utils"
 import http from "node:http"
-import { SuspensionHandler } from "../../../../../src/common/api/worker/SuspensionHandler.js"
+import { isSuspensionResponse, SuspensionHandler } from "../../../../../src/common/api/worker/SuspensionHandler.js"
 import express from "express"
 import bodyParser from "body-parser"
 import type { AddressInfo } from "node:net"
 import { domainConfigStub } from "../../../TestUtils.js"
 import { matchers, object, reset, verify } from "testdouble"
+import { ClientPlatform } from "../../../../../src/common/misc/ClientDetector"
 
 // only runs in node, it spins up a local server and connects to it
 
@@ -24,7 +25,7 @@ o.spec("RestClient", function () {
 		deferRequest: (request) => request(),
 	}
 	const serverModelInfoMock: ServerModelInfo = object()
-	const restClient = new RestClient(suspensionHandlerMock as SuspensionHandler, domainConfigStub, serverModelInfoMock)
+	const restClient = new RestClient(suspensionHandlerMock as SuspensionHandler, domainConfigStub, serverModelInfoMock, String(ClientPlatform.UNKNOWN))
 	o.spec("integration tests", function () {
 		let app = express()
 		let server: http.Server

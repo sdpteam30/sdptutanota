@@ -1,17 +1,16 @@
 import { BlobElementEntity, Entity, ListElementEntity, ServerModelParsedInstance, SomeEntity, TypeModel } from "../../common/EntityTypes.js"
-import { customIdToBase64Url, ensureBase64Ext, firstBiggerThanSecond } from "../../common/utils/EntityUtils.js"
+import { customIdToBase64Url, ensureBase64Ext, firstBiggerThanSecond, GENERATED_MIN_ID } from "../../common/utils/EntityUtils.js"
 import { CacheStorage, LastUpdateTime } from "./DefaultEntityRestCache.js"
-import { assertNotNull, clone, filterNull, getFromMap, getTypeString, remove, TypeRef } from "@tutao/tutanota-utils"
+import { assertNotNull, clone, filterNull, getFromMap, getTypeString, newPromise, Nullable, parseTypeString, remove, TypeRef } from "@tutao/tutanota-utils"
 import { CustomCacheHandlerMap } from "./cacheHandler/CustomCacheHandler.js"
 import { Type as TypeId } from "../../common/EntityConstants.js"
 import { ProgrammingError } from "../../common/error/ProgrammingError.js"
 import { AttributeModel } from "../../common/AttributeModel"
 import { ModelMapper } from "../crypto/ModelMapper"
-import { parseTypeString } from "@tutao/tutanota-utils/dist/TypeRef"
 import { ServerTypeModelResolver } from "../../common/EntityFunctions"
 import { expandId } from "./RestClientIdUtils"
-import { Nullable } from "@tutao/tutanota-utils/dist/Utils"
 import { hasError } from "../../common/utils/ErrorUtils"
+import type { SpamClassificationModel } from "../../../../mail-app/workerUtils/spamClassification/SpamClassifier"
 
 /** Cache for a single list. */
 type ListCache = {
@@ -43,7 +42,10 @@ export class EphemeralCacheStorage implements CacheStorage {
 	private readonly entities: Map<string, Map<Id, ServerModelParsedInstance>> = new Map()
 	private readonly lists: Map<string, ListTypeCache> = new Map()
 	private readonly blobEntities: Map<string, BlobElementTypeCache> = new Map()
+	private readonly spamClassificationModelCache: Map<Id, SpamClassificationModel> = new Map()
 	private lastUpdateTime: number | null = null
+	private lastTrainingDataId: Id = GENERATED_MIN_ID
+	private lastTrainedFromScratchTime: number | null = null
 	private userId: Id | null = null
 	private lastBatchIdPerGroup = new Map<Id, Id>()
 
@@ -57,7 +59,7 @@ export class EphemeralCacheStorage implements CacheStorage {
 		this.userId = userId
 	}
 
-	deinit() {
+	async deinit(): Promise<void> {
 		this.userId = null
 		this.entities.clear()
 		this.lists.clear()
@@ -221,6 +223,7 @@ export class EphemeralCacheStorage implements CacheStorage {
 			console.warn(
 				`Trying to put parsed instance with _errors to ephemeral cache. Type: ${typeModel.app}/${typeModel.name}, Id: ["${listId}", "${elementId}"]`,
 			)
+			return
 		}
 		elementId = ensureBase64Ext(typeModel, elementId)
 
@@ -287,15 +290,14 @@ export class EphemeralCacheStorage implements CacheStorage {
 			// if the element already exists in the cache, overwrite it
 			// add new element to existing list if necessary
 			cache.elements.set(elementId, entity)
-			const typeModel = await this.typeModelResolver.resolveServerTypeReference(typeRef)
-			if (await this.isElementIdInCacheRange(typeRef, listId, customIdToBase64Url(typeModel, elementId))) {
-				this.insertIntoRange(cache.allRange, elementId)
-			}
+			// always put the item into allRange(backing array only used by ephemeralCache), even if it has not updated
+			// the range yet. It is a better option to have the item and range not updated yet than the opposite
+			this.insertIntoAllRange(cache.allRange, elementId)
 		}
 	}
 
 	/** precondition: elementId is converted to base64ext if necessary */
-	private insertIntoRange(allRange: Array<Id>, elementId: Id) {
+	private insertIntoAllRange(allRange: Array<Id>, elementId: Id) {
 		for (let i = 0; i < allRange.length; i++) {
 			const rangeElement = allRange[i]
 			if (firstBiggerThanSecond(rangeElement, elementId)) {
@@ -417,6 +419,30 @@ export class EphemeralCacheStorage implements CacheStorage {
 
 	async putLastUpdateTime(value: number): Promise<void> {
 		this.lastUpdateTime = value
+	}
+
+	async getLastTrainingDataIndexId(): Promise<Id> {
+		return this.lastTrainingDataId
+	}
+
+	async setLastTrainingDataIndexId(id: Id): Promise<void> {
+		this.lastTrainingDataId = id
+	}
+
+	async getLastTrainedFromScratchTime(): Promise<number> {
+		return this.lastTrainedFromScratchTime ?? Date.now()
+	}
+
+	async setLastTrainedFromScratchTime(ms: number): Promise<void> {
+		this.lastTrainedFromScratchTime = ms
+	}
+
+	async setSpamClassificationModel(model: SpamClassificationModel): Promise<void> {
+		this.spamClassificationModelCache.set(model.ownerGroup, model)
+	}
+
+	async getSpamClassificationModel(ownerGroup: Id): Promise<Nullable<SpamClassificationModel>> {
+		return this.spamClassificationModelCache.get(ownerGroup) ?? null
 	}
 
 	async getWholeList<T extends ListElementEntity>(typeRef: TypeRef<T>, listId: Id): Promise<Array<T>> {

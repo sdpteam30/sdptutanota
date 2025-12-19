@@ -3,7 +3,7 @@ import { formatMonthWithFullYear } from "../../../../common/misc/Formatter.js"
 import { incrementMonth, isSameDay } from "@tutao/tutanota-utils"
 import { DaySelector } from "./DaySelector.js"
 import renderSwitchMonthArrowIcon from "../../../../common/gui/base/buttons/ArrowButton.js"
-import { isDesktop } from "../../../../common/api/common/Env"
+import { styles } from "../../../../common/gui/styles"
 
 export interface DaySelectorSidebarAttrs {
 	selectedDate: Date
@@ -33,8 +33,8 @@ export class DaySelectorSidebar implements Component<DaySelectorSidebarAttrs> {
 		const disableHighlight = !isSameDay(vnode.attrs.selectedDate, this.currentDate)
 
 		return m(
-			isDesktop() ? ".plr-m.mt-form" : ".plr-m.mt-s",
-			m(".elevated-bg.pt-s.pb-m.border-radius.flex.flex-column", [
+			styles.isMobileDesktopLayout() ? ".plr-12.mt-8" : ".plr-12.mt-16",
+			m(".elevated-bg.pt-8.pb-12.border-radius.flex.flex-column", [
 				this.renderPickerHeader(this.currentDate),
 				m(".flex-grow.overflow-hidden", [
 					m(DaySelector, {
@@ -59,10 +59,10 @@ export class DaySelectorSidebar implements Component<DaySelectorSidebarAttrs> {
 	}
 
 	private renderPickerHeader(date: Date): Children {
-		return m(".flex.flex-space-between.pb.items-center.mlr-xs", [
+		return m(".flex.flex-space-between.pb-16.items-center.mlr-4", [
 			renderSwitchMonthArrowIcon(false, 24, () => this.onMonthChange(false)),
 			m(
-				".b.mlr-s",
+				".b.mlr-4",
 				{
 					style: {
 						fontSize: "14px",

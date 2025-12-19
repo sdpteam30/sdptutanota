@@ -51,7 +51,7 @@ export class ContactEventPopup implements ModalComponent {
 
 	view(): Children {
 		return m(
-			".abs.elevated-bg.plr.pb.border-radius.dropdown-shadow.flex.flex-column",
+			".abs.elevated-bg.plr-12.pb-16.border-radius.dropdown-shadow.flex.flex-column",
 			{
 				style: {
 					// minus margin, need to apply it now to not overflow later
@@ -77,7 +77,7 @@ export class ContactEventPopup implements ModalComponent {
 				m(".flex.flex-end", [this.renderEditButton(), this.renderCloseButton()]),
 				m(".flex-grow", [
 					m(ContactPreviewView, {
-						event: this.model.event,
+						event: this.model.calendarEvent,
 						contact: this.model.contact,
 					}),
 				]),

@@ -1,8 +1,8 @@
 import { AssociationType, Cardinality, Type, ValueType } from "./EntityConstants.js"
 import { TypeRef } from "@tutao/tutanota-utils"
 import type { BlobElement, Element, ListElement } from "./utils/EntityUtils.js"
-import { Nullable } from "@tutao/tutanota-utils/dist/Utils"
-import { AppName } from "@tutao/tutanota-utils/dist/TypeRef"
+import { Nullable } from "@tutao/tutanota-utils"
+import { AppName } from "@tutao/tutanota-utils"
 import { BucketKey } from "../entities/sys/TypeRefs"
 
 /**
@@ -191,7 +191,7 @@ export type ParsedAssociation = EncryptedParsedAssociation
 
 /** a parsed instance after/before going through decryption/encryption */
 export type ParsedInstance = Record<AttributeId, Nullable<ParsedValue> | ParsedAssociation> & {
-	/** crypto errors that happened during serialization are stored here for debugging purposes */
+	/** crypto errors that happened during deserialization/serialization */
 	_errors?: Record<AttributeId, string>
 	/** the ivs used to encrypt final fields on the instance */
 	_finalIvs: Record<AttributeId, Nullable<Uint8Array>>

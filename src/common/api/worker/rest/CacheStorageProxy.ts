@@ -1,11 +1,11 @@
 import { CacheStorage, LastUpdateTime, Range } from "./DefaultEntityRestCache.js"
 import { ProgrammingError } from "../../common/error/ProgrammingError"
 import { Entity, ListElementEntity, ServerModelParsedInstance, SomeEntity } from "../../common/EntityTypes"
-import { TypeRef } from "@tutao/tutanota-utils"
+import { Nullable, TypeRef } from "@tutao/tutanota-utils"
 import { OfflineStorage, OfflineStorageInitArgs } from "../offline/OfflineStorage.js"
 import { EphemeralCacheStorage, EphemeralStorageInitArgs } from "./EphemeralCacheStorage"
 import { CustomCacheHandlerMap } from "./cacheHandler/CustomCacheHandler.js"
-import { Nullable } from "@tutao/tutanota-utils/dist/Utils"
+import type { SpamClassificationModel } from "../../../../mail-app/workerUtils/spamClassification/SpamClassifier"
 
 export interface EphemeralStorageArgs extends EphemeralStorageInitArgs {
 	type: "ephemeral"
@@ -93,7 +93,8 @@ export class LateInitializedCacheStorageImpl implements CacheStorageLateInitiali
 	}
 
 	async deInitialize(): Promise<void> {
-		this._inner?.deinit()
+		await this._inner?.deinit()
+		this._inner = null
 	}
 
 	private async getStorage(

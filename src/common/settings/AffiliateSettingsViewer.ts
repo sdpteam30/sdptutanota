@@ -1,12 +1,11 @@
-import m from "mithril"
-import Mithril, { Children } from "mithril"
+import m, { Children } from "mithril"
 import { UpdatableSettingsViewer } from "./Interfaces.js"
 import { EntityUpdateData } from "../api/common/utils/EntityUpdateUtils.js"
 import { IconButton } from "../gui/base/IconButton.js"
 import { Icons } from "../gui/base/icons/Icons.js"
 import { ButtonSize } from "../gui/base/ButtonSize.js"
 import { TextField } from "../gui/base/TextField.js"
-import { formatPrice } from "../subscription/PriceUtils.js"
+import { formatPrice } from "../subscription/utils/PriceUtils.js"
 import { Button, ButtonType } from "../gui/base/Button.js"
 import { ListColumnWrapper } from "../gui/ListColumnWrapper.js"
 import { lang } from "../misc/LanguageViewModel.js"
@@ -49,8 +48,8 @@ export class AffiliateSettingsViewer implements UpdatableSettingsViewer {
 			return m(
 				ListColumnWrapper,
 				m(
-					"section.fill-absolute.scroll.plr-l",
-					m("h4.mt-l", lang.get("affiliateSettings_label")),
+					"section.fill-absolute.scroll.plr-24",
+					m("h4.mt-32", lang.get("affiliateSettings_label")),
 					m(TextField, {
 						isReadOnly: true,
 						label: "referralLink_label",
@@ -76,7 +75,7 @@ export class AffiliateSettingsViewer implements UpdatableSettingsViewer {
 						value: formatPrice(Number(avm!.data!.creditedCommission), true),
 					}),
 					m(
-						".flex.center-horizontally.mt-m",
+						".flex.center-horizontally.mt-12",
 						m(Button, {
 							label: this.getIsShowingKpis() ? "affiliateSettingsHideKpis_label" : "affiliateSettingsShowKpis_label",
 							type: ButtonType.Secondary,

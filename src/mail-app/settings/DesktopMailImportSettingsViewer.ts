@@ -5,21 +5,22 @@ import { IconButton, IconButtonAttrs } from "../../common/gui/base/IconButton"
 import { ButtonSize } from "../../common/gui/base/ButtonSize"
 import { assertNotNull, lazy } from "@tutao/tutanota-utils"
 import { getFolderName, getIndentedFolderNameForDropdown, getPathToFolderString } from "../mail/model/MailUtils"
-import { HighestTierPlans, ImportStatus, MailSetKind, PlanType } from "../../common/api/common/TutanotaConstants"
+import { AvailablePlanType, HighestTierPlans, ImportStatus, MailSetKind } from "../../common/api/common/TutanotaConstants"
 import { IndentedFolder } from "../../common/api/common/mail/FolderSystem"
 import { lang, TranslationKey } from "../../common/misc/LanguageViewModel"
 import { MailImporter, UiImportStatus } from "../mail/import/MailImporter.js"
-import { MailFolder } from "../../common/api/entities/tutanota/TypeRefs"
+import { MailSet } from "../../common/api/entities/tutanota/TypeRefs"
 import { elementIdPart, generatedIdToTimestamp, isSameId, sortCompareByReverseId } from "../../common/api/common/utils/EntityUtils"
 import { Icons } from "../../common/gui/base/icons/Icons.js"
 import { DropDownSelector, SelectorItemList } from "../../common/gui/base/DropDownSelector.js"
-import { showNotAvailableForFreeDialog } from "../../common/misc/SubscriptionDialogs.js"
+import { showUpgradeWizardOrSwitchSubscriptionDialog } from "../../common/misc/SubscriptionDialogs.js"
 import { ProgressBar, ProgressBarType } from "../../common/gui/base/ProgressBar.js"
 import { ExpanderButton, ExpanderPanel } from "../../common/gui/base/Expander.js"
 import { ColumnWidth, Table, TableLineAttrs } from "../../common/gui/base/Table.js"
 import { mailLocator } from "../mailLocator.js"
 import { formatDate } from "../../common/misc/Formatter.js"
 import { LoginButton, LoginButtonType } from "../../common/gui/base/buttons/LoginButton"
+import { client } from "../../common/misc/ClientDetector"
 
 /**
  * Settings viewer for mail import rendered only in the Desktop client.
@@ -40,8 +41,8 @@ export class DesktopMailImportSettingsViewer implements UpdatableSettingsViewer 
 	}
 
 	view(): Children {
-		return m(".fill-absolute.scroll.plr-l.pb-xl", [
-			m(".h4.mt-l", lang.get("mailImportSettings_label")),
+		return m(".fill-absolute.scroll.plr-24.pb-48", [
+			m(".h4.mt-32", lang.get("mailImportSettings_label")),
 			this.renderTargetFolderControls(),
 			!this.mailImporter().shouldRenderImportStatus() ? this.renderStartNewImportControls() : null,
 			this.mailImporter().shouldRenderImportStatus() ? this.renderImportStatus() : null,
@@ -50,15 +51,18 @@ export class DesktopMailImportSettingsViewer implements UpdatableSettingsViewer 
 	}
 
 	private async onImportButtonClick(dom: HTMLElement) {
-		const currentPlanType = await mailLocator.logins.getUserController().getPlanType()
+		const userController = mailLocator.logins.getUserController()
+		const currentPlanType = await userController.getPlanType()
 		const isHighestTierPlan = HighestTierPlans.includes(currentPlanType)
 		if (!isHighestTierPlan) {
-			showNotAvailableForFreeDialog([PlanType.Legend, PlanType.Unlimited]).then()
+			await showUpgradeWizardOrSwitchSubscriptionDialog(userController, HighestTierPlans as readonly AvailablePlanType[])
 			return
 		}
 
 		const allowedExtensions = ["eml", "mbox"]
-		const filePaths = await mailLocator.fileApp.openFileChooser(dom.getBoundingClientRect(), allowedExtensions, true)
+		const filePaths = client.isMacOS
+			? await mailLocator.fileApp.openMacImportFileChooser()
+			: await mailLocator.fileApp.openFileChooser(dom.getBoundingClientRect(), allowedExtensions, true)
 		await this.mailImporter().onStartBtnClick(filePaths.map((fp) => fp.location))
 	}
 
@@ -77,11 +81,11 @@ export class DesktopMailImportSettingsViewer implements UpdatableSettingsViewer 
 			// if a folder receives/imports a very large amount of mails (hundreds of thousands) that all get moved/deleted at once,
 			// the backend will not be able to read any live data from that list for a while.
 			// if that happens, user will not see incoming mails in their inbox folder for that time,
-			// this problem can still happen on other folders,
+			// this problem can still happen on other mailSets,
 			// but at least we won't block inbox ( incoming new mails )
 			const selectableFolders = folders.getIndentedList().filter((folderInfo) => folderInfo.folder.folderType !== MailSetKind.INBOX)
 
-			let targetFolders: SelectorItemList<MailFolder | null> = selectableFolders.map((folderInfo: IndentedFolder) => {
+			let targetFolders: SelectorItemList<MailSet | null> = selectableFolders.map((folderInfo: IndentedFolder) => {
 				return {
 					name: getIndentedFolderNameForDropdown(folderInfo),
 					value: folderInfo.folder,
@@ -93,7 +97,7 @@ export class DesktopMailImportSettingsViewer implements UpdatableSettingsViewer 
 				disabled: this.mailImporter().shouldRenderImportStatus(),
 				selectedValue: selectedTargetFolder,
 				selectedValueDisplay: selectedTargetFolder ? getFolderName(selectedTargetFolder) : loadingMsg,
-				selectionChangedHandler: (newFolder: MailFolder | null) => (this.mailImporter().selectedTargetFolder = newFolder),
+				selectionChangedHandler: (newFolder: MailSet | null) => (this.mailImporter().selectedTargetFolder = newFolder),
 				helpLabel: () => helpLabel,
 			})
 		} else {
@@ -103,9 +107,9 @@ export class DesktopMailImportSettingsViewer implements UpdatableSettingsViewer 
 
 	private renderStartNewImportControls() {
 		return [
-			m(".flex-start.mt-m", this.renderImportInfoText()),
+			m(".flex-start.mt-12", this.renderImportInfoText()),
 			m(
-				".flex-start.mt-s",
+				".flex-start.mt-8",
 				m(LoginButton, {
 					type: LoginButtonType.FlexWidth,
 					label: "import_action",
@@ -167,19 +171,19 @@ export class DesktopMailImportSettingsViewer implements UpdatableSettingsViewer 
 		return [
 			[
 				m(
-					".flex-space-between.p.small.mt-m",
+					".flex-space-between.p.small.mt-12",
 					getReadableUiImportStatus(assertNotNull(this.mailImporter().getUiStatus())),
 					this.mailImporter().shouldRenderProcessedMails() ? processedMailsCountLabel : null,
 				),
 			],
-			[m(".flex-space-between.border-radius-big.mt-s.rel.nav-bg.full-width", this.renderMailImportProgressBar(), ...buttonControls)],
+			[m(".flex-space-between.border-radius-12.mt-8.rel.nav-bg.full-width", this.renderMailImportProgressBar(), ...buttonControls)],
 		]
 	}
 
 	private renderMailImportProgressBar() {
 		// the ProgressBar uses progress values 0 ... 1
 		return m(
-			".rel.border-radius-big.full-width",
+			".rel.border-radius-12.full-width",
 			m(ProgressBar, {
 				progress: this.mailImporter().getProgress() / 100,
 				type: ProgressBarType.Large,
@@ -189,7 +193,7 @@ export class DesktopMailImportSettingsViewer implements UpdatableSettingsViewer 
 
 	private renderImportHistory() {
 		return [
-			m(".flex-space-between.items-center.mt-l.mb-s", [
+			m(".flex-space-between.items-center.mt-32.mb-8", [
 				m(".h4", lang.get("mailImportHistory_label")),
 				m(ExpanderButton, {
 					label: "show_action",

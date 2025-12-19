@@ -1,6 +1,6 @@
-import m, { Children, ClassComponent, Component, Vnode, VnodeDOM } from "mithril"
-import { px, size } from "../../../common/gui/size"
-import { EventTextTimeOption, WeekStart } from "../../../common/api/common/TutanotaConstants"
+import m, { ChildArray, Children, ClassComponent, Component, Vnode, VnodeDOM } from "mithril"
+import { layout_size, px, size } from "../../../common/gui/size"
+import { EventTextTimeOption, Keys, WeekStart } from "../../../common/api/common/TutanotaConstants"
 import {
 	CalendarDay,
 	CalendarMonth,
@@ -13,11 +13,9 @@ import {
 	getWeekNumber,
 } from "../../../common/calendar/date/CalendarUtils"
 import { deepEqual, incrementDate, incrementMonth, isToday, lastThrow, neverNull, ofClass } from "@tutao/tutanota-utils"
-import { ContinuingCalendarEventBubble } from "./ContinuingCalendarEventBubble"
 import { styles } from "../../../common/gui/styles"
 import { CalendarViewType, isAllDayEvent, isAllDayEventByTimes, setNextHalfHour } from "../../../common/api/common/utils/CommonCalendarUtils"
 import { windowFacade } from "../../../common/misc/WindowFacade"
-import type { CalendarEvent } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import type { GroupColors } from "./CalendarView"
 import type { EventDragHandlerCallbacks, MousePos } from "./EventDragHandler"
 import { EventDragHandler } from "./EventDragHandler"
@@ -28,22 +26,25 @@ import {
 	CALENDAR_EVENT_HEIGHT,
 	changePeriodOnWheel,
 	EventLayoutMode,
+	extractCalendarEventModifierKey,
 	getCalendarMonth,
 	getDateFromMousePos,
-	getEventColor,
 	layOutEvents,
 	SELECTED_DATE_INDICATOR_THICKNESS,
 	TEMPORARY_EVENT_OPACITY,
 } from "../gui/CalendarGuiUtils.js"
-import type { CalendarEventBubbleClickHandler, CalendarEventBubbleKeyDownHandler, EventsOnDays } from "./CalendarViewModel"
+import type { CalendarEventBubbleClickHandler, CalendarEventBubbleKeyDownHandler, EventsOnDays, EventWrapper } from "./CalendarViewModel"
 import { Time } from "../../../common/calendar/date/Time.js"
 import { client } from "../../../common/misc/ClientDetector"
 import { locator } from "../../../common/api/main/CommonLocator.js"
 import { PageView } from "../../../common/gui/base/PageView.js"
 import { DaysToEvents } from "../../../common/calendar/date/CalendarEventsRepository.js"
-import { isIOSApp } from "../../../common/api/common/Env"
+import { isAppleDevice, isIOSApp } from "../../../common/api/common/Env"
 import { getSafeAreaInsetBottom } from "../../../common/gui/HtmlUtils"
 import { getStartOfTheWeekOffset } from "../../../common/misc/weekOffset"
+import { isModifierKeyPressed, Key } from "../../../common/misc/KeyManager.js"
+import { shallowIsSameEvent } from "../../../common/calendar/gui/ImportExportUtils"
+import { LegacyContinuingCalendarEventBubble, LegacyContinuingCalendarEventBubbleAttrs } from "./LegacyContinuingEventBubble"
 
 type CalendarMonthAttrs = {
 	selectedDate: Date
@@ -58,7 +59,7 @@ type CalendarMonthAttrs = {
 	startOfTheWeek: WeekStart
 	groupColors: GroupColors
 	hiddenCalendars: ReadonlySet<Id>
-	temporaryEvents: Array<CalendarEvent>
+	temporaryEvents: Array<EventWrapper>
 	dragHandlerCallbacks: EventDragHandlerCallbacks
 }
 type SimplePosRect = {
@@ -83,6 +84,7 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 	private eventDragHandler: EventDragHandler
 	private dayUnderMouse: Date | null = null
 	private lastMousePos: MousePos | null = null
+	private lastKey?: Key
 
 	constructor({ attrs }: Vnode<CalendarMonthAttrs>) {
 		this.resizeListener = m.redraw
@@ -94,10 +96,38 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 
 	oncreate() {
 		windowFacade.addResizeListener(this.resizeListener)
+		document.addEventListener("keydown", this.handleKeyDown)
+		document.addEventListener("keyup", this.handleKeyUp)
 	}
 
 	onremove() {
 		windowFacade.removeResizeListener(this.resizeListener)
+		document.removeEventListener("keydown", this.handleKeyDown)
+		document.removeEventListener("keyup", this.handleKeyUp)
+	}
+
+	handleKeyDown = (e: KeyboardEvent) => {
+		const key = extractCalendarEventModifierKey(e)
+		if (key) {
+			this.lastKey = undefined
+			this.eventDragHandler.pressedDragKey = key
+			m.redraw()
+		}
+	}
+
+	handleKeyUp = (e: KeyboardEvent) => {
+		if (isModifierKeyPressed(e.key)) {
+			this.lastKey = this.eventDragHandler.pressedDragKey
+			this.eventDragHandler.pressedDragKey = undefined
+			m.redraw()
+		}
+	}
+
+	resolveClasses = (isDesktopLayout: boolean) => {
+		const dragClass = this.eventDragHandler.isDragging && isModifierKeyPressed(this.eventDragHandler.pressedDragKey) ? "drag-mod-key" : ""
+		const desktopClass = ""
+
+		return [desktopClass, dragClass].join(" ")
 	}
 
 	view({ attrs }: Vnode<CalendarMonthAttrs>): Children {
@@ -115,9 +145,9 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 		if (isDesktopLayout) {
 			containerStyle = {
 				overflow: "hidden",
-				marginBottom: px(size.hpad_large),
+				marginBottom: px(size.spacing_24),
 			}
-			weekdayDaysClasses = "content-bg border-radius-top-left-big border-radius-top-right-big"
+			weekdayDaysClasses = "content-bg border-radius-top-12"
 		} else {
 			containerStyle = {
 				paddingBottom: isIOSApp() && client.isCalendarApp() ? px(getSafeAreaInsetBottom()) : null,
@@ -128,13 +158,13 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 		return m(
 			".fill-absolute.flex.col",
 			{
-				class: isDesktopLayout ? " mlr-l border-radius-big" : "mlr-safe-inset",
+				class: isDesktopLayout ? " mlr-24 border-radius-12" : "mlr-safe-inset",
 				style: isDesktopLayout ? { marginLeft: px(5) } : null,
 				onwheel: changePeriodOnWheel(attrs.onChangeMonth),
 			},
 			[
 				m(
-					".flex.pt-s.pb-m",
+					".flex.pt-8.pb-12",
 					{
 						class: weekdayDaysClasses,
 					},
@@ -145,7 +175,7 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 					{
 						class:
 							(!styles.isUsingBottomNavigation() || (isIOSApp() && client.isCalendarApp()) ? "content-bg" : "") +
-							(!isDesktopLayout ? " border-radius-top-left-big border-radius-top-right-big" : ""),
+							(!isDesktopLayout ? " border-radius-top-12" : ""),
 						style: containerStyle,
 					},
 					m(PageView, {
@@ -185,7 +215,13 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 			this.lastHeight = dom.offsetHeight
 		}
 
-		return different || this.eventDragHandler.queryHasChanged()
+		return different || this.eventDragHandler.queryHasChanged() || this.eventDragHandler.pressedDragKey !== this.lastKey
+	}
+
+	onupdate() {
+		if (!this.eventDragHandler.pressedDragKey) {
+			this.lastKey = this.eventDragHandler.pressedDragKey
+		}
 	}
 
 	private renderCalendar(attrs: CalendarMonthAttrs, month: CalendarMonth, currentlyVisibleMonth: CalendarMonth, zone: string): Children {
@@ -194,6 +230,7 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 		return m(
 			".fill-absolute.flex.col.flex-grow",
 			{
+				class: this.resolveClasses(false),
 				oncreate: (vnode) => {
 					if (isVisible) {
 						this.monthDom = vnode.dom as HTMLElement
@@ -219,7 +256,14 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 				onmouseup: (mouseEvent: MouseEvent & { redraw?: boolean }) => {
 					mouseEvent.redraw = false
 
-					this.endDrag(mouseEvent)
+					let key
+					if (mouseEvent.metaKey && isAppleDevice()) {
+						key = Keys.META
+					} else if (mouseEvent.ctrlKey) {
+						key = Keys.CTRL
+					}
+
+					this.endDrag(mouseEvent, key)
 				},
 				onmouseleave: (mouseEvent: MouseEvent & { redraw?: boolean }) => {
 					mouseEvent.redraw = false
@@ -244,15 +288,15 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 		)
 	}
 
-	private endDrag(pos: MousePos) {
+	private endDrag(pos: MousePos, key?: Key) {
 		const dayUnderMouse = this.dayUnderMouse
-		const originalDate = this.eventDragHandler.originalEvent?.startTime
+		const originalDate = this.eventDragHandler.originalCalendarEvent?.startTime
 
 		if (dayUnderMouse && originalDate) {
 			//make sure the date we move to also gets a time
 			const dateUnderMouse = Time.fromDate(originalDate).toDate(dayUnderMouse)
 
-			this.eventDragHandler.endDrag(dateUnderMouse, pos).catch(ofClass(UserError, showUserError))
+			this.eventDragHandler.endDrag(dateUnderMouse, pos, key).catch(ofClass(UserError, showUserError))
 		}
 	}
 
@@ -279,7 +323,7 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 				},
 			},
 			[
-				m(".mb-xs", {
+				m(".mb-4", {
 					style: {
 						height: px(SELECTED_DATE_INDICATOR_THICKNESS),
 					},
@@ -309,7 +353,7 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 	): Children {
 		const size = styles.isDesktopLayout() ? px(22) : px(20)
 		return m(
-			".rel.click.flex.items-center.justify-center.rel.ml-hpad_small",
+			".rel.click.flex.items-center.justify-center.rel.ml-4",
 			{
 				"aria-label": date.toLocaleDateString(),
 				onclick: (e: MouseEvent) => {
@@ -353,26 +397,26 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 
 		const weekHeight = this.getHeightForWeek()
 
-		const eventHeight = size.calendar_line_height + spaceBetweenEvents() // height + border
+		const eventHeight = layout_size.calendar_line_height + spaceBetweenEvents() // height + border
 
 		const maxEventsPerDay = (weekHeight - dayHeight()) / eventHeight
 		const numberOfEventsPerDayToRender = Math.floor(maxEventsPerDay) - 1 // preserve some space for the more events indicator
 
 		/** initially, we have 0 extra, non-rendered events on each day of the week */
 		const moreEventsForDay = [0, 0, 0, 0, 0, 0, 0]
-		const eventMargin = styles.isDesktopLayout() ? size.calendar_event_margin : size.calendar_event_margin_mobile
+		const eventMargin = styles.isDesktopLayout() ? layout_size.calendar_event_margin : layout_size.calendar_event_margin_mobile
 		const firstDayOfNextWeek = getStartOfNextDayWithZone(lastDayOfWeek.date, zone)
 		return layOutEvents(
 			Array.from(events),
 			zone,
-			(columns) => {
+			(columns: Array<Array<EventWrapper>>) => {
 				return columns
 					.map((eventsInColumn, columnIndex) => {
-						return eventsInColumn.map((event) => {
+						return eventsInColumn.map((wrapper) => {
 							if (columnIndex < numberOfEventsPerDayToRender) {
-								const eventIsAllDay = isAllDayEventByTimes(event.startTime, event.endTime)
-								const eventStart = eventIsAllDay ? getAllDayDateForTimezone(event.startTime, zone) : event.startTime
-								const eventEnd = eventIsAllDay ? incrementDate(getEventEnd(event, zone), -1) : event.endTime
+								const eventIsAllDay = isAllDayEventByTimes(wrapper.event.startTime, wrapper.event.endTime)
+								const eventStart = eventIsAllDay ? getAllDayDateForTimezone(wrapper.event.startTime, zone) : wrapper.event.startTime
+								const eventEnd = eventIsAllDay ? incrementDate(getEventEnd(wrapper.event, zone), -1) : wrapper.event.endTime
 
 								const position = this.getEventPosition(
 									eventStart,
@@ -383,12 +427,12 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 									dayHeight(),
 									columnIndex,
 								)
-								return this.renderEvent(event, position, eventStart, firstDayOfWeek, firstDayOfNextWeek, eventEnd, attrs, isDisabled)
+								return this.renderEvent(wrapper, position, eventStart, firstDayOfWeek, firstDayOfNextWeek, eventEnd, attrs, isDisabled)
 							} else {
 								for (const [dayIndex, dayInWeek] of week.entries()) {
 									const eventsForDay = attrs.eventsForDays.get(dayInWeek.date.getTime())
 
-									if (eventsForDay && eventsForDay.indexOf(event) !== -1) {
+									if (eventsForDay && eventsForDay.indexOf(wrapper) !== -1) {
 										moreEventsForDay[dayIndex]++
 									}
 								}
@@ -427,14 +471,14 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 								return null
 							}
 						}),
-					)
+					) as ChildArray
 			},
 			EventLayoutMode.DayBasedColumn,
 		)
 	}
 
 	private renderEvent(
-		event: CalendarEvent,
+		eventWrapper: EventWrapper,
 		position: SimplePosRect,
 		eventStart: Date,
 		firstDayOfWeek: Date,
@@ -443,11 +487,11 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 		attrs: CalendarMonthAttrs,
 		isDisabled: boolean,
 	): Children {
-		const isTemporary = attrs.temporaryEvents.includes(event)
+		const isTemporary = attrs.temporaryEvents.some((temporaryEvent) => shallowIsSameEvent(temporaryEvent.event, eventWrapper.event))
 		return m(
 			".abs.overflow-hidden",
 			{
-				key: event._id[0] + event._id[1] + event.startTime.getTime(),
+				key: eventWrapper.event._id[0] + eventWrapper.event._id[1] + eventWrapper.event.startTime.getTime(),
 				style: {
 					top: px(position.top),
 					height: px(CALENDAR_EVENT_HEIGHT),
@@ -460,27 +504,27 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 					let lastMousePos = this.lastMousePos
 
 					if (dayUnderMouse && lastMousePos && !isTemporary) {
-						this.eventDragHandler.prepareDrag(event, dayUnderMouse, lastMousePos, true)
+						this.eventDragHandler.prepareDrag(eventWrapper, dayUnderMouse, lastMousePos, true)
 					}
 				},
 			},
-			m(ContinuingCalendarEventBubble, {
-				event: event,
+			m(LegacyContinuingCalendarEventBubble, {
+				eventWrapper: eventWrapper,
 				startsBefore: eventStart < firstDayOfWeek,
 				endsAfter: firstDayOfNextWeek <= eventEnd,
-				color: getEventColor(event, attrs.groupColors),
-				showTime: styles.isDesktopLayout() && !isAllDayEvent(event) ? EventTextTimeOption.START_TIME : null,
+				color: eventWrapper.color,
+				showTime: styles.isDesktopLayout() && !isAllDayEvent(eventWrapper.event) ? EventTextTimeOption.START_TIME : null,
 				user: locator.logins.getUserController().user,
 				onEventClicked: (e, domEvent) => {
-					attrs.onEventClicked(event, domEvent)
+					attrs.onEventClicked(eventWrapper.event, domEvent)
 				},
 				onEventKeyDown: (e, domEvent) => {
-					attrs.onEventKeyDown(event, domEvent)
+					attrs.onEventKeyDown(eventWrapper.event, domEvent)
 				},
 				fadeIn: !this.eventDragHandler.isDragging,
 				opacity: isTemporary ? TEMPORARY_EVENT_OPACITY : 1,
 				enablePointerEvents: !this.eventDragHandler.isDragging && !isTemporary && client.isDesktopDevice() && !isDisabled,
-			}),
+			} satisfies LegacyContinuingCalendarEventBubbleAttrs),
 		)
 	}
 
@@ -493,10 +537,10 @@ export class CalendarMonthView implements Component<CalendarMonthAttrs>, ClassCo
 		calendarDayHeight: number,
 		columnIndex: number,
 	): SimplePosRect {
-		const top = (size.calendar_line_height + spaceBetweenEvents()) * columnIndex + calendarDayHeight + EVENT_BUBBLE_VERTICAL_OFFSET
+		const top = (layout_size.calendar_line_height + spaceBetweenEvents()) * columnIndex + calendarDayHeight + EVENT_BUBBLE_VERTICAL_OFFSET
 		const dayOfStartDateInWeek = getDiffIn24IntervalsFast(eventStart, firstDayOfWeek)
 		const dayOfEndDateInWeek = getDiffIn24IntervalsFast(eventEnd, firstDayOfWeek)
-		const calendarEventMargin = styles.isDesktopLayout() ? size.calendar_event_margin : size.calendar_event_margin_mobile
+		const calendarEventMargin = styles.isDesktopLayout() ? layout_size.calendar_event_margin : layout_size.calendar_event_margin_mobile
 		const left = (eventStart < firstDayOfWeek ? 0 : dayOfStartDateInWeek * calendarDayWidth) + calendarEventMargin
 		const right = (eventEnd >= firstDayOfNextWeek ? 0 : (6 - dayOfEndDateInWeek) * calendarDayWidth) + calendarEventMargin
 		return {

@@ -89,8 +89,13 @@ function isFocusable(e: HTMLElement) {
 	}
 	return (
 		e.style.display !== "none" &&
-		// check that none of the parents have hidden=true or aria-hidden=true
-		e.closest("[hidden]:not([hidden=false]), [aria-hidden]:not([aria-hidden=false]), [inert]:not([inert=false])") == null
+		e.closest(
+			// check that none of the parents have hidden=true or aria-hidden=true
+			`[hidden]:not([hidden=false]), [aria-hidden]:not([aria-hidden=false]), [inert]:not([inert=false])${
+				// links inside contenteditable aren't focusable without an explicit tabindex
+				e.tagName === "A" && e.getAttribute("tabindex") == null ? ", [contenteditable='true']" : ""
+			}`,
+		) == null
 	)
 }
 
@@ -150,7 +155,16 @@ export function focusNext(dom: HTMLElement): boolean {
 	return true
 }
 
-function createKeyIdentifier(key: string, modifiers?: { ctrlOrCmd?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean; meta?: boolean }): string {
+function createKeyIdentifier(
+	key: string,
+	modifiers?: {
+		ctrlOrCmd?: boolean
+		ctrl?: boolean
+		alt?: boolean
+		shift?: boolean
+		meta?: boolean
+	},
+): string {
 	return (
 		key +
 		(modifiers?.ctrlOrCmd ? "X" : "") +
@@ -287,12 +301,12 @@ class KeyManager {
 
 /**
  *
- * @param key The key to be checked, should correspond to KeyEvent.key
+ * @param keyFromPress The key to be checked, should correspond to KeyEvent.key
  * @param keys Keys to be checked against, type of Keys
  */
-export function isKeyPressed(key: string | undefined, ...keys: Array<Key>): boolean {
-	if (key != null) {
-		return keys.some((k) => k.code === key.toLowerCase())
+export function isKeyPressed(keyFromPress: string | undefined, ...keys: Array<Key>): boolean {
+	if (keyFromPress != null) {
+		return keys.some((k) => k.code === keyFromPress.toLowerCase())
 	}
 	return false
 }
@@ -300,6 +314,31 @@ export function isKeyPressed(key: string | undefined, ...keys: Array<Key>): bool
 export enum ShortcutType {
 	MODAL,
 	NORMAL,
+}
+
+/**
+ * Determines whether the given key corresponds to a modifier key (Command ⌘ on Apple devices, or Control on others),
+ * and checks if that modifier key is pressed based on the current platform.
+ *
+ * @param {Key | string | undefined} key - The key to check. This can be a `Key` enum or a string representing the key code.
+ * @returns {boolean} - Returns `true` if the key is the correct modifier key for the platform; otherwise, `false`.
+ *
+ * @example
+ * isModifierKeyPressed(Keys.META); // true on macOS if Command key is pressed
+ * isModifierKeyPressed('Control'); // true on Windows if Control key is pressed
+ */
+export function isModifierKeyPressed(key?: Key | string) {
+	if (!key) {
+		return false
+	}
+
+	const parsedKey = typeof key === "string" ? Object.values(Keys).find((k) => k.code.toLowerCase() === key.toLowerCase()) : key
+
+	if (!parsedKey) {
+		return false
+	}
+
+	return isAppleDevice() ? parsedKey === Keys.META : parsedKey === Keys.CTRL
 }
 
 export const keyManager: KeyManager = new KeyManager()

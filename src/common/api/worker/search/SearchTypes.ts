@@ -1,5 +1,5 @@
 import type { GroupType } from "../../common/TutanotaConstants"
-import type { TypeInfo } from "./IndexUtils"
+import type { TypeInfo } from "../../common/utils/IndexUtils"
 import { Base64, TypeRef } from "@tutao/tutanota-utils"
 import { Aes256Key } from "@tutao/tutanota-crypto"
 import { SearchToken } from "../../common/utils/QueryTokenUtils"
@@ -127,7 +127,7 @@ export type SearchRestriction = {
 	field: string | null
 	// must be kept in sync with attributeIds
 	attributeIds: number[] | null
-	// list of locations (calendars, folders, labels to search). if empty, match anything. otherwise it's an OR-match.
+	// list of locations (calendars, mailSets, labels to search). if empty, match anything. otherwise it's an OR-match.
 	folderIds: Array<Id>
 	// if true, include repeating events in the search
 	eventSeries: boolean | null
@@ -140,7 +140,7 @@ export type SearchResult = {
 	currentIndexTimestamp: number
 	maxResults?: number
 	moreResults: Array<MoreResultsIndexEntry>
-	moreResultsEntries: []
+	moreResultsEntries: IdTuple[]
 	lastReadSearchIndexRow: Array<[string, number | null]>
 	// array of pairs (token, lastReadSearchIndexRowOldestElementTimestamp) lastRowReadSearchIndexRow: null = no result read, 0 = no more search results????
 	matchWordOrder: boolean

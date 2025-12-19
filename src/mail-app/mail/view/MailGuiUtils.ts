@@ -1,11 +1,11 @@
 import type { MailboxModel } from "../../../common/mailFunctionality/MailboxModel.js"
-import { File as TutanotaFile, Mail, MailFolder } from "../../../common/api/entities/tutanota/TypeRefs.js"
+import { File as TutanotaFile, Mail, MailSet, MovedMails } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { LockedError, PreconditionFailedError } from "../../../common/api/common/error/RestError"
 import { Dialog } from "../../../common/gui/base/Dialog"
 import { AllIcons } from "../../../common/gui/base/Icon"
 import { Icons } from "../../../common/gui/base/icons/Icons"
 import { isApp, isDesktop } from "../../../common/api/common/Env"
-import { $Promisable, assertNotNull, deduplicate, endsWith, first, isEmpty, lazyMemoized, neverNull, noOp, promiseMap } from "@tutao/tutanota-utils"
+import { $Promisable, assertNotNull, clamp, endsWith, first, isEmpty, isNotEmpty, lazyMemoized, neverNull, noOp, promiseMap } from "@tutao/tutanota-utils"
 import {
 	EncryptionAuthStatus,
 	getMailFolderType,
@@ -27,23 +27,27 @@ import { PinchZoom } from "../../../common/gui/PinchZoom.js"
 import { InlineImageReference, InlineImages } from "../../../common/mailFunctionality/inlineImagesUtils.js"
 import { MailModel, MoveMode } from "../model/MailModel.js"
 import { hasValidEncryptionAuthForTeamOrSystemMail } from "../../../common/mailFunctionality/SharedMailUtils.js"
-import { mailLocator } from "../../mailLocator.js"
 import {
 	FolderInfo,
 	getFolderName,
 	getIndentedFolderNameForDropdown,
 	getMoveTargetFolderSystems,
 	getMoveTargetFolderSystemsForMailsInFolder,
+	getSystemFolderName,
+	MoveService,
+	RegularMoveTargets,
+	SimpleMoveTargets,
 } from "../model/MailUtils.js"
 import { FontIcons } from "../../../common/gui/base/icons/FontIcons.js"
 import { ProgrammingError } from "../../../common/api/common/error/ProgrammingError.js"
 import { isOfTypeOrSubfolderOf } from "../model/MailChecks.js"
-import type { FolderSystem, IndentedFolder } from "../../../common/api/common/mail/FolderSystem.js"
 import { LabelsPopup } from "./LabelsPopup"
 import { styles } from "../../../common/gui/styles"
-import { getElementId, getIds, isSameId } from "../../../common/api/common/utils/EntityUtils"
+import { elementIdPart, getIds, isSameId } from "../../../common/api/common/utils/EntityUtils"
 import { showSnackBar } from "../../../common/gui/base/SnackBar"
-import { MailViewModel } from "./MailViewModel"
+import { UndoModel } from "../../UndoModel"
+import { IndentedFolder } from "../../../common/api/common/mail/FolderSystem"
+import { computeColor, rgbToHSL } from "../../../common/gui/base/Color"
 
 const UNDO_SNACKBAR_SHOW_TIME = 10 * 1000 // ms
 
@@ -79,28 +83,10 @@ export async function promptAndDeleteMails(
 interface MoveMailsParams {
 	mailboxModel: MailboxModel
 	mailModel: MailModel
-	mailViewModel: MailViewModel
+	undoModel: UndoModel
 	mailIds: ReadonlyArray<IdTuple>
-	targetFolder: MailFolder
+	targetFolder: MailSet
 	moveMode: MoveMode
-	isReportable?: boolean
-	/** The folder to move the mails back to; if null or undefined, then the move cannot be undone */
-	undoFolder?: MailFolder | null
-}
-
-async function getReportAnswer(
-	system: FolderSystem,
-	targetMailFolder: MailFolder,
-	isReportable: boolean,
-	mailboxModel: MailboxModel,
-	mailModel: MailModel,
-): Promise<boolean> {
-	if (isOfTypeOrSubfolderOf(system, targetMailFolder, MailSetKind.SPAM) && isReportable) {
-		const mailboxDetails = await mailboxModel.getMailboxDetailsForMailGroup(assertNotNull(targetMailFolder._ownerGroup))
-		return getReportConfirmation(MailReportType.SPAM, mailboxModel, mailModel, mailboxDetails)
-	} else {
-		return false
-	}
 }
 
 enum MoveMailSnackbarResult {
@@ -114,14 +100,7 @@ enum MoveMailSnackbarResult {
 	Replaced,
 }
 
-async function showUndoMoveMailSnackbar(
-	targetFolder: MailFolder,
-	undoFolder: MailFolder,
-	resolveMails: () => Promise<readonly Mail[]>,
-	mailModel: MailModel,
-	mailViewModel: MailViewModel,
-	shouldReportMails: boolean,
-): Promise<MoveMailSnackbarResult> {
+async function showUndoMoveMailSnackbar(undoModel: UndoModel, onUndoMove: () => Promise<void>, undoMoveText: string): Promise<MoveMailSnackbarResult> {
 	return new Promise((resolve) => {
 		let result: MoveMailSnackbarResult | null = null
 
@@ -133,8 +112,7 @@ async function showUndoMoveMailSnackbar(
 				resolve(result)
 
 				cancelSnackbar?.()
-				const mails = await resolveMails()
-				await mailModel.moveMails(getIds(mails), undoFolder, MoveMode.Mails)
+				await onUndoMove()
 			},
 			onClear: () => {
 				if (result == null) {
@@ -145,13 +123,10 @@ async function showUndoMoveMailSnackbar(
 			},
 		}
 
-		const clearUndoAction = lazyMemoized(() => mailViewModel.clearUndoActionIfPresent(undoAction))
+		const clearUndoAction = lazyMemoized(() => undoModel.clearUndoActionIfPresent(undoAction))
 		const undoMessage: Translation = {
 			testId: "undoMoveMail_msg",
-			text:
-				targetFolder.folderType === MailSetKind.SPAM && shouldReportMails
-					? `${lang.getTranslation("undoMoveMail_msg", { "{folder}": getFolderName(targetFolder) }).text} ${lang.getTranslation("undoMailReport_msg").text}`
-					: lang.getTranslation("undoMoveMail_msg", { "{folder}": getFolderName(targetFolder) }).text,
+			text: undoMoveText,
 		}
 		cancelSnackbar = showSnackBar({
 			message: undoMessage,
@@ -165,10 +140,15 @@ async function showUndoMoveMailSnackbar(
 					clearUndoAction()
 				},
 			},
+			dismissButton: {
+				title: "close_alt",
+				click: () => cancelSnackbar(),
+				icon: Icons.Cancel,
+			},
 			onShow: () => {
 				// we don't want to immediately set the undo action, as the user might be looking at a different snackbar
 				// than this one momentarily
-				mailViewModel.setUndoAction(undoAction)
+				undoModel.setUndoAction(undoAction)
 			},
 			onClose: (timedOut: boolean) => {
 				if (result == null) {
@@ -189,52 +169,15 @@ async function showUndoMoveMailSnackbar(
  * Moves the mails and reports them as spam if the user or settings allow it.
  * @return whether mails were actually moved
  */
-export async function moveMails({
-	mailboxModel,
-	mailModel,
-	mailIds,
-	targetFolder,
-	moveMode,
-	isReportable = true,
-	undoFolder,
-	mailViewModel,
-}: MoveMailsParams): Promise<boolean> {
-	const system = mailModel.getFolderSystemByGroupId(assertNotNull(targetFolder._ownerGroup))
-	if (system == null) {
-		return false
-	}
+export async function moveMails({ mailModel, mailIds, targetFolder, moveMode, mailboxModel, undoModel }: MoveMailsParams): Promise<boolean> {
 	try {
-		await mailModel.moveMails(mailIds, targetFolder, moveMode)
-		const resolveMails = () => mailModel.loadAllMails(mailIds)
-
-		let undone = false
-		const shouldReportMails = await getReportAnswer(system, targetFolder, isReportable, mailboxModel, mailModel)
-
-		// If we have an undo (origin) folder and the destination and undo folder are not the same, we should allow the
-		// user to undo the move...
-		if (undoFolder != null && !isSameId(getElementId(targetFolder), getElementId(undoFolder))) {
-			let undoResult = await showUndoMoveMailSnackbar(targetFolder, undoFolder, resolveMails, mailModel, mailViewModel, shouldReportMails)
-			switch (undoResult) {
-				case MoveMailSnackbarResult.Undo: {
-					undone = true
-					break
-				}
-				case MoveMailSnackbarResult.Timeout: {
-					undone = false
-					break
-				}
-				case MoveMailSnackbarResult.Replaced: {
-					undone = false
-					break
-				}
-			}
-		}
-		if (!undone && shouldReportMails) {
-			await mailModel.reportMails(MailReportType.SPAM, resolveMails)
-			return true
-		} else {
+		const movedMails = await mailModel.moveMails(mailIds, targetFolder, moveMode)
+		if (isEmpty(movedMails)) {
 			return false
 		}
+		// run post-move actions async
+		runPostMoveActions(mailModel, mailboxModel, undoModel, movedMails)
+		return true
 	} catch (e) {
 		//LockedError should no longer be thrown!?!
 		if (e instanceof LockedError || e instanceof PreconditionFailedError) {
@@ -246,6 +189,78 @@ export async function moveMails({
 	}
 }
 
+async function runPostMoveActions(mailModel: MailModel, mailboxModel: MailboxModel, undoModel: UndoModel, movedMails: readonly MovedMails[]) {
+	// With move we only have two cases: either we move all emails that are in one mailbox to a specific folder or
+	// we are moving emails in different mailboxes to respective mailSets of the same type (e.g. user moves some emails
+	// in search into spam, mails of each mailbox go into their own spam folder).
+	// Here we are trying to determine if the destination is a spam folder. If the move was done only for one mailbox
+	// then it is okay to take the first target folder because it will be the same for each moved chunk.
+	// If it was a move in multiple mailboxes it will only be a system folder and all of the target mailSets will have
+	// the same type which is enough for our check.
+	const firstTargetFolderId = first(movedMails)?.targetFolder
+	if (firstTargetFolderId == null) {
+		return
+	}
+	const firstTargetFolder = await mailModel.getMailSetById(elementIdPart(firstTargetFolderId))
+	if (firstTargetFolder == null) {
+		return
+	}
+	const firstFolderGroup = assertNotNull(firstTargetFolder._ownerGroup)
+	const firstFolderSystem = mailModel.getFolderSystemByGroupId(firstFolderGroup)
+	const reportableMailIds: IdTuple[] = []
+
+	// only report mails when they're moved to Spam or one of its subfolders
+	if (firstFolderSystem != null && isOfTypeOrSubfolderOf(firstFolderSystem, firstTargetFolder, MailSetKind.SPAM)) {
+		for (const { sourceFolder, mailIds } of movedMails) {
+			const mailFolder = await mailModel.getMailSetById(elementIdPart(sourceFolder))
+			if (mailFolder == null) {
+				continue
+			}
+
+			/** because {@link firstTargetFolder} and {@link sourceFolder} might be in different mailboxes, in case of a shared mailbox */
+			const sourceFolderGroup = assertNotNull(mailFolder._ownerGroup)
+			const sourceFolderSystem = sourceFolderGroup === firstFolderGroup ? firstFolderSystem : mailModel.getFolderSystemByGroupId(sourceFolderGroup)
+			if (sourceFolderSystem == null) {
+				continue
+			}
+
+			// only report mails that aren't already in Spam or its subfolders
+			if (!isOfTypeOrSubfolderOf(sourceFolderSystem, mailFolder, MailSetKind.SPAM)) {
+				const toReportMailIds: IdTuple[] = mailIds.map((idTupleWrapper) => [idTupleWrapper.listId, idTupleWrapper.listElementId])
+				reportableMailIds.push(...toReportMailIds)
+			}
+		}
+	}
+
+	const shouldReportMails = isNotEmpty(reportableMailIds) && (await getReportConfirmation(MailReportType.SPAM, mailboxModel, mailModel))
+
+	const undoMoveText = shouldReportMails
+		? `${lang.getTranslation("undoMoveMail_msg", { "{folder}": getFolderName(firstTargetFolder) }).text} ${lang.getTranslation("undoMailReport_msg").text}`
+		: lang.getTranslation("undoMoveMail_msg", { "{folder}": getFolderName(firstTargetFolder) }).text
+
+	const onUndoMove = async () => {
+		for (const { sourceFolder: sourceFolderId, mailIds, targetFolder: targetFolderId } of movedMails) {
+			const sourceFolder = await mailModel.getMailSetById(elementIdPart(sourceFolderId))
+
+			if (sourceFolder === null || isSameId(sourceFolderId, targetFolderId)) {
+				continue
+			}
+			await mailModel.moveMails(
+				mailIds.map((idTupleWrapper) => [idTupleWrapper.listId, idTupleWrapper.listElementId]),
+				sourceFolder,
+				MoveMode.Mails,
+			)
+		}
+	}
+
+	const undoResult = await showUndoMoveMailSnackbar(undoModel, onUndoMove, undoMoveText)
+
+	if (shouldReportMails && undoResult !== MoveMailSnackbarResult.Undo) {
+		const reportableMails = (await mailModel.loadAllMails(reportableMailIds)).filter((mail) => !isTutanotaTeamMail(mail))
+		await mailModel.reportMails(MailReportType.SPAM, reportableMails)
+	}
+}
+
 export async function moveMailsToSystemFolder({
 	mailboxModel,
 	mailModel,
@@ -253,17 +268,15 @@ export async function moveMailsToSystemFolder({
 	targetFolderType,
 	currentFolder,
 	moveMode,
-	isReportable,
-	mailViewModel,
+	undoModel,
 }: {
 	mailboxModel: MailboxModel
 	mailModel: MailModel
 	mailIds: ReadonlyArray<IdTuple>
 	targetFolderType: SystemFolderType
-	currentFolder: MailFolder
+	currentFolder: MailSet
 	moveMode: MoveMode
-	mailViewModel: MailViewModel
-	isReportable?: boolean
+	undoModel: UndoModel
 }): Promise<boolean> {
 	const folderSystem = mailModel.getFolderSystemByGroupId(assertNotNull(currentFolder._ownerGroup))
 	const targetFolder = folderSystem?.getSystemFolderByType(targetFolderType)
@@ -273,10 +286,8 @@ export async function moveMailsToSystemFolder({
 		mailModel,
 		mailIds,
 		targetFolder,
-		isReportable,
 		moveMode,
-		undoFolder: currentFolder,
-		mailViewModel,
+		undoModel,
 	})
 }
 
@@ -289,17 +300,25 @@ function handleMoveError(err: Error) {
 	}
 }
 
-export async function trashMails(mailModel: MailModel, mailIds: readonly IdTuple[]): Promise<boolean> {
-	await mailModel.trashMails(mailIds).catch(handleMoveError)
+export async function trashMails(mailboxModel: MailboxModel, mailModel: MailModel, undoModel: UndoModel, mails: readonly Mail[]): Promise<boolean> {
+	return simpleMoveToSystemFolder(mailboxModel, mailModel, undoModel, MailSetKind.TRASH, mails)
+}
+
+export async function simpleMoveToSystemFolder(
+	mailboxModel: MailboxModel,
+	mailModel: MailModel,
+	undoModel: UndoModel,
+	targetFolder: SystemFolderType,
+	mails: readonly Mail[],
+): Promise<boolean> {
+	let movedMails: MovedMails[]
+	try {
+		movedMails = await mailModel.simpleMoveMails(getIds(mails), targetFolder)
+	} catch (e) {
+		return handleMoveError(e)
+	}
+	runPostMoveActions(mailModel, mailboxModel, undoModel, movedMails)
 	return true
-}
-
-export async function simpleMoveToArchive(mailIds: readonly IdTuple[]): Promise<void> {
-	await mailLocator.mailModel.simpleMoveMails(mailIds, MailSetKind.ARCHIVE).catch(handleMoveError)
-}
-
-export async function simpleMoveToInbox(mailIds: readonly IdTuple[]): Promise<void> {
-	await mailLocator.mailModel.simpleMoveMails(mailIds, MailSetKind.INBOX).catch(handleMoveError)
 }
 
 export function getFolderIconByType(folderType: MailSetKind): AllIcons {
@@ -330,12 +349,12 @@ export function getFolderIconByType(folderType: MailSetKind): AllIcons {
 	}
 }
 
-export function getFolderIcon(folder: MailFolder): AllIcons {
+export function getFolderIcon(folder: MailSet): AllIcons {
 	return getFolderIconByType(getMailFolderType(folder))
 }
 
-export function getMailFolderIcon(mail: Mail): AllIcons {
-	let folder = mailLocator.mailModel.getMailFolderForMail(mail)
+export function getMailFolderIcon(mailModel: MailModel, mail: Mail): AllIcons {
+	const folder = mailModel.getMailFolderForMail(mail)
 
 	if (folder) {
 		return getFolderIcon(folder)
@@ -456,8 +475,8 @@ export async function loadInlineImages(fileController: FileController, attachmen
 	const inlineImages = new Map()
 	return promiseMap(filesToLoad, async (file) => {
 		let dataFile = await fileController.getAsDataFile(file)
-		const { htmlSanitizer } = await import("../../../common/misc/HtmlSanitizer")
-		dataFile = htmlSanitizer.sanitizeInlineAttachment(dataFile)
+		const { getHtmlSanitizer } = await import("../../../common/misc/HtmlSanitizer")
+		dataFile = getHtmlSanitizer().sanitizeInlineAttachment(dataFile)
 		const inlineImageReference = createInlineImageReference(dataFile, neverNull(file.cid))
 		inlineImages.set(inlineImageReference.cid, inlineImageReference)
 	}).then(() => inlineImages)
@@ -466,6 +485,12 @@ export async function loadInlineImages(fileController: FileController, attachmen
 export function getReferencedAttachments(attachments: Array<TutanotaFile>, referencedCids: Array<string>): Array<TutanotaFile> {
 	return attachments.filter((file) => referencedCids.find((rcid) => file.cid === rcid))
 }
+
+type MoveDropdownParams =
+	| (RegularMoveTargets & { onClick: (folder: FolderInfo) => unknown })
+	| (SimpleMoveTargets & {
+			onClick: (folder: SystemFolderType) => unknown
+	  })
 
 export interface ShowMoveMailsDropdownOpts {
 	width?: number
@@ -476,9 +501,9 @@ export interface ShowMoveMailsDropdownOpts {
 export async function showMoveMailsFromFolderDropdown(
 	mailboxModel: MailboxModel,
 	mailModel: MailModel,
-	mailViewModel: MailViewModel,
+	undoModel: UndoModel,
 	origin: PosRect,
-	currentFolder: MailFolder,
+	currentFolder: MailSet,
 	mails: LazyMailIdResolver,
 	moveMode: MoveMode,
 	opts?: ShowMoveMailsDropdownOpts,
@@ -486,18 +511,20 @@ export async function showMoveMailsFromFolderDropdown(
 	const folders = await getMoveTargetFolderSystemsForMailsInFolder(mailModel, currentFolder)
 	await showMailFolderDropdown(
 		origin,
-		folders,
-		async (f) => {
-			const resolvedMails = await mails()
-			moveMails({
-				mailboxModel,
-				mailModel,
-				mailIds: resolvedMails,
-				targetFolder: f.folder,
-				moveMode,
-				undoFolder: currentFolder,
-				mailViewModel,
-			})
+		{
+			moveService: MoveService.RegularMove,
+			folders,
+			onClick: async (f: IndentedFolder) => {
+				const resolvedMails = await mails()
+				moveMails({
+					mailboxModel,
+					mailModel,
+					mailIds: resolvedMails,
+					targetFolder: f.folder,
+					moveMode,
+					undoModel,
+				})
+			},
 		},
 		opts,
 	)
@@ -506,7 +533,7 @@ export async function showMoveMailsFromFolderDropdown(
 export async function showMoveMailsDropdown(
 	mailboxModel: MailboxModel,
 	mailModel: MailModel,
-	mailViewModelPromise: () => Promise<MailViewModel>,
+	undoModel: UndoModel,
 	origin: PosRect,
 	mails: readonly Mail[],
 	moveMode: MoveMode,
@@ -514,57 +541,92 @@ export async function showMoveMailsDropdown(
 ): Promise<void> {
 	const firstMail = first(mails)
 	if (firstMail == null) return
-	const folders = await getMoveTargetFolderSystems(mailModel, mails)
-	const currentFolders = deduplicate(mails.map((mail) => mailModel.getMailFolderForMail(mail)))
 
-	const mailViewModel = await mailViewModelPromise()
+	const moveTargets = await getMoveTargetFolderSystems(mailModel, mails)
+	let moveParams: MoveDropdownParams
+	if (moveTargets.moveService === MoveService.SimpleMove) {
+		moveParams = {
+			...moveTargets,
+			onClick: (f: SystemFolderType) => {
+				simpleMoveToSystemFolder(mailboxModel, mailModel, undoModel, f, mails)
+			},
+		}
+	} else {
+		moveParams = {
+			...moveTargets,
+			onClick: (f: FolderInfo) => {
+				moveMails({
+					mailboxModel,
+					mailModel,
+					mailIds: getIds(mails),
+					targetFolder: f.folder,
+					moveMode,
+					undoModel,
+				})
+			},
+		}
+	}
 
-	await showMailFolderDropdown(
-		origin,
-		folders,
-		(f) => {
-			moveMails({
-				mailboxModel,
-				mailModel: mailModel,
-				mailIds: getIds(mails),
-				targetFolder: f.folder,
-				moveMode,
-				undoFolder: currentFolders.length === 1 ? first(currentFolders) : null,
-				mailViewModel,
-			})
-		},
-		opts,
-	)
+	await showMailFolderDropdown(origin, moveParams, opts)
 }
 
-export async function showMailFolderDropdown(
-	origin: PosRect,
-	folders: readonly FolderInfo[],
-	onClick: (folder: IndentedFolder) => unknown,
-	opts?: { width?: number; withBackground?: boolean; onSelected?: () => unknown },
-): Promise<void> {
+export async function showMailFolderDropdown(origin: PosRect, move: MoveDropdownParams, opts?: ShowMoveMailsDropdownOpts): Promise<void> {
 	const { width = 300, withBackground = false, onSelected = noOp } = opts ?? {}
 
-	if (folders.length === 0) return
-	const folderButtons = folders.map(
-		(f) =>
-			({
-				// We need to pass in the raw folder name to avoid including it in searches
-				label: lang.makeTranslation(
-					`dropdown-folder:${getFolderName(f.folder)}`,
-					lang.get("folderDepth_label", {
-						"{folderName}": getFolderName(f.folder),
-						"{depth}": f.level,
-					}),
-				),
-				text: lang.makeTranslation("folder_name", getIndentedFolderNameForDropdown(f)),
-				click: () => {
-					onSelected()
-					onClick(f)
-				},
-				icon: getFolderIcon(f.folder),
-			}) satisfies DropdownChildAttrs,
-	)
+	const folderButton = (attrs: {
+		depth: number
+		folderType: MailSetKind
+		folderName: string
+		indentedFolderName: string
+		onClick: () => unknown
+		onSelected: () => unknown
+	}): DropdownChildAttrs => {
+		return {
+			// We need to pass in the raw folder name to avoid including it in searches
+			label: lang.makeTranslation(
+				`dropdown-folder:${attrs.folderName}`,
+				lang.get("folderDepth_label", {
+					"{folderName}": attrs.folderName,
+					"{depth}": attrs.depth,
+				}),
+			),
+			text: lang.makeTranslation("folder_name", attrs.indentedFolderName),
+			click: () => {
+				onSelected()
+				attrs.onClick()
+			},
+			icon: getFolderIconByType(attrs.folderType),
+		}
+	}
+
+	let folderButtons: DropdownChildAttrs[]
+	if (move.moveService === MoveService.SimpleMove) {
+		folderButtons = move.folders.map((folderType) => {
+			const folderName = getSystemFolderName(folderType)
+
+			return folderButton({
+				depth: 0,
+				folderType,
+				folderName,
+				indentedFolderName: folderName,
+				onClick: () => move.onClick(folderType),
+				onSelected,
+			})
+		})
+	} else {
+		if (isEmpty(move.folders)) return
+
+		folderButtons = move.folders.map((f: FolderInfo) =>
+			folderButton({
+				depth: f.level,
+				folderType: getMailFolderType(f.folder),
+				folderName: getFolderName(f.folder),
+				indentedFolderName: getIndentedFolderNameForDropdown(f),
+				onClick: () => move.onClick(f),
+				onSelected,
+			}),
+		)
+	}
 
 	const dropdown = new Dropdown(() => folderButtons, width)
 	dropdown.setOrigin(new DomRectReadOnlyPolyfilled(origin.left, origin.top, origin.width, origin.height))
@@ -585,7 +647,7 @@ export function getConversationTitle(conversationViewModel: ConversationViewMode
 
 export function getMoveMailBounds(): PosRect {
 	// just putting the move mail dropdown in the left side of the viewport with a bit of margin
-	return new DomRectReadOnlyPolyfilled(size.hpad_large, size.vpad_large, 0, 0)
+	return new DomRectReadOnlyPolyfilled(size.spacing_24, size.spacing_32, 0, 0)
 }
 
 /**
@@ -635,12 +697,99 @@ export function getConfidentialFontIcon(mail: Mail): string {
 	return confidentialIcon === Icons.PQLock ? FontIcons.PQConfidential : FontIcons.Confidential
 }
 
-export function isMailContrastFixNeeded(editorDom: ParentNode): boolean {
-	return (
-		Array.from(editorDom.querySelectorAll("*[style]"), (e) => (e as HTMLElement).style).some(
-			(s) => (s.color && s.color !== "inherit") || (s.backgroundColor && s.backgroundColor !== "inherit"),
-		) || editorDom.querySelectorAll("font[color]").length > 0
-	)
+function cssAttributeSetNonInherit(color: string): boolean {
+	return color !== "" && color !== "inherit"
+}
+
+/**
+ * All tags that used bgcolor in HTML4
+ */
+const BGCOLOR_TAGS: readonly string[] = Object.freeze(["body", "td", "th", "tfoot", "tr", "table"])
+
+/**
+ * Clone the given dom and return a version of it suitable for dark themes.
+ */
+export function applyDarkThemeFix<T extends NonElementParentNode & ParentNode>(node: T): T {
+	const fixed = node.cloneNode(true) as T
+
+	// Delete anything with a white background color that isn't inside of something else with a background
+	// color. Additionally, we want to ensure anything with a non-white background retains its font colors.
+	function applyDarkThemeFixToElement(e: HTMLElement | Node, fontColorSetByParent: string | null) {
+		if (!("style" in e)) {
+			return
+		}
+
+		// Fixup deprecated HTML4 attributes to use CSS so we can properly handle them
+		const tagName = e.tagName.toLowerCase()
+		if (tagName === "font" && e.hasAttribute("color")) {
+			// <font style> is technically valid since even unrecognized HTML tags should effectively be treated the
+			// same as <span> elements
+			e.style.color = assertNotNull(e.getAttribute("color"))
+			e.removeAttribute("color")
+		}
+		if (BGCOLOR_TAGS.includes(tagName) && e.hasAttribute("bgcolor")) {
+			e.style.backgroundColor = assertNotNull(e.getAttribute("bgcolor"))
+			e.removeAttribute("bgcolor")
+		}
+
+		const style = e.style
+
+		const fontColorSet = cssAttributeSetNonInherit(style.color)
+		const backgroundColorSet = cssAttributeSetNonInherit(style.backgroundColor)
+		let backgroundColorIsWhiteOrTransparent = false
+
+		if (backgroundColorSet) {
+			const backgroundColor = computeColor(style.backgroundColor)
+			if (backgroundColor) {
+				backgroundColorIsWhiteOrTransparent =
+					backgroundColor.a === 0 || (backgroundColor.r === 255 && backgroundColor.g === 255 && backgroundColor.b === 255)
+			} else {
+				// We have no idea what the color is supposed to be, and it probably won't render as anything, so treat
+				// it as transparent and hope for the best (the user can turn on light mode if this fails)
+				backgroundColorIsWhiteOrTransparent = true
+			}
+		}
+
+		// We want to hold onto the 'original' color for the check below.
+		const effectiveFontColor = fontColorSet ? style.color : fontColorSetByParent
+
+		if (
+			cssAttributeSetNonInherit(e.style.backgroundImage) ||
+			cssAttributeSetNonInherit(e.style.background) ||
+			(backgroundColorSet && !backgroundColorIsWhiteOrTransparent)
+		) {
+			// do not apply the contrast fix to anything inside of this
+			style.color = effectiveFontColor != null ? effectiveFontColor : "#000"
+			return
+		}
+
+		if (backgroundColorIsWhiteOrTransparent) {
+			style.backgroundColor = ""
+		}
+
+		// If this, in particular, has a font color set, we want it to look good on a dark background
+		if (fontColorSet) {
+			const color = computeColor(style.color) ?? { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+			const hsl = rgbToHSL(color)
+
+			// 100 lightness = white
+			//
+			// we average the reverse with white to give us a color that has good contrast with dark backgrounds
+			hsl.l = clamp((100 + (100 - hsl.l)) / 2, 0.0, 100.0)
+
+			style.color = `hsl(${hsl.h} ${hsl.s}% ${hsl.l}% / ${color.a})`
+		}
+
+		for (const childElement of Array.from(e.children)) {
+			applyDarkThemeFixToElement(childElement, effectiveFontColor)
+		}
+	}
+
+	for (const childElement of Array.from(fixed.childNodes)) {
+		applyDarkThemeFixToElement(childElement, null)
+	}
+
+	return fixed
 }
 
 export interface LabelsPopupOpts {

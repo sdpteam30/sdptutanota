@@ -5,8 +5,14 @@ import {
 	aesEncrypt,
 	AesKey,
 	AsymmetricKeyPair,
+	bytesToEd25519PrivateKey,
 	decryptKey,
 	decryptKeyPair,
+	deriveX25519PublicKey,
+	Ed25519PrivateKey,
+	ed25519PrivateKeyToBytes,
+	Ed25519PublicKey,
+	ed25519PublicKeyToBytes,
 	ENABLE_MAC,
 	EncryptedKeyPairs,
 	EncryptedPqKeyPairs,
@@ -15,6 +21,8 @@ import {
 	encryptKey,
 	encryptKyberKey,
 	encryptX25519Key,
+	extractKyberPublicKeyFromKyberPrivateKey,
+	extractRawPublicRsaKeyFromPrivateRsaKey,
 	generateX25519KeyPair,
 	hkdf,
 	HkdfKeyDerivationDomains,
@@ -22,12 +30,14 @@ import {
 	IV_BYTE_LENGTH,
 	KEY_LENGTH_BYTES_AES_256,
 	keyToUint8Array,
+	KyberKeyPair,
 	KyberPrivateKey,
 	KyberPublicKey,
 	kyberPublicKeyToBytes,
 	MacTag,
 	type PQKeyPairs,
 	random,
+	RawRsaPublicKey,
 	type RsaKeyPair,
 	type RsaX25519KeyPair,
 	sha256Hash,
@@ -35,9 +45,13 @@ import {
 	verifyHmacSha256,
 	X25519KeyPair,
 	X25519PrivateKey,
+	X25519PublicKey,
 } from "@tutao/tutanota-crypto"
-import { stringToUtf8Uint8Array, Versioned } from "@tutao/tutanota-utils"
-import { KeyVersion } from "@tutao/tutanota-utils/dist/Utils.js"
+import { arrayEquals, stringToUtf8Uint8Array, Versioned } from "@tutao/tutanota-utils"
+import { KeyVersion } from "@tutao/tutanota-utils"
+import { CryptoError } from "@tutao/tutanota-crypto/error.js"
+import { IdentityKeyPair } from "../../entities/sys/TypeRefs"
+import { parseKeyVersion } from "../facades/KeyLoaderFacade"
 
 /**
  * An AesKey (usually a group key) and its version.
@@ -71,8 +85,22 @@ export class CryptoWrapper {
 		return decryptKey(encryptionKey, key)
 	}
 
-	encryptEccKey(encryptionKey: AesKey, privateKey: X25519PrivateKey): Uint8Array {
+	encryptX25519Key(encryptionKey: AesKey, privateKey: X25519PrivateKey): Uint8Array {
 		return encryptX25519Key(encryptionKey, privateKey)
+	}
+
+	encryptEd25519Key(encryptionKey: VersionedKey, privateKey: Ed25519PrivateKey): VersionedEncryptedKey {
+		return {
+			encryptingKeyVersion: encryptionKey.version,
+			key: aesEncrypt(encryptionKey.object, ed25519PrivateKeyToBytes(privateKey), undefined, true, true),
+		}
+	}
+
+	decryptEd25519PrivateKey(encryptedIdentityKeyPair: IdentityKeyPair, decryptionKey: AesKey): Versioned<Ed25519PrivateKey> {
+		return {
+			object: bytesToEd25519PrivateKey(aesDecrypt(decryptionKey, encryptedIdentityKeyPair.privateEd25519Key)),
+			version: parseKeyVersion(encryptedIdentityKeyPair.identityKeyVersion),
+		}
 	}
 
 	encryptKey(encryptingKey: AesKey, keyToBeEncrypted: AesKey): Uint8Array {
@@ -80,7 +108,7 @@ export class CryptoWrapper {
 	}
 
 	encryptKeyWithVersionedKey(encryptingKey: VersionedKey, key: AesKey): VersionedEncryptedKey {
-		return encryptKeyWithVersionedKey(encryptingKey, key)
+		return _encryptKeyWithVersionedKey(encryptingKey, key)
 	}
 
 	generateEccKeyPair(): X25519KeyPair {
@@ -95,12 +123,16 @@ export class CryptoWrapper {
 		return kyberPublicKeyToBytes(kyberPublicKey)
 	}
 
+	ed25519PublicKeyToBytes(ed25519PublicKey: Ed25519PublicKey): Uint8Array {
+		return ed25519PublicKeyToBytes(ed25519PublicKey)
+	}
+
 	encryptBytes(sk: AesKey, value: Uint8Array): Uint8Array {
-		return encryptBytes(sk, value)
+		return _encryptBytes(sk, value)
 	}
 
 	encryptString(sk: AesKey, value: string): Uint8Array {
-		return encryptString(sk, value)
+		return _encryptString(sk, value)
 	}
 
 	decryptKeyPair(encryptionKey: AesKey, keyPair: EncryptedPqKeyPairs): PQKeyPairs
@@ -131,26 +163,63 @@ export class CryptoWrapper {
 	verifyHmacSha256(key: AesKey, data: Uint8Array, tag: MacTag) {
 		return verifyHmacSha256(key, data, tag)
 	}
+
+	verifyPublicX25519Key(x25519KeyPair: X25519KeyPair): X25519PublicKey {
+		const extractedPubKey = deriveX25519PublicKey(x25519KeyPair.privateKey)
+		if (!arrayEquals(extractedPubKey, x25519KeyPair.publicKey)) {
+			throw new CryptoError("Extracted public key does not match the provided public key")
+		}
+		return x25519KeyPair.publicKey
+	}
+
+	verifyKyberPublicKey(kyberKeyPair: KyberKeyPair): KyberPublicKey {
+		const extractedPubKey = extractKyberPublicKeyFromKyberPrivateKey(kyberKeyPair.privateKey)
+		if (!arrayEquals(extractedPubKey.raw, kyberKeyPair.publicKey.raw)) {
+			throw new CryptoError("Extracted public key does not match the provided public key")
+		}
+		return kyberKeyPair.publicKey
+	}
+
+	verifyRsaPublicKey(rsaKeyPair: RsaKeyPair): RawRsaPublicKey {
+		const providedPublicKey = rsaKeyPair.publicKey
+		const extractedPubKey = extractRawPublicRsaKeyFromPrivateRsaKey(rsaKeyPair.privateKey)
+		if (
+			extractedPubKey.keyLength !== providedPublicKey.keyLength ||
+			extractedPubKey.publicExponent !== providedPublicKey.publicExponent ||
+			extractedPubKey.version !== providedPublicKey.version ||
+			extractedPubKey.modulus !== providedPublicKey.modulus
+		) {
+			throw new CryptoError("Extracted public key does not match the provided public key")
+		}
+		return providedPublicKey
+	}
 }
 
 function deriveKey({ salt, key, info, length }: { salt: string; key: number[]; info: string; length: number }) {
 	return uint8ArrayToKey(hkdf(sha256Hash(stringToUtf8Uint8Array(salt)), keyToUint8Array(key), stringToUtf8Uint8Array(info), length))
 }
 
-export function encryptBytes(sk: AesKey, value: Uint8Array): Uint8Array {
+/**
+ @deprecated use the CryptoWrapper instance instead. This function will be hidden in the future
+ */
+export function _encryptBytes(sk: AesKey, value: Uint8Array): Uint8Array {
 	return aesEncrypt(sk, value, random.generateRandomData(IV_BYTE_LENGTH), true, ENABLE_MAC)
 }
 
-export function encryptString(sk: AesKey, value: string): Uint8Array {
+/**
+ @deprecated use the CryptoWrapper instance instead. This function will be hidden in the future
+ */
+export function _encryptString(sk: AesKey, value: string): Uint8Array {
 	return aesEncrypt(sk, stringToUtf8Uint8Array(value), random.generateRandomData(IV_BYTE_LENGTH), true, ENABLE_MAC)
 }
 
 /**
  * Encrypts the key with the encryptingKey and return the encrypted key and the version of the encryptingKey.
+ * @deprecated use the CryptoWrapper instance instead. This function will be hidden in the future
  * @param encryptingKey the encrypting key.
  * @param key the key to be encrypted.
  */
-export function encryptKeyWithVersionedKey(encryptingKey: VersionedKey, key: AesKey): VersionedEncryptedKey {
+export function _encryptKeyWithVersionedKey(encryptingKey: VersionedKey, key: AesKey): VersionedEncryptedKey {
 	return {
 		encryptingKeyVersion: encryptingKey.version,
 		key: encryptKey(encryptingKey.object, key),

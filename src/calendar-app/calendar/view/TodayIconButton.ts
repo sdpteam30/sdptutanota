@@ -18,11 +18,11 @@ export class TodayIconButton implements Component<TodayIconButtonAttrs> {
 			icon: m(Icon, {
 				container: "div",
 				class: "center-h svg-text-content-bg",
-				size: IconSize.Medium,
+				size: IconSize.PX24,
 				svgParameters: { date: new Date().getDate().toString() },
 				icon: Icons.Today,
 				style: {
-					fill: theme.content_button,
+					fill: theme.on_surface_variant,
 				},
 			}),
 			class: "icon-button state-bg",

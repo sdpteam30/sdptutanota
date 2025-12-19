@@ -3,7 +3,7 @@ import {
 	ContactAddressType,
 	FeatureType,
 	GroupType,
-	KeyVerificationState,
+	PresentableKeyVerificationState,
 	ShareCapability,
 	TimeFormat,
 } from "../../../src/common/api/common/TutanotaConstants.js"
@@ -32,7 +32,6 @@ import {
 	ContactTypeRef,
 	createEncryptedMailAddress,
 	EncryptedMailAddress,
-	EncryptedMailAddressTypeRef,
 	TutanotaPropertiesTypeRef,
 	UserSettingsGroupRoot,
 } from "../../../src/common/api/entities/tutanota/TypeRefs.js"
@@ -42,6 +41,8 @@ import { DateTime } from "luxon"
 import { createTestEntity } from "../TestUtils.js"
 import { matchers, object, when } from "testdouble"
 import { AlarmScheduler } from "../../../src/common/calendar/date/AlarmScheduler.js"
+import { CalendarType } from "../../../src/common/calendar/date/CalendarUtils"
+import { EventWrapper } from "../../../src/calendar-app/calendar/view/CalendarViewModel"
 
 export const ownerMailAddress = "calendarowner@tutanota.de" as const
 export const ownerId = "ownerId" as const
@@ -56,7 +57,7 @@ export const ownerRecipient: Recipient = {
 	name: ownerAddress.name,
 	type: RecipientType.INTERNAL,
 	contact: null,
-	verificationState: KeyVerificationState.NO_ENTRY,
+	verificationState: PresentableKeyVerificationState.NONE,
 }
 export const ownerAlias = createEncryptedMailAddress({
 	address: "calendarowneralias@tutanota.de",
@@ -67,7 +68,7 @@ export const ownerAliasRecipient: Recipient = {
 	name: ownerAlias.name,
 	type: RecipientType.INTERNAL,
 	contact: null,
-	verificationState: KeyVerificationState.NO_ENTRY,
+	verificationState: PresentableKeyVerificationState.NONE,
 }
 export const otherAddress = createEncryptedMailAddress({
 	address: "someone@tutanota.de",
@@ -87,7 +88,7 @@ export const otherRecipient: Recipient = {
 			}),
 		],
 	}),
-	verificationState: KeyVerificationState.NO_ENTRY,
+	verificationState: PresentableKeyVerificationState.NONE,
 }
 export const otherAddress2 = createEncryptedMailAddress({
 	address: "someoneelse@tutanota.de",
@@ -107,7 +108,7 @@ export const otherRecipient2: Recipient = {
 			}),
 		],
 	}),
-	verificationState: KeyVerificationState.NO_ENTRY,
+	verificationState: PresentableKeyVerificationState.NONE,
 }
 
 export const thirdAddress = createEncryptedMailAddress({ address: "somethirdaddress@tuta.com", name: "thirdperson" })
@@ -125,15 +126,18 @@ export const thirdRecipient: Recipient = {
 			}),
 		],
 	}),
-	verificationState: KeyVerificationState.NO_ENTRY,
+	verificationState: PresentableKeyVerificationState.NONE,
 }
 
 export const calendars: ReadonlyMap<Id, CalendarInfo> = new Map([
 	[
 		"ownCalendar",
 		{
+			id: "ownCalendar",
+			name: "Private Calendar",
+			color: "",
 			groupRoot: createTestEntity(CalendarGroupRootTypeRef, {}),
-			shared: false,
+			hasMultipleMembers: false,
 			userIsOwner: true,
 			longEvents: new LazyLoaded(() => Promise.resolve([])),
 			groupInfo: createTestEntity(GroupInfoTypeRef, {}),
@@ -143,13 +147,17 @@ export const calendars: ReadonlyMap<Id, CalendarInfo> = new Map([
 				type: GroupType.Calendar,
 			}),
 			isExternal: false,
+			type: CalendarType.Private,
 		},
 	],
 	[
 		"ownSharedCalendar",
 		{
+			id: "ownSharedCalendar",
+			name: "Owned Shared Calendar",
+			color: "",
 			groupRoot: createTestEntity(CalendarGroupRootTypeRef, {}),
-			shared: true,
+			hasMultipleMembers: true,
 			userIsOwner: true,
 			longEvents: new LazyLoaded(() => Promise.resolve([])),
 			groupInfo: createTestEntity(GroupInfoTypeRef, {}),
@@ -159,13 +167,17 @@ export const calendars: ReadonlyMap<Id, CalendarInfo> = new Map([
 				type: GroupType.Calendar,
 			}),
 			isExternal: false,
+			type: CalendarType.Shared,
 		},
 	],
 	[
 		"ownExternalCalendar",
 		{
+			id: "ownExternalCalendar",
+			name: "External Calendar",
+			color: "",
 			groupRoot: createTestEntity(CalendarGroupRootTypeRef, {}),
-			shared: false,
+			hasMultipleMembers: false,
 			userIsOwner: true,
 			longEvents: new LazyLoaded(() => Promise.resolve([])),
 			groupInfo: createTestEntity(GroupInfoTypeRef, {}),
@@ -175,13 +187,17 @@ export const calendars: ReadonlyMap<Id, CalendarInfo> = new Map([
 				type: GroupType.Calendar,
 			}),
 			isExternal: true,
+			type: CalendarType.External,
 		},
 	],
 	[
 		"sharedCalendar",
 		{
+			id: "sharedCalendar",
+			name: "Shared Calendar",
+			color: "",
 			groupRoot: createTestEntity(CalendarGroupRootTypeRef, {}),
-			shared: true,
+			hasMultipleMembers: true,
 			userIsOwner: false,
 			longEvents: new LazyLoaded(() => Promise.resolve([])),
 			groupInfo: createTestEntity(GroupInfoTypeRef, {}),
@@ -191,6 +207,7 @@ export const calendars: ReadonlyMap<Id, CalendarInfo> = new Map([
 				type: GroupType.Calendar,
 			}),
 			isExternal: false,
+			type: CalendarType.Shared,
 		},
 	],
 ])
@@ -278,8 +295,11 @@ export function makeUserController(
 	})
 }
 
-export function makeCalendarInfo(type: "own" | "shared" | "external", id: string): CalendarInfo {
+export function makeCalendarInfo(id: string, isOwner: boolean, calendarType: CalendarType): CalendarInfo {
 	return {
+		id: id,
+		name: "",
+		color: "",
 		groupRoot: downcast({
 			longEvents: "longEventsList",
 			shortEvents: "shortEventsList",
@@ -288,11 +308,12 @@ export function makeCalendarInfo(type: "own" | "shared" | "external", id: string
 		group: createTestEntity(GroupTypeRef, {
 			_id: id,
 			type: GroupType.Calendar,
-			user: type === "own" ? ownerId : "anotherUserId",
+			user: isOwner ? ownerId : "anotherUserId",
 		}),
-		shared: type === "shared",
-		userIsOwner: type === "own",
-		isExternal: type === "external",
+		hasMultipleMembers: isOwner && calendarType === CalendarType.Shared,
+		userIsOwner: isOwner && calendarType === CalendarType.Private,
+		isExternal: isOwner && calendarType === CalendarType.External,
+		type: calendarType,
 	}
 }
 
@@ -300,14 +321,28 @@ function id(element: string): IdTuple {
 	return ["list", element]
 }
 
-export function makeEvent(_id: string, startTime: Date, endTime: Date, uid: string = ""): CalendarEvent {
-	return createTestEntity(CalendarEventTypeRef, {
-		_ownerGroup: "ownerGroup",
-		_id: id(_id),
-		startTime,
-		endTime,
-		uid,
-	})
+export function makeEventWrapper(event: CalendarEvent, props?: Partial<EventWrapper>): EventWrapper {
+	return {
+		color: "#FAFAFA",
+		event,
+		flags: {
+			isAlteredInstance: false,
+			hasAlarms: false,
+		},
+		...(props != null ? props : {}),
+	}
+}
+
+export function makeEvent(_id: string, startTime: Date, endTime: Date, uid: string = ""): EventWrapper {
+	return makeEventWrapper(
+		createTestEntity(CalendarEventTypeRef, {
+			_ownerGroup: "ownerGroup",
+			_id: id(_id),
+			startTime,
+			endTime,
+			uid,
+		}),
+	)
 }
 
 export function addCapability(user: User, groupId: Id, capability: ShareCapability) {

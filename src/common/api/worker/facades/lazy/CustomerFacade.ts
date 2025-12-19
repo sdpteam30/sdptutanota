@@ -20,8 +20,6 @@ import {
 	createCustomDomainData,
 	createEmailSenderListElement,
 	createInvoiceDataGetIn,
-	createMembershipAddData,
-	createMembershipRemoveData,
 	createPaymentDataServicePutData,
 	CustomDomainReturn,
 	CustomerInfoTypeRef,
@@ -30,9 +28,10 @@ import {
 	CustomerTypeRef,
 	EmailSenderListElement,
 	PaymentDataServicePutReturn,
+	User,
 } from "../../../entities/sys/TypeRefs.js"
 import { assertWorkerOrNode } from "../../../common/Env.js"
-import type { Hex, lazyAsync } from "@tutao/tutanota-utils"
+import type { Hex, lazyAsync, Nullable } from "@tutao/tutanota-utils"
 import { assertNotNull, neverNull, noOp, ofClass, stringToUtf8Uint8Array, uint8ArrayToBase64, uint8ArrayToHex } from "@tutao/tutanota-utils"
 import { CryptoFacade } from "../../crypto/CryptoFacade.js"
 import {
@@ -40,7 +39,6 @@ import {
 	CreateCustomerServerProperties,
 	CustomDomainService,
 	InvoiceDataService,
-	MembershipService,
 	PaymentDataService,
 	SystemKeysService,
 } from "../../../entities/sys/Services.js"
@@ -50,8 +48,6 @@ import { CounterFacade } from "./CounterFacade.js"
 import type { Country } from "../../../common/CountryList.js"
 import { getByAbbreviation } from "../../../common/CountryList.js"
 import { LockedError } from "../../../common/error/RestError.js"
-import type { PQKeyPairs } from "@tutao/tutanota-crypto"
-import { aes256RandomKey, bitArrayToUint8Array, hexToRsaPublicKey, sha256Hash, uint8ArrayToBitArray } from "@tutao/tutanota-crypto"
 import type { RsaImplementation } from "../../crypto/RsaImplementation.js"
 import { EntityClient } from "../../../common/EntityClient.js"
 import { DataFile } from "../../../common/DataFile.js"
@@ -59,7 +55,7 @@ import { IServiceExecutor } from "../../../common/ServiceRequest.js"
 import { CustomerAccountService } from "../../../entities/tutanota/Services.js"
 import { BookingFacade } from "./BookingFacade.js"
 import { UserFacade } from "../UserFacade.js"
-import { PaymentInterval } from "../../../../subscription/PriceUtils.js"
+import { PaymentInterval } from "../../../../subscription/utils/PriceUtils.js"
 import { ExposedOperationProgressTracker, OperationId } from "../../../main/OperationProgressTracker.js"
 import { formatNameAndAddress } from "../../../common/utils/CommonFormatter.js"
 import { PQFacade } from "../PQFacade.js"
@@ -69,13 +65,14 @@ import type { PdfWriter } from "../../pdf/PdfWriter.js"
 import { createCustomerAccountCreateData } from "../../../entities/tutanota/TypeRefs.js"
 import { KeyLoaderFacade, parseKeyVersion } from "../KeyLoaderFacade.js"
 import { RecoverCodeFacade } from "./RecoverCodeFacade.js"
-import { encryptKeyWithVersionedKey, VersionedEncryptedKey, VersionedKey } from "../../crypto/CryptoWrapper.js"
+import { _encryptKeyWithVersionedKey, CryptoWrapper, VersionedEncryptedKey, VersionedKey } from "../../crypto/CryptoWrapper.js"
 import { AsymmetricCryptoFacade } from "../../crypto/AsymmetricCryptoFacade.js"
 import { XRechnungInvoiceGenerator } from "../../invoicegen/XRechnungInvoiceGenerator.js"
-import { PublicKeyProvider } from "../PublicKeyProvider"
+import { PublicEncryptionKeyProvider } from "../PublicEncryptionKeyProvider"
 import { isInternalUser } from "../../../common/utils/UserUtils"
 import { CacheMode } from "../../rest/EntityRestClient"
-import { SubscriptionApp } from "../../../../subscription/SubscriptionUtils"
+import { SubscriptionApp } from "../../../../subscription/utils/SubscriptionUtils"
+import { bitArrayToUint8Array, hexToRsaPublicKey, PQKeyPairs } from "@tutao/tutanota-crypto"
 
 assertWorkerOrNode()
 
@@ -99,13 +96,14 @@ export class CustomerFacade {
 		private readonly keyLoaderFacade: KeyLoaderFacade,
 		private readonly recoverCodeFacade: RecoverCodeFacade,
 		private readonly asymmetricCryptoFacade: AsymmetricCryptoFacade,
-		private readonly publicKeyProvider: PublicKeyProvider,
+		private readonly publicEncryptionKeyProvider: PublicEncryptionKeyProvider,
+		private readonly cryptoWrapper: CryptoWrapper,
 	) {}
 
 	async getDomainValidationRecord(domainName: string): Promise<string> {
 		const customer = this.getCustomerId()
 		const baseString = domainName.trim().toLowerCase() + customer
-		const hash = sha256Hash(stringToUtf8Uint8Array(baseString)).slice(0, 16)
+		const hash = this.cryptoWrapper.sha256Hash(stringToUtf8Uint8Array(baseString)).slice(0, 16)
 		return "t-verify=" + uint8ArrayToHex(hash)
 	}
 
@@ -138,10 +136,10 @@ export class CustomerFacade {
 		const customer = await this.entityClient.load(CustomerTypeRef, customerId)
 		const customerInfo = await this.entityClient.load(CustomerInfoTypeRef, customer.customerInfo)
 		let existingBrandingDomain = getWhitelabelDomainInfo(customerInfo, domainName)
-		let sessionKey = aes256RandomKey()
+		let sessionKey = this.cryptoWrapper.aes256RandomKey()
 
 		const keyData = await this.serviceExecutor.get(SystemKeysService, null)
-		const systemAdminPubKeys = this.publicKeyProvider.convertFromSystemKeysReturn(keyData)
+		const systemAdminPubKeys = this.publicEncryptionKeyProvider.convertFromSystemKeysReturn(keyData)
 		const { pubEncSymKeyBytes, cryptoProtocolVersion } = await this.asymmetricCryptoFacade.asymEncryptSymKey(
 			sessionKey,
 			systemAdminPubKeys,
@@ -219,11 +217,11 @@ export class CustomerFacade {
 			cspId = customer.serverProperties
 		} else {
 			// create properties
-			const sessionKey = aes256RandomKey()
+			const sessionKey = this.cryptoWrapper.aes256RandomKey()
 			const adminGroupId = this.userFacade.getGroupId(GroupType.Admin)
 			const adminGroupKey = await this.keyLoaderFacade.getCurrentSymGroupKey(adminGroupId)
 
-			const adminGroupEncSessionKey = encryptKeyWithVersionedKey(adminGroupKey, sessionKey)
+			const adminGroupEncSessionKey = _encryptKeyWithVersionedKey(adminGroupKey, sessionKey)
 			const data = createCreateCustomerServerPropertiesData({
 				adminGroupEncSessionKey: adminGroupEncSessionKey.key,
 				adminGroupKeyVersion: adminGroupEncSessionKey.encryptingKeyVersion.toString(),
@@ -239,7 +237,7 @@ export class CustomerFacade {
 			value = value.toLowerCase().trim()
 			let newListEntry = createEmailSenderListElement({
 				value,
-				hashedValue: uint8ArrayToBase64(sha256Hash(stringToUtf8Uint8Array(value))),
+				hashedValue: uint8ArrayToBase64(this.cryptoWrapper.sha256Hash(stringToUtf8Uint8Array(value))),
 				type,
 				field,
 			})
@@ -274,7 +272,6 @@ export class CustomerFacade {
 
 	async signup(
 		keyPairs: [PQKeyPairs, PQKeyPairs, PQKeyPairs],
-		accountType: AccountType,
 		authToken: string,
 		mailAddress: string,
 		password: string,
@@ -282,14 +279,14 @@ export class CustomerFacade {
 		currentLanguage: string,
 		app: SubscriptionApp,
 	): Promise<Hex> {
-		const userGroupKey: VersionedKey = { object: aes256RandomKey(), version: 0 }
-		const adminGroupKey: VersionedKey = { object: aes256RandomKey(), version: 0 }
-		const customerGroupKey: VersionedKey = { object: aes256RandomKey(), version: 0 }
-		const userGroupInfoSessionKey = aes256RandomKey()
-		const adminGroupInfoSessionKey = aes256RandomKey()
-		const customerGroupInfoSessionKey = aes256RandomKey()
-		const accountingInfoSessionKey = aes256RandomKey()
-		const customerServerPropertiesSessionKey = aes256RandomKey()
+		const userGroupKey: VersionedKey = { object: this.cryptoWrapper.aes256RandomKey(), version: 0 }
+		const adminGroupKey: VersionedKey = { object: this.cryptoWrapper.aes256RandomKey(), version: 0 }
+		const customerGroupKey: VersionedKey = { object: this.cryptoWrapper.aes256RandomKey(), version: 0 }
+		const userGroupInfoSessionKey = this.cryptoWrapper.aes256RandomKey()
+		const adminGroupInfoSessionKey = this.cryptoWrapper.aes256RandomKey()
+		const customerGroupInfoSessionKey = this.cryptoWrapper.aes256RandomKey()
+		const accountingInfoSessionKey = this.cryptoWrapper.aes256RandomKey()
+		const customerServerPropertiesSessionKey = this.cryptoWrapper.aes256RandomKey()
 
 		const keyData = await this.serviceExecutor.get(SystemKeysService, null)
 		const pubRsaKey = keyData.systemAdminPubRsaKey
@@ -338,9 +335,9 @@ export class CustomerFacade {
 
 		const recoverData = this.recoverCodeFacade.generateRecoveryCode(userGroupKey)
 
-		const userEncAdminGroupKey = encryptKeyWithVersionedKey(userGroupKey, adminGroupKey.object)
-		const adminEncAccountingInfoSessionKey = encryptKeyWithVersionedKey(adminGroupKey, accountingInfoSessionKey)
-		const adminEncCustomerServerPropertiesSessionKey = encryptKeyWithVersionedKey(adminGroupKey, customerServerPropertiesSessionKey)
+		const userEncAdminGroupKey = _encryptKeyWithVersionedKey(userGroupKey, adminGroupKey.object)
+		const adminEncAccountingInfoSessionKey = _encryptKeyWithVersionedKey(adminGroupKey, accountingInfoSessionKey)
+		const adminEncCustomerServerPropertiesSessionKey = _encryptKeyWithVersionedKey(adminGroupKey, customerServerPropertiesSessionKey)
 
 		const data = createCustomerAccountCreateData({
 			authToken,
@@ -370,6 +367,7 @@ export class CustomerFacade {
 			app,
 		})
 		await this.serviceExecutor.post(CustomerAccountService, data)
+
 		return recoverData.hexCode
 	}
 
@@ -463,13 +461,21 @@ export class CustomerFacade {
 	}
 
 	async loadCustomizations(cacheMode: CacheMode = CacheMode.ReadAndWrite): Promise<string[] | null> {
-		const user = this.userFacade.getLoggedInUser()
-		if (isInternalUser(user)) {
-			const customer = await this.entityClient.load(CustomerTypeRef, assertNotNull(user.customer), { cacheMode })
-			this.customizations = customer.customizations.map((f) => f.feature)
+		if (this.customizations) {
 			return this.customizations
 		} else {
-			return null
+			const user = this.userFacade.getLoggedInUser()
+			if (isInternalUser(user)) {
+				const customer = await this.entityClient.load(CustomerTypeRef, assertNotNull(user.customer), { cacheMode })
+				this.customizations = customer.customizations.map((f) => f.feature)
+				return this.customizations
+			} else {
+				return null
+			}
 		}
+	}
+
+	async getUser(): Promise<Nullable<User>> {
+		return this.userFacade.getUser()
 	}
 }

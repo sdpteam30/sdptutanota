@@ -66,7 +66,7 @@ pipeline {
 		stage ('Build and publish') {
             agent {
                 dockerfile {
-                    filename 'linux-build.dockerfile'
+                    filename 'linux-publish.dockerfile'
                     label 'master'
                     dir 'ci/containers'
                     additionalBuildArgs '--format docker'

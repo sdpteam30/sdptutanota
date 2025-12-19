@@ -92,7 +92,7 @@ export class DatePicker implements Component<DatePickerAttrs> {
 						type: TextFieldType.Date,
 						style: {
 							zIndex: 1,
-							border: `2px solid ${theme.content_message_bg}`,
+							border: `2px solid ${theme.outline}`,
 							width: "auto",
 							height: "auto",
 							padding: 0,
@@ -213,7 +213,7 @@ export class DatePicker implements Component<DatePickerAttrs> {
 		// We would like to show the date being typed in the dropdown
 		const dropdownDate = this.parseDate(this.inputText) ?? date ?? new Date()
 		return m(
-			".content-bg.z3.menu-shadow.plr.pb-s",
+			".content-bg.z3.menu-shadow.plr-12.pb-8",
 			{
 				"aria-modal": "true",
 				"aria-label": lang.get(label),
@@ -289,15 +289,22 @@ export class DatePicker implements Component<DatePickerAttrs> {
 	private renderMobileDateInput({ date, onDateSelected, disabled }: DatePickerAttrs): Children {
 		return m("input.fill-absolute.z1", {
 			disabled: disabled,
-			type: "date",
+			type: TextFieldType.Date,
 			style: {
 				opacity: 0,
 				// This overrides platform-specific width setting, we want to cover the whole field
 				minWidth: "100%",
 				minHeight: "100%",
 			},
-			// Format as ISO date format (YYYY-MM-dd). We use luxon for that because JS Date only supports full format with time.
-			value: date != null ? DateTime.fromJSDate(date).toISODate() : "",
+			oncreate: (vnode) => {
+				// We set the date's value oncreate only. Otherwise, the value would be set on every redraw, and since
+				// we handle date selection onfocusout on iOS, this would result in date having an outdated value if
+				// a redraw happens between input and focusout events.
+
+				// Format as ISO date format (YYYY-MM-dd). We use luxon for that because JS Date only supports full format with time.
+				const vnodeDom = vnode.dom as HTMLInputElement
+				vnodeDom.value = date != null ? (DateTime.fromJSDate(date).toISODate() ?? "") : ""
+			},
 
 			// On iOS we use "onfocusout" instead of "oninput" because the native date picker changes the input immediately, triggering an "oninput" event.
 			// And tapping "done" has the same effect as tapping outside the picker, it only closes the picker.
@@ -410,7 +417,7 @@ export class VisualDatePicker implements Component<VisualDatePickerAttrs> {
 
 	private renderPickerHeader(vnode: Vnode<VisualDatePickerAttrs>, date: Date): Children {
 		const size = this.getElementWidth(vnode.attrs)
-		return m(".flex.flex-space-between.pt-s.pb-s.items-center", [
+		return m(".flex.flex-space-between.pt-8.pb-8.items-center", [
 			renderSwitchMonthArrowIcon(false, size, () => this.onPrevMonthSelected()),
 			m(
 				".b",
@@ -681,7 +688,7 @@ export class VisualDatePicker implements Component<VisualDatePickerAttrs> {
 						height: size,
 						width: size,
 						lineHeight: size,
-						color: theme.navigation_menu_icon,
+						color: theme.on_surface_variant,
 					},
 				},
 				wd,

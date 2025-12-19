@@ -1,6 +1,6 @@
 import m, { Children, Vnode, VnodeDOM } from "mithril"
 import stream from "mithril/stream"
-import { assertMainOrNode, isApp, isBrowser, isDesktop, isIOSApp } from "../../common/api/common/Env"
+import { assertMainOrNode, isApp, isDesktop, isIOSApp } from "../../common/api/common/Env"
 import { ColumnType, ViewColumn } from "../../common/gui/base/ViewColumn"
 import { ViewSlider } from "../../common/gui/nav/ViewSlider.js"
 import { SettingsFolder } from "../../common/settings/SettingsFolder.js"
@@ -11,24 +11,23 @@ import { GlobalSettingsViewer } from "./GlobalSettingsViewer"
 import { DesktopSettingsViewer } from "./DesktopSettingsViewer"
 import { MailSettingsViewer } from "./MailSettingsViewer"
 import { UserListView } from "../../common/settings/UserListView.js"
-import type { ReceivedGroupInvitation, User } from "../../common/api/entities/sys/TypeRefs.js"
-import { CustomerInfoTypeRef, CustomerTypeRef } from "../../common/api/entities/sys/TypeRefs.js"
+import { CustomerInfoTypeRef, CustomerTypeRef, GroupInfoTypeRef, ReceivedGroupInvitation, User } from "../../common/api/entities/sys/TypeRefs.js"
 import { GroupListView } from "./groups/GroupListView.js"
 import { WhitelabelSettingsViewer } from "../../common/settings/whitelabel/WhitelabelSettingsViewer"
 import { Icons } from "../../common/gui/base/icons/Icons"
 import { theme } from "../../common/gui/theme"
-import { FeatureType, GroupType, LegacyPlans } from "../../common/api/common/TutanotaConstants"
+import { FeatureType, GroupType } from "../../common/api/common/TutanotaConstants"
 import { BootIcons } from "../../common/gui/base/icons/BootIcons"
 import { locator } from "../../common/api/main/CommonLocator"
 import { SubscriptionViewer } from "../../common/subscription/SubscriptionViewer"
 import { PaymentViewer } from "../../common/subscription/PaymentViewer"
 import { showUserImportDialog } from "../../common/settings/UserViewer.js"
-import { LazyLoaded, noOp, ofClass, partition, promiseMap } from "@tutao/tutanota-utils"
+import { clone, LazyLoaded, partition, promiseMap } from "@tutao/tutanota-utils"
 import { AppearanceSettingsViewer } from "../../common/settings/AppearanceSettingsViewer.js"
 import type { NavButtonAttrs } from "../../common/gui/base/NavButton.js"
 import { NavButtonColor } from "../../common/gui/base/NavButton.js"
 import { SETTINGS_PREFIX } from "../../common/misc/RouteChange"
-import { size } from "../../common/gui/size"
+import { layout_size, size } from "../../common/gui/size"
 import { FolderColumnView } from "../../common/gui/FolderColumnView.js"
 import { getEtId } from "../../common/api/common/utils/EntityUtils"
 import { KnowledgeBaseListView } from "./KnowledgeBaseListView"
@@ -41,10 +40,10 @@ import { getNullableSharedGroupName, getSharedGroupName, isSharedGroupOwner } fr
 import { DummyTemplateListView } from "./DummyTemplateListView"
 import { SettingsFolderRow } from "../../common/settings/SettingsFolderRow.js"
 import { showProgressDialog } from "../../common/gui/dialogs/ProgressDialog"
-import { createGroupSettings, createUserAreaGroupDeleteData, UserSettingsGroupRootTypeRef } from "../../common/api/entities/tutanota/TypeRefs.js"
+import { createUserAreaGroupDeleteData, UserSettingsGroupRootTypeRef } from "../../common/api/entities/tutanota/TypeRefs.js"
 import { GroupInvitationFolderRow } from "../../common/sharing/view/GroupInvitationFolderRow"
 import { TemplateGroupService } from "../../common/api/entities/tutanota/Services"
-import { exportUserCsv } from "../../common/settings/UserDataExporter.js"
+import { exportUserCsv, loadUserExportData } from "../../common/settings/UserDataExporter.js"
 import { IconButton } from "../../common/gui/base/IconButton.js"
 import { BottomNav } from "../gui/BottomNav.js"
 import { getAvailableDomains } from "../../common/settings/mailaddress/MailAddressesUtils.js"
@@ -61,7 +60,6 @@ import { Dialog } from "../../common/gui/base/Dialog.js"
 import { AboutDialog } from "../../common/settings/AboutDialog.js"
 import { loadTemplateGroupInstances } from "../templates/model/TemplatePopupModel.js"
 import { TemplateListView } from "./TemplateListView.js"
-import { TextField } from "../../common/gui/base/TextField.js"
 import { ContactsSettingsViewer } from "./ContactsSettingsViewer.js"
 import { NotificationSettingsViewer } from "./NotificationSettingsViewer.js"
 import { SettingsViewAttrs, UpdatableSettingsDetailsViewer, UpdatableSettingsViewer } from "../../common/settings/Interfaces.js"
@@ -76,8 +74,11 @@ import { showSupportDialog } from "../../common/support/SupportDialog"
 import { Icon, IconSize } from "../../common/gui/base/Icon"
 import { MailExportViewer } from "./MailExportViewer"
 import { getSupportUsageTestStage } from "../../common/support/SupportUsageTestUtils.js"
-import { LockedError } from "../../common/api/common/error/RestError"
-import { shouldHideBusinessPlans } from "../../common/subscription/SubscriptionUtils"
+import { shouldHideBusinessPlans } from "../../common/subscription/utils/SubscriptionUtils"
+import { ButtonType } from "../../common/gui/base/Button"
+import { CancelledError } from "../../common/api/common/error/CancelledError"
+import { GroupNameData } from "../../common/sharing/model/GroupSettingsModel"
+import { GroupSettingNameInputFields } from "../../common/sharing/view/GroupSettingNameInputFields"
 
 assertMainOrNode()
 
@@ -112,7 +113,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 		this._userFolders = [
 			new SettingsFolder(
 				() => "login_label",
-				() => BootIcons.Contacts,
+				() => BootIcons.User,
 				"login",
 				() => new LoginSettingsViewer(locator.credentialsProvider, isApp() ? locator.systemFacade : null),
 				undefined,
@@ -145,28 +146,27 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 				() => new NotificationSettingsViewer(),
 				undefined,
 			),
+			new SettingsFolder(
+				() => "keyManagement_label",
+				() => Icons.KeySolid,
+				"keymanagement",
+				() => {
+					const settingsViewer = new KeyManagementSettingsViewer(
+						locator.keyVerificationFacade,
+						() => locator.desktopSystemFacade,
+						() => locator.systemFacade, // not available in browser
+						locator.logins.getUserController(),
+						locator.usageTestController,
+						locator.publicIdentityKeyProvider,
+						locator.themeController,
+						locator.identityKeyCreator,
+					)
+					settingsViewer.init()
+					return settingsViewer
+				},
+				undefined,
+			),
 		]
-
-		if (!isBrowser() && this.logins.isEnabled(FeatureType.KeyVerification)) {
-			this._userFolders.push(
-				new SettingsFolder(
-					() => "keyManagement_label",
-					() => Icons.KeySolid,
-					"keymanagement",
-					() => {
-						const settingsViewer = new KeyManagementSettingsViewer(
-							locator.keyVerificationFacade,
-							locator.systemFacade,
-							locator.logins.getUserController(),
-							locator.usageTestController,
-						)
-						settingsViewer.init()
-						return settingsViewer
-					},
-					undefined,
-				),
-			)
-		}
 
 		if (isDesktop()) {
 			this._userFolders.push(
@@ -319,8 +319,8 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 			},
 			ColumnType.Foreground,
 			{
-				minWidth: size.first_col_min_width,
-				maxWidth: size.first_col_max_width,
+				minWidth: layout_size.first_col_min_width,
+				maxWidth: layout_size.first_col_max_width,
 				headerCenter: "settings_label",
 			},
 		)
@@ -330,11 +330,11 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 				// are concealed), but there's still room for improvement for scrollbars
 				view: () =>
 					m(BackgroundColumnLayout, {
-						backgroundColor: theme.navigation_bg,
+						backgroundColor: theme.surface_container,
 						columnLayout: m(
 							".mlr-safe-inset.fill-absolute.content-bg",
 							{
-								class: styles.isUsingBottomNavigation() ? "" : "border-radius-top-left-big",
+								class: styles.isUsingBottomNavigation() ? "" : "border-radius-top-left-12",
 							},
 							m(this._getCurrentViewer()!),
 						),
@@ -361,7 +361,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 			{
 				view: () =>
 					m(BackgroundColumnLayout, {
-						backgroundColor: theme.navigation_bg,
+						backgroundColor: theme.surface_container,
 						columnLayout: m(
 							`.mlr-safe-inset.fill-absolute${this.detailsViewer ? ".content-bg" : ""}`,
 							this.detailsViewer ? this.detailsViewer.renderView() : m(""),
@@ -404,13 +404,12 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 		await this.updateShowBusinessSettings()
 		await this.updateShowAffiliateSettings()
 		const currentPlanType = await this.logins.getUserController().getPlanType()
-		const isLegacyPlan = LegacyPlans.includes(currentPlanType)
 
 		if (await this.logins.getUserController().canHaveUsers()) {
 			this._adminFolders.push(
 				new SettingsFolder(
 					() => "adminUserList_action",
-					() => BootIcons.Contacts,
+					() => BootIcons.User,
 					"users",
 					() =>
 						new UserListView(
@@ -418,7 +417,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 							() => this.focusSettingsDetailsColumn(),
 							() => !isApp() && this._customDomains.isLoaded() && this._customDomains.getLoaded().length > 0,
 							() => showUserImportDialog(this._customDomains.getLoaded()),
-							() => exportUserCsv(locator.entityClient, this.logins, locator.fileController, locator.counterFacade),
+							() => this.doExportUsers(),
 						),
 					undefined,
 				),
@@ -457,7 +456,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 						() => "whitelabel_label",
 						() => Icons.Wand,
 						"whitelabel",
-						() => new WhitelabelSettingsViewer(locator.entityClient, this.logins),
+						() => new WhitelabelSettingsViewer(locator.entityClient, this.logins, locator.themeController, locator.whitelabelThemeGenerator),
 						undefined,
 					),
 				)
@@ -529,9 +528,10 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 	oncreate(vnode: Vnode<SettingsViewAttrs>) {
 		locator.eventController.addEntityListener(this.entityListener)
 		this.populateAdminFolders().then(() => {
-			// We have to wait for the folders to be initialized before setting the URL,
+			// We have to wait for the mailSets to be initialized before setting the URL,
 			// otherwise we won't find the requested folder and will just pick the default folder
-			const stillAtDefaultUrl = m.route.get() === this._userFolders[0].url
+			const routeWithoutHash = m.route.get().split("#", 2)[0]
+			const stillAtDefaultUrl = routeWithoutHash === this._userFolders[0].url
 			if (stillAtDefaultUrl && this.navTarget) {
 				this.onNewUrl({ folder: this.navTarget.folder }, this.navTarget.route)
 			}
@@ -566,7 +566,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 			colors: NavButtonColor.Nav,
 			click: () => {
 				// clear nav target if we navigate away before admin
-				// folders are loaded
+				// mailSets are loaded
 				this.navTarget = null
 				this.viewSlider.focus(this._settingsColumn)
 			},
@@ -611,7 +611,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 	private _leaveTemplateGroup(templateInfo: TemplateGroupInstance) {
 		return getConfirmation(
 			lang.getTranslation("confirmLeaveSharedGroup_msg", {
-				"{groupName}": getSharedGroupName(templateInfo.groupInfo, this.logins.getUserController(), false),
+				"{groupName}": getSharedGroupName(templateInfo.groupInfo, this.logins.getUserController().userSettingsGroupRoot, false),
 			}),
 		).confirmed(() => locator.groupManagementFacade.removeUserFromGroup(getEtId(this.logins.getUserController().user), templateInfo.groupInfo.group))
 	}
@@ -669,15 +669,16 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 			this._setUrl(this._userFolders[0].url)
 		} else if (args.folder || !m.route.get().startsWith("/settings")) {
 			// ensure that current viewer will be reinitialized
-			const folder = this._allSettingsFolders().find((folder) => folder.url === requestedPath)
+			const folder = this._allSettingsFolders().find((folder) => folder.matches(args.folder, args.id))
 
 			if (!folder) {
 				this._setUrl(this._userFolders[0].url)
-			} else if (this._selectedFolder.path === folder.path) {
+			} else if (this._selectedFolder.isSameFolder(folder)) {
 				// folder path has not changed
 				this._selectedFolder = folder // instance of SettingsFolder might have been changed in membership update, so replace this instance
 
 				m.redraw()
+				this.scrollSectionIntoView(requestedPath)
 			} else {
 				// folder path has changed
 				// to avoid misleading information, set the url to the folder's url, so the browser url
@@ -691,7 +692,36 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 				this._getCurrentViewer()
 
 				m.redraw()
+				this.scrollSectionIntoView(requestedPath)
 			}
+		}
+	}
+
+	/** If the URL specifies `#section=mysection` try to find the mentioned view and highlight it*/
+	private scrollSectionIntoView(requestedPath: string) {
+		const hashParams = requestedPath.split("#", 2)[1]
+		const section = hashParams ? m.parseQueryString(hashParams).section : null
+		if (typeof section === "string") {
+			// we don't know when the render will happen so we just delay it slightly
+			setTimeout(() => {
+				console.log(`scrolling ${section} into view`)
+				const sectionElement = document.getElementById(section)
+				if (sectionElement) {
+					sectionElement?.scrollIntoView({ behavior: "smooth", block: "start" })
+					// do a quick flash of the target element
+					sectionElement.animate(
+						[
+							{ background: "orange", easing: "ease-in-out " },
+							{ background: "initial", easing: "ease-out" },
+							{ background: "orange", easing: "ease-out" },
+							{ background: "initial", easing: "ease-out" },
+						],
+						900,
+					)
+				} else {
+					console.warn(`Could not find view for section "${section}"`)
+				}
+			}, 250)
 		}
 	}
 
@@ -768,7 +798,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 
 				await this._customDomains.getAsync()
 				m.redraw()
-			} else if (isUpdateForTypeRef(UserSettingsGroupRootTypeRef, update)) {
+			} else if (isUpdateForTypeRef(UserSettingsGroupRootTypeRef, update) || isUpdateForTypeRef(GroupInfoTypeRef, update)) {
 				await this.reloadTemplateData()
 				m.redraw()
 			}
@@ -793,23 +823,23 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 	_bottomSection(): Children {
 		const isFirstPartyDomain = locator.domainConfigProvider().getCurrentDomainConfig().firstPartyDomain
 
-		return m(".pb.pt-l.flex-no-shrink.flex.col.justify-end.gap-vpad", [
+		return m(".pb-16.pt-32.flex-no-shrink.flex.col.justify-end.gap-16", [
 			// Support button
 			m(BaseButton, {
-				class: "flash flex justify-center center-vertically pt-s pb-s plr border-radius",
+				class: "flash flex justify-center center-vertically pt-8 pb-8 plr-12 border-radius",
 				style: {
 					marginInline: "auto",
-					border: `1px solid ${theme.navigation_button}`,
-					color: theme.navigation_button,
+					border: `1px solid ${theme.on_surface_variant}`,
+					color: theme.on_surface,
 				},
 				label: "supportMenu_label",
-				text: m(".pl-s", lang.getTranslation("supportMenu_label").text),
+				text: m(".pl-4", lang.getTranslation("supportMenu_label").text),
 				icon: m(Icon, {
 					icon: Icons.SpeechBubbleFill,
-					size: IconSize.Medium,
+					size: IconSize.PX24,
 					class: "center-h",
 					container: "div",
-					style: { fill: theme.navigation_button },
+					style: { fill: theme.on_surface_variant },
 				}),
 				onclick: () => {
 					const triggerStage = getSupportUsageTestStage(0)
@@ -862,7 +892,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 					".b",
 					{
 						style: {
-							color: theme.navigation_button_selected,
+							color: theme.primary,
 						},
 					},
 					label,
@@ -932,50 +962,65 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 		const customer = await this.logins.getUserController().loadCustomer()
 		this.showAffiliateSettings = isCustomizationEnabledForCustomer(customer, FeatureType.AffiliatePartner)
 	}
+
+	private async doExportUsers() {
+		try {
+			const progress = stream(0)
+			let progressText = lang.getTranslation("pleaseWait_msg")
+			const abortController = new AbortController()
+
+			const data = await showProgressDialog(
+				() => progressText,
+				loadUserExportData(
+					locator.entityClient,
+					this.logins,
+					locator.counterFacade,
+					(complete: number, total: number) => {
+						progressText = lang.getTranslation("userExportProgress_msg", {
+							"{current}": complete,
+							"{total}": total,
+						})
+						progress((complete / total) * 100)
+					},
+					abortController.signal,
+				),
+				progress,
+				{
+					middle: "exportUsers_action",
+					left: [
+						{
+							label: "cancel_action",
+							type: ButtonType.Primary,
+							click: () => abortController.abort(),
+						},
+					],
+				},
+			)
+			await exportUserCsv(data, locator.fileController)
+		} catch (e) {
+			if (e instanceof CancelledError) {
+				return
+			}
+			throw e
+		}
+	}
 }
 
-function showRenameTemplateListDialog(instance: TemplateGroupInstance) {
-	const logins = locator.logins
-	const name = stream(getSharedGroupName(instance.groupInfo, logins.getUserController(), true))
+async function showRenameTemplateListDialog(instance: TemplateGroupInstance) {
+	const groupSettingsModel = await locator.groupSettingsModel()
+	const groupNameData = await groupSettingsModel.getGroupNameData(instance.groupInfo)
+	const newData = clone<GroupNameData>(groupNameData)
 	Dialog.showActionDialog({
 		title: "renameTemplateList_label",
 		allowOkWithReturn: true,
 		child: {
-			view: () =>
-				m(TextField, {
-					value: name(),
-					oninput: name,
-					label: "templateGroupName_label",
-				}),
+			view: () => {
+				return m(GroupSettingNameInputFields, { groupNameData: newData })
+			},
 		},
 		okAction: (dialog: Dialog) => {
 			dialog.close()
-			const { userSettingsGroupRoot } = logins.getUserController()
-			const existingGroupSettings = userSettingsGroupRoot.groupSettings.find((gc) => gc.group === instance.groupInfo.group)
-			const newName = name()
-
-			if (existingGroupSettings) {
-				existingGroupSettings.name = newName
-			} else {
-				const newSettings = createGroupSettings({
-					group: getEtId(instance.group),
-					color: "",
-					name: newName,
-					defaultAlarmsList: [],
-					sourceUrl: null,
-				})
-				logins.getUserController().userSettingsGroupRoot.groupSettings.push(newSettings)
-			}
-
-			locator.entityClient
-				.update(userSettingsGroupRoot)
-				.then(() => {
-					if (isSharedGroupOwner(instance.group, logins.getUserController().user)) {
-						instance.groupInfo.name = newName
-						locator.entityClient.update(instance.groupInfo)
-					}
-				})
-				.catch(ofClass(LockedError, noOp))
+			groupSettingsModel.updateGroupNameData(instance.groupInfo, newData)
 		},
 	})
 }

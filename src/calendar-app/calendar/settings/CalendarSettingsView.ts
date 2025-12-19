@@ -15,7 +15,7 @@ import { BootIcons } from "../../../common/gui/base/icons/BootIcons.js"
 import { LoginSettingsViewer } from "../../../common/settings/login/LoginSettingsViewer.js"
 import { Icons } from "../../../common/gui/base/icons/Icons.js"
 import { AppearanceSettingsViewer } from "../../../common/settings/AppearanceSettingsViewer.js"
-import { px, size } from "../../../common/gui/size.js"
+import { component_size, layout_size, px, size } from "../../../common/gui/size.js"
 import { lang, MaybeTranslation } from "../../../common/misc/LanguageViewModel.js"
 import { BackgroundColumnLayout } from "../../../common/gui/BackgroundColumnLayout.js"
 import { theme } from "../../../common/gui/theme.js"
@@ -42,7 +42,7 @@ import { BaseButton } from "../../../common/gui/base/buttons/BaseButton.js"
 import { Icon, IconSize } from "../../../common/gui/base/Icon.js"
 import { showSupportDialog } from "../../../common/support/SupportDialog.js"
 import { getSupportUsageTestStage } from "../../../common/support/SupportUsageTestUtils.js"
-import { shouldHideBusinessPlans } from "../../../common/subscription/SubscriptionUtils"
+import { shouldHideBusinessPlans } from "../../../common/subscription/utils/SubscriptionUtils"
 
 assertMainOrNode()
 
@@ -70,7 +70,7 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 		this.userFolders = [
 			new SettingsFolder(
 				() => "login_label",
-				() => BootIcons.Contacts,
+				() => BootIcons.User,
 				"login",
 				() => new LoginSettingsViewer(calendarLocator.credentialsProvider, isApp() ? calendarLocator.systemFacade : null),
 				undefined,
@@ -120,7 +120,7 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 			{
 				view: () => {
 					return m(BackgroundColumnLayout, {
-						backgroundColor: theme.navigation_bg,
+						backgroundColor: theme.surface_container,
 						columnLayout: m(".flex.flex-grow.col.fill-absolute.scroll", [
 							this.renderSettingsNavigation(this.userFolders, "userSettings_label"),
 							this.renderLoggedInNavigationLinks(),
@@ -142,8 +142,8 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 			},
 			ColumnType.Background,
 			{
-				minWidth: size.first_col_min_width,
-				maxWidth: size.first_col_max_width,
+				minWidth: layout_size.first_col_min_width,
+				maxWidth: layout_size.first_col_max_width,
 				headerCenter: "settings_label",
 			},
 		)
@@ -156,15 +156,15 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 				// are concealed), but there's still room for improvement for scrollbars
 				view: () =>
 					m(BackgroundColumnLayout, {
-						backgroundColor: theme.navigation_bg,
-						classes: this.isTabletView() ? "pr-m pl-vpad-s" : "",
+						backgroundColor: theme.surface_container,
+						classes: this.isTabletView() ? "pr-16 pl-8" : "",
 						columnLayout: m(
-							".mlr-safe-inset.fill-absolute.content-bg.border-radius-top-left-m.border-radius-top-right-m",
+							".mlr-safe-inset.fill-absolute.content-bg.border-radius-top-left-8.border-radius-top-right-8",
 							{
-								class: this.isTabletView() ? "border-radius-top-left-big" : "",
+								class: this.isTabletView() ? "border-radius-top-left-12" : "",
 								style: this.isTabletView()
 									? {
-											"margin-top": px(size.navbar_height_mobile + size.vpad_small),
+											"margin-top": px(component_size.navbar_height_mobile + size.spacing_8),
 										}
 									: {},
 							},
@@ -190,8 +190,8 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 			},
 			ColumnType.Background,
 			{
-				minWidth: size.third_col_min_width,
-				maxWidth: size.third_col_max_width,
+				minWidth: layout_size.third_col_min_width,
+				maxWidth: layout_size.third_col_max_width,
 				headerCenter: this.selectedFolder.name,
 			},
 		)
@@ -202,29 +202,29 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 		const safeArea = isIOSApp() ? getSafeAreaInsetBottom() : 0
 
 		return m(
-			".pb.pt-l.flex-no-shrink.flex.col.justify-end.items-center.gap-vpad",
+			".pb-16.pt-32.flex-no-shrink.flex.col.justify-end.items-center.gap-16",
 			{
 				style: {
-					paddingBottom: safeArea > 0 ? px(safeArea) : px(size.vpad),
+					paddingBottom: safeArea > 0 ? px(safeArea) : px(size.spacing_16),
 				},
 			},
 			[
 				// Support button
 				m(BaseButton, {
-					class: "flash flex justify-center center-vertically pt-s pb-s plr border-radius",
+					class: "flash flex justify-center center-vertically pt-8 pb-8 plr-12 border-radius",
 					style: {
 						marginInline: "auto",
-						border: `1px solid ${theme.navigation_button}`,
-						color: theme.navigation_button,
+						border: `1px solid ${theme.outline}`,
+						color: theme.on_surface_variant,
 					},
 					label: "supportMenu_label",
-					text: m(".pl-s", lang.getTranslation("supportMenu_label").text),
+					text: m(".pl-4", lang.getTranslation("supportMenu_label").text),
 					icon: m(Icon, {
 						icon: Icons.SpeechBubbleFill,
-						size: IconSize.Medium,
+						size: IconSize.PX24,
 						class: "center-h",
 						container: "div",
-						style: { fill: theme.navigation_button },
+						style: { fill: theme.on_surface_variant },
 					}),
 					onclick: () => {
 						const triggerStage = getSupportUsageTestStage(0)
@@ -314,7 +314,13 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 					() => "whitelabel_label",
 					() => Icons.Wand,
 					"whitelabel",
-					() => new WhitelabelSettingsViewer(calendarLocator.entityClient, this.logins),
+					() =>
+						new WhitelabelSettingsViewer(
+							calendarLocator.entityClient,
+							this.logins,
+							calendarLocator.themeController,
+							calendarLocator.whitelabelThemeGenerator,
+						),
 					undefined,
 				),
 			)
@@ -325,7 +331,7 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 	oncreate(vnode: Vnode<CalendarSettingsViewAttrs>) {
 		calendarLocator.eventController.addEntityListener(this.entityListener)
 		Promise.all([this.populateAdminFolders(), this.populateSubscriptionFolders()]).then(() => {
-			// We have to wait for the folders to be initialized before setting the URL,
+			// We have to wait for the mailSets to be initialized before setting the URL,
 			// otherwise we won't find the requested folder and will just pick the default folder
 			const stillAtDefaultUrl =
 				m.route.get() === this.userFolders[0].url || (m.route.get() === this.targetRoute && this.selectedFolder.url !== this.targetRoute)
@@ -371,14 +377,14 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 		}
 
 		return m(
-			".flex.col.pl-vpad-m.pt-s.pb-s",
+			".flex.col.pl-16.pt-8.pb-8",
 			{
-				class: styles.isSingleColumnLayout() ? "pr-m" : "pr-vpad-s",
+				class: styles.isSingleColumnLayout() ? "pr-16" : "pr-8",
 			},
 			[
-				m("small.uppercase.pb-s.b.text-ellipsis", { style: { color: theme.navigation_button } }, lang.getTranslationText(title)),
+				m("small.uppercase.pb-8.b.text-ellipsis", { style: { color: theme.on_surface_variant } }, lang.getTranslationText(title)),
 				m(
-					".flex.col.border-radius-m.list-bg",
+					".flex.col.border-radius-8.list-bg",
 					folders
 						.filter((folder) => folder.isVisible())
 						.map((folder) => {
@@ -412,9 +418,9 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 	onNewUrl(args: Record<string, any>, requestedPath: string) {
 		if (args.folder || !m.route.get().startsWith(SETTINGS_PREFIX)) {
 			// ensure that current viewer will be reinitialized
-			const folder = this._allSettingsFolders().find((folder) => folder.url === requestedPath)
+			const folder = this._allSettingsFolders().find((folder) => folder.matches(args.folder, args.id))
 
-			if (folder && this.selectedFolder.path === folder.path) {
+			if (folder && this.selectedFolder.isSameFolder(folder)) {
 				// folder path has not changed
 				this.selectedFolder = folder // instance of SettingsFolder might have been changed in membership update, so replace this instance
 
@@ -528,7 +534,7 @@ export class CalendarSettingsView extends BaseTopLevelView implements TopLevelVi
 						".b",
 						{
 							style: {
-								color: theme.navigation_button_selected,
+								color: theme.primary,
 							},
 						},
 						label,

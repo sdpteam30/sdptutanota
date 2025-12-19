@@ -9,7 +9,7 @@ public let OPEN_CONTACT_EDITOR_CONTACT_ID = "contactId"
 public let OPEN_SETTINGS = "settings"
 
 /// Main screen of the app.
-class ViewController: UIViewController, WKNavigationDelegate, UIScrollViewDelegate {
+class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate {
 	private let themeManager: ThemeManager
 	private let alarmManager: AlarmManager
 	private let notificationsHandler: NotificationsHandler
@@ -59,12 +59,14 @@ class ViewController: UIViewController, WKNavigationDelegate, UIScrollViewDelega
 		webView.scrollView.delegate = self
 		webView.isOpaque = false
 		webView.scrollView.contentInsetAdjustmentBehavior = .never
+		webView.uiDelegate = self
 
 		#if DEBUG
 			if #available(iOS 16.4, *) { webView.isInspectable = true }
 		#endif
 
-		let commonSystemFacade = IosCommonSystemFacade(viewController: self)
+		let userAgent = "\(self.webView.value(forKey: "userAgent") ?? "")"
+		let commonSystemFacade = IosCommonSystemFacade(viewController: self, urlSession: urlSession)
 		self.bridge = RemoteBridge(
 			webView: self.webView,
 			viewController: self,
@@ -86,7 +88,7 @@ class ViewController: UIViewController, WKNavigationDelegate, UIScrollViewDelega
 			sqlCipherFacade: self.sqlCipherFacade,
 			contactsSynchronization: contactsSynchronization,
 			userPreferencesProvider: userPreferencesProvider,
-			externalCalendarFacade: ExternalCalendarFacadeImpl(urlSession: urlSession)
+			externalCalendarFacade: ExternalCalendarFacadeImpl(urlSession: urlSession, userAgent: userAgent)
 		)
 
 	}
@@ -206,6 +208,17 @@ class ViewController: UIViewController, WKNavigationDelegate, UIScrollViewDelega
 		webView.load(URLRequest(url: url))
 	}
 
+	@available(iOS 15.0, *) func webView(
+		_ webView: WKWebView,
+		decideMediaCapturePermissionsFor origin: WKSecurityOrigin,
+		initiatedBy frame: WKFrameInfo,
+		type: WKMediaCaptureType
+	) async -> WKPermissionDecision {
+		// Grant camera access for the web view. This does not affect the permission
+		// prompt issued by the Tuta app itself.
+		if type == .camera { return .grant } else { return .deny }
+	}
+
 	private func dictToJson(dictionary: [String: String]) -> String { try! String(data: JSONEncoder().encode(dictionary), encoding: .utf8)! }
 
 	private func appUrl() -> URL {
@@ -221,7 +234,7 @@ class ViewController: UIViewController, WKNavigationDelegate, UIScrollViewDelega
 	private func getAssetUrl() -> URL { URL(string: "asset://app/index-app.html")! }
 
 	func applyTheme(_ theme: [String: String]) {
-		let contentBgString = theme["content_bg"]!
+		let contentBgString = theme["surface"]!
 		let contentBg = UIColor(hex: contentBgString)!
 		self.isDarkTheme = !contentBg.isLight()
 		self.view.backgroundColor = contentBg

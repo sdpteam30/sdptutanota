@@ -20,19 +20,20 @@ use crate::user_facade::UserFacade;
 use crate::util::first_bigger_than_second_custom_id;
 use crate::{ApiCallError, CustomId, GeneratedId, ListLoadDirection};
 use num_enum::TryFromPrimitive;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::string::ToString;
 use std::sync::Arc;
-use time::{OffsetDateTime, Time, UtcOffset};
+use time::{OffsetDateTime, Time, UtcDateTime, UtcOffset};
 
 // To keep the SDK decoupled and dependency free we decided to handle translations on native side
 pub const DEFAULT_CALENDAR_NAME: &str = "";
 pub const DEFAULT_CALENDAR_COLOR: &str = "2196f3";
 
-pub const CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID: &str = "clientOnly_birthdays";
-pub const CLIENT_ONLY_CALENDAR_BIRTHDAYS_TRANSLATION_KEY: &str = "birthdayCalendar_label";
-pub const CLIENT_ONLY_CALENDAR_BIRTHDAYS_COLOR: &str = "FF9933";
+pub const BIRTHDAY_CALENDAR_BASE_ID: &str = "clientOnly_birthdays";
+pub const BIRTHDAY_TRANSLATION_KEY: &str = "birthdayCalendar_label";
+pub const DEFAULT_BIRTHDAY_CALENDAR_COLOR: &str = "FF9933";
 
 #[derive(uniffi::Record)]
 pub struct CalendarData {
@@ -46,7 +47,7 @@ pub struct CalendarRenderData {
 	pub color: String,
 }
 
-#[derive(uniffi::Record)]
+#[derive(uniffi::Record, Clone, Serialize, Deserialize)]
 pub struct CalendarEventsList {
 	pub short_events: Vec<CalendarEvent>,
 	pub long_events: Vec<CalendarEvent>,
@@ -61,6 +62,8 @@ pub struct CalendarFacade {
 	customer_facade: Arc<CustomerFacade>,
 	event_facade: Arc<EventFacade>,
 }
+
+struct RangeWithOffset(OffsetDateTime, OffsetDateTime);
 
 #[cfg_attr(test, mockall::automock)]
 impl CalendarFacade {
@@ -84,6 +87,7 @@ impl CalendarFacade {
 	///  Fetches all user calendars
 	async fn fetch_calendars_data(
 		&self,
+		user_settings_group_root: &UserSettingsGroupRoot,
 	) -> Result<HashMap<GeneratedId, CalendarData>, ApiCallError> {
 		let user = self.user_facade.get_user();
 		let memberships: Vec<&GroupMembership> = user
@@ -99,10 +103,6 @@ impl CalendarFacade {
 			));
 		}
 
-		let user_settings_group_root: UserSettingsGroupRoot = self
-			.crypto_entity_client
-			.load(&user.userGroup.group)
-			.await?;
 		let mut calendars_data: HashMap<GeneratedId, CalendarData> = HashMap::new();
 		for membership in memberships {
 			let group_info: GroupInfo = self
@@ -128,11 +128,12 @@ impl CalendarFacade {
 	}
 
 	/// Fetches calendar events from a given calendar starting on a given Date and Time
-	/// until the end of the same day
-	async fn fetch_calendar_events_from_date_until_end_of_day(
+	/// until the given end Date and Time. The end_date is exclusive
+	async fn fetch_events_in_range(
 		&self,
 		calendar_id: &GeneratedId,
-		date: DateTime,
+		start_date: DateTime,
+		end_date: DateTime,
 	) -> Result<CalendarEventsList, ApiCallError> {
 		let user = self.user_facade.get_user();
 		let memberships: Vec<&GroupMembership> = user
@@ -161,10 +162,26 @@ impl CalendarFacade {
 			},
 		};
 
-		let (timestamp_start, timestamp_end) = match self.parse_date_to_all_day_range(date) {
-			Ok(value) => value,
-			Err(err) => return Err(err),
+		let Ok(offset) = UtcOffset::current_local_offset() else {
+			return Err(ApiCallError::InternalSdkError {
+				error_message: "Failed to determine device time offset".to_string(),
+			});
 		};
+
+		let (start_range, _) = self.parse_date_to_all_day_range(start_date, offset)?;
+		let (end_range, _) = self.parse_date_to_all_day_range(end_date, offset)?;
+
+		let start_in_offset = OffsetDateTime::from_unix_timestamp(
+			DateTime::from_millis(start_range).as_seconds() as i64,
+		)
+		.unwrap()
+		.to_offset(offset);
+
+		let end_in_offset = OffsetDateTime::from_unix_timestamp(
+			DateTime::from_millis(end_range).as_seconds() as i64,
+		)
+		.unwrap()
+		.to_offset(offset);
 
 		let mut short_events: Vec<CalendarEvent> = Vec::new();
 		let mut long_events: Vec<CalendarEvent> = Vec::new();
@@ -172,8 +189,8 @@ impl CalendarFacade {
 		let mut has_short_events_finished = false;
 		let mut has_long_events_finished = false;
 
-		let mut start_short_id = get_event_element_min_id(timestamp_start);
-		let max_short_id = get_event_element_max_id(timestamp_end);
+		let mut start_short_id = get_event_element_min_id(start_date.as_millis());
+		let max_short_id = get_event_element_max_id(end_range);
 		let mut start_long_id = CustomId("".to_owned());
 		let max_long_id = get_max_timestamp_id();
 		let group_root: CalendarGroupRoot =
@@ -202,9 +219,10 @@ impl CalendarFacade {
 			has_short_events_finished = is_done;
 			start_short_id = new_start;
 			let mut filtered_short_events = self.filter_events_in_range(
-				date.as_millis(),
-				timestamp_end,
-				&mut unwraped_short_events,
+				start_date.as_millis(),
+				end_range,
+				&RangeWithOffset(start_in_offset, end_in_offset),
+				&unwraped_short_events,
 			);
 			short_events.append(&mut filtered_short_events);
 
@@ -250,7 +268,7 @@ impl CalendarFacade {
 						.map(|date| date.date)
 						.collect(),
 					None,
-					Some(DateTime::from_millis(timestamp_end)),
+					Some(DateTime::from_millis(end_range)),
 					repeat_rule.timeZone.clone(),
 				) {
 					Ok(ev) => ev,
@@ -281,9 +299,10 @@ impl CalendarFacade {
 
 			unwraped_long_events.append(&mut advanced_instances);
 			let mut filtered_long_events = self.filter_events_in_range(
-				date.as_millis(),
-				timestamp_end,
-				&mut unwraped_long_events,
+				start_date.as_millis(),
+				end_range,
+				&RangeWithOffset(start_in_offset, end_in_offset),
+				&unwraped_long_events,
 			);
 
 			filtered_long_events = self.filter_excluded_dates(&mut filtered_long_events);
@@ -309,18 +328,58 @@ impl CalendarFacade {
 
 	async fn fetch_birthday_events(
 		&self,
-		date: DateTime,
+		start: DateTime,
+		end: DateTime,
 	) -> Result<CalendarEventsList, ApiCallError> {
-		let (timestamp_start, timestamp_end) = match self.parse_date_to_all_day_range(date) {
-			Ok(value) => value,
-			Err(err) => return Err(err),
+		let Ok(offset) = UtcOffset::current_local_offset() else {
+			return Err(ApiCallError::InternalSdkError {
+				error_message: "Failed to determine device time offset".to_string(),
+			});
+		};
+
+		let (start_range, _) = self.parse_date_to_all_day_range(start, offset)?;
+		let (end_range, _) = self.parse_date_to_all_day_range(end, offset)?;
+
+		let start_in_offset = match OffsetDateTime::from_unix_timestamp(
+			DateTime::from_millis(start_range).as_seconds() as i64,
+		) {
+			Ok(date) => date.to_offset(offset),
+			_ => {
+				return Err(ApiCallError::InternalSdkError {
+					error_message: format!(
+						"Failed to determine today date in offset {}",
+						offset.whole_seconds()
+					),
+				})
+			},
+		};
+
+		let end_in_offset = match OffsetDateTime::from_unix_timestamp(
+			DateTime::from_millis(end_range).as_seconds() as i64,
+		) {
+			Ok(date) => date.to_offset(offset),
+			_ => {
+				return Err(ApiCallError::InternalSdkError {
+					error_message: format!(
+						"Failed to determine today date in offset {}",
+						offset.whole_seconds()
+					),
+				})
+			},
 		};
 
 		let birthday_events: Vec<BirthdayEvent> = self
 			.generate_birthdays()
 			.await?
 			.into_iter()
-			.filter(|ev| self.is_event_in_range(&ev.calendar_event, timestamp_start, timestamp_end))
+			.filter(|ev| {
+				self.is_event_in_range(
+					&ev.calendar_event,
+					start_range,
+					end_range,
+					&RangeWithOffset(start_in_offset, end_in_offset),
+				)
+			})
 			.collect();
 
 		Ok(CalendarEventsList {
@@ -330,13 +389,11 @@ impl CalendarFacade {
 		})
 	}
 
-	fn parse_date_to_all_day_range(&self, date: DateTime) -> Result<(u64, u64), ApiCallError> {
-		let Ok(offset) = UtcOffset::current_local_offset() else {
-			return Err(ApiCallError::InternalSdkError {
-				error_message: "Failed to determine device time offset".to_string(),
-			});
-		};
-
+	fn parse_date_to_all_day_range(
+		&self,
+		date: DateTime,
+		offset: UtcOffset,
+	) -> Result<(u64, u64), ApiCallError> {
 		let date_in_seconds = (date.as_millis() / 1000) as i64;
 
 		let parsed_date = match OffsetDateTime::from_unix_timestamp(date_in_seconds) {
@@ -376,13 +433,14 @@ impl CalendarFacade {
 
 	fn filter_events_in_range(
 		&self,
-		timestamp_start: u64,
-		timestamp_end: u64,
-		events: &mut [CalendarEvent],
+		range_start: u64,
+		range_end: u64,
+		reference_range: &RangeWithOffset,
+		events: &[CalendarEvent],
 	) -> Vec<CalendarEvent> {
 		events
 			.iter()
-			.filter(|&event| self.is_event_in_range(event, timestamp_start, timestamp_end))
+			.filter(|&event| self.is_event_in_range(event, range_start, range_end, reference_range))
 			.map(|event| event.to_owned())
 			.collect()
 	}
@@ -390,12 +448,51 @@ impl CalendarFacade {
 	fn is_event_in_range(
 		&self,
 		event: &CalendarEvent,
-		timestamp_start: u64,
-		timestamp_end: u64,
+		range_start: u64,
+		range_end: u64,
+		reference_range: &RangeWithOffset,
 	) -> bool {
-		(event.startTime.as_millis() >= timestamp_start
-			|| event.endTime.as_millis() > timestamp_start)
-			&& event.startTime.as_millis() < timestamp_end
+		let is_all_day_event =
+			EventFacade::is_all_day_event_by_times(event.startTime, event.endTime);
+
+		if is_all_day_event {
+			return self.check_all_day_event_overlap(event, reference_range);
+		}
+
+		(event.startTime.as_millis() >= range_start || event.endTime.as_millis() > range_start)
+			&& event.startTime.as_millis() < range_end
+	}
+
+	fn check_all_day_event_overlap(
+		&self,
+		event: &CalendarEvent,
+		reference_range: &RangeWithOffset,
+	) -> bool {
+		let offset = reference_range.0.offset();
+		let event_start =
+			match OffsetDateTime::from_unix_timestamp(event.startTime.as_seconds() as i64) {
+				Ok(date) => date.to_offset(offset),
+				_ => return false,
+			};
+
+		let event_end = match OffsetDateTime::from_unix_timestamp(event.endTime.as_seconds() as i64)
+		{
+			Ok(date) => date.to_offset(offset),
+			_ => return false,
+		};
+
+		let all_day_range_start =
+			OffsetDateTime::new_utc(reference_range.0.date(), Time::from_hms(0, 0, 0).unwrap())
+				.to_offset(offset);
+		let all_day_range_end = OffsetDateTime::from(UtcDateTime::new(
+			reference_range.1.date(),
+			Time::from_hms(0, 0, 0).unwrap(),
+		))
+		.to_offset(offset);
+
+		(event_start.cmp(&all_day_range_start) != Ordering::Less
+			|| event_end.cmp(&all_day_range_start) == Ordering::Greater)
+			&& event_start.cmp(&all_day_range_end) == Ordering::Less
 	}
 
 	fn filter_excluded_dates(&self, events: &mut [CalendarEvent]) -> Vec<CalendarEvent> {
@@ -459,7 +556,10 @@ impl CalendarFacade {
 		Ok([].to_vec())
 	}
 
-	pub async fn generate_client_only_calendars(&self) -> HashMap<GeneratedId, CalendarRenderData> {
+	pub async fn get_birthday_calendar_data(
+		&self,
+		user_settings_group_root: &UserSettingsGroupRoot,
+	) -> HashMap<GeneratedId, CalendarRenderData> {
 		let user: Arc<User> = self.user_facade.get_user();
 		if user.accountType != AccountType::PAID as i64 {
 			return HashMap::new();
@@ -489,13 +589,17 @@ impl CalendarFacade {
 		let birthday_calendar_id = format!(
 			"{}#{}",
 			user._id.as_ref().unwrap(),
-			CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID
+			BIRTHDAY_CALENDAR_BASE_ID
 		);
+
 		HashMap::from([(
 			GeneratedId(birthday_calendar_id),
 			CalendarRenderData {
-				name: String::from(CLIENT_ONLY_CALENDAR_BIRTHDAYS_TRANSLATION_KEY),
-				color: String::from(CLIENT_ONLY_CALENDAR_BIRTHDAYS_COLOR),
+				name: String::from(BIRTHDAY_TRANSLATION_KEY),
+				color: user_settings_group_root
+					.birthdayCalendarColor
+					.clone()
+					.unwrap_or(String::from(DEFAULT_BIRTHDAY_CALENDAR_COLOR)),
 			},
 		)])
 	}
@@ -596,12 +700,20 @@ impl CalendarFacade {
 
 #[uniffi::export]
 impl CalendarFacade {
-	pub async fn get_calendars_render_data(&self) -> HashMap<GeneratedId, CalendarRenderData> {
-		let calendars_data = match self.fetch_calendars_data().await {
+	pub async fn get_calendars_render_data(
+		&self,
+	) -> Result<HashMap<GeneratedId, CalendarRenderData>, ApiCallError> {
+		let user = self.user_facade.get_user();
+		let user_settings_group_root: UserSettingsGroupRoot = self
+			.crypto_entity_client
+			.load(&user.userGroup.group)
+			.await?;
+
+		let calendars_data = match self.fetch_calendars_data(&user_settings_group_root).await {
 			Ok(cal_data) => cal_data,
 			Err(e) => {
 				log::error!("Failed to fetch calendars data: {}", e);
-				return HashMap::new();
+				return Ok(HashMap::new());
 			},
 		};
 
@@ -631,25 +743,25 @@ impl CalendarFacade {
 			calendars_render_data.insert(calendar_id, render_data);
 		}
 
-		let client_only_calendars = self.generate_client_only_calendars().await;
-		calendars_render_data.extend(client_only_calendars);
+		let birthday_calendar = self
+			.get_birthday_calendar_data(&user_settings_group_root)
+			.await;
+		calendars_render_data.extend(birthday_calendar);
 
-		calendars_render_data
+		Ok(calendars_render_data)
 	}
 
 	pub async fn get_calendar_events(
 		&self,
 		calendar_id: &GeneratedId,
-		date: DateTime,
+		start: DateTime,
+		end: DateTime,
 	) -> CalendarEventsList {
-		if calendar_id
-			.0
-			.contains(CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID)
-		{
-			return self.fetch_birthday_events(date).await.unwrap();
+		if calendar_id.0.contains(BIRTHDAY_CALENDAR_BASE_ID) {
+			return self.fetch_birthday_events(start, end).await.unwrap();
 		}
 
-		self.fetch_calendar_events_from_date_until_end_of_day(calendar_id, date)
+		self.fetch_events_in_range(calendar_id, start, end)
 			.await
 			.unwrap()
 	}
@@ -677,21 +789,25 @@ fn get_max_timestamp_id() -> CustomId {
 #[cfg(test)]
 mod calendar_facade_unit_tests {
 	use super::{
-		CalendarFacade, CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID, DEFAULT_CALENDAR_COLOR,
+		CalendarFacade, RangeWithOffset, BIRTHDAY_CALENDAR_BASE_ID, DEFAULT_CALENDAR_COLOR,
 		DEFAULT_CALENDAR_NAME,
 	};
 	use crate::contacts::contact_facade::MockContactFacade;
 	use crate::crypto_entity_client::MockCryptoEntityClient;
 	use crate::customer::customer_facade::MockCustomerFacade;
 	use crate::date::event_facade::EventFacade;
+	use crate::date::DateTime;
 	use crate::entities::generated::sys::{CustomerInfo, GroupInfo, GroupMembership, User};
-	use crate::entities::generated::tutanota::{Contact, GroupSettings, UserSettingsGroupRoot};
+	use crate::entities::generated::tutanota::{
+		CalendarEvent, Contact, GroupSettings, UserSettingsGroupRoot,
+	};
 	use crate::groups::GroupType;
 	use crate::tutanota_constants::{AccountType, PlanType};
 	use crate::user_facade::MockUserFacade;
 	use crate::util::test_utils::{create_mock_contact, create_test_entity};
 	use crate::{GeneratedId, IdTupleGenerated};
 	use std::sync::Arc;
+	use time::{OffsetDateTime, UtcOffset};
 
 	fn create_mock_user(
 		user_group: &GeneratedId,
@@ -758,6 +874,475 @@ mod calendar_facade_unit_tests {
 		}
 	}
 
+	#[test]
+	fn should_remove_events_not_in_range_one_day() {
+		let mut mock_crypto_entity_client = MockCryptoEntityClient::default();
+		let mut mock_user_facade = MockUserFacade::default();
+		let mock_contact_facade = MockContactFacade::default();
+		let mock_customer_facade = MockCustomerFacade::default();
+		let event_facade = EventFacade {};
+
+		let user_group = GeneratedId::test_random();
+		let calendar_id = GeneratedId::test_random();
+
+		let mock_user = create_mock_user(&user_group, &calendar_id, AccountType::FREE);
+		mock_user_facade.expect_get_user().return_const(mock_user);
+
+		let mock_user_settings_group_root =
+			create_mock_user_settings_group_root(None, None, None, None);
+		mock_crypto_entity_client
+			.expect_load::<UserSettingsGroupRoot, GeneratedId>()
+			.return_const(Ok(mock_user_settings_group_root));
+
+		let mock_group_info = create_mock_group_info(&calendar_id, None);
+		mock_crypto_entity_client
+			.expect_load::<GroupInfo, IdTupleGenerated>()
+			.return_const(Ok(mock_group_info));
+
+		let calendar_facade = CalendarFacade::new(
+			Arc::new(mock_crypto_entity_client),
+			Arc::new(mock_user_facade),
+			Arc::new(mock_contact_facade),
+			Arc::new(mock_customer_facade),
+			Arc::new(event_facade),
+		);
+
+		let timestamp_start = DateTime::from_seconds(1753761600);
+		let timestamp_end = DateTime::from_seconds(1753826400);
+		let timestamp_today = DateTime::from_seconds(1753740000);
+		let offset = 7200;
+		let negative_offset = -39600;
+
+		let events_at_27 = [CalendarEvent {
+			summary: "Single 27 ".to_string(),
+			startTime: DateTime::from_seconds(1753574400),
+			endTime: DateTime::from_seconds(1753660800),
+			..create_test_entity()
+		}];
+
+		let events_at_28 = [
+			CalendarEvent {
+				summary: "G Single 28".to_string(),
+				startTime: DateTime::from_seconds(1753660800),
+				endTime: DateTime::from_seconds(1753747200),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "O Single 28".to_string(),
+				startTime: DateTime::from_seconds(1753660800),
+				endTime: DateTime::from_seconds(1753747200),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Single 28".to_string(),
+				startTime: DateTime::from_seconds(1753660800),
+				endTime: DateTime::from_seconds(1753747200),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Single 28".to_string(),
+				startTime: DateTime::from_seconds(1753660800),
+				endTime: DateTime::from_seconds(1753747200),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Weekly Monday".to_string(),
+				startTime: DateTime::from_seconds(1753660800),
+				endTime: DateTime::from_seconds(1753747200),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Weekly Monday".to_string(),
+				startTime: DateTime::from_seconds(1753660800),
+				endTime: DateTime::from_seconds(1753747200),
+				..create_test_entity()
+			},
+		];
+
+		let event_that_spans_between_two_days_on_different_timezones = CalendarEvent {
+			summary: "Monday Afternoon till Tuesday morning on -11. Tuesday on +2".to_string(),
+			startTime: DateTime::from_seconds(1753776000),
+			endTime: DateTime::from_seconds(1753822000),
+			..create_test_entity()
+		};
+
+		let events_at_29 = [
+			CalendarEvent {
+				summary: "G Single 29".to_string(),
+				startTime: DateTime::from_seconds(1753747200),
+				endTime: DateTime::from_seconds(1753833600),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "O Single 29".to_string(),
+				startTime: DateTime::from_seconds(1753747200),
+				endTime: DateTime::from_seconds(1753833600),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Single 29".to_string(),
+				startTime: DateTime::from_seconds(1753747200),
+				endTime: DateTime::from_seconds(1753833600),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Single 29".to_string(),
+				startTime: DateTime::from_seconds(1753747200),
+				endTime: DateTime::from_seconds(1753833600),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Weekly Tuesday".to_string(),
+				startTime: DateTime::from_seconds(1753747200),
+				endTime: DateTime::from_seconds(1753833600),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Weekly Tuesday".to_string(),
+				startTime: DateTime::from_seconds(1753747200),
+				endTime: DateTime::from_seconds(1753833600),
+				..create_test_entity()
+			},
+			event_that_spans_between_two_days_on_different_timezones.clone(),
+		];
+
+		let events_at_30 = [
+			CalendarEvent {
+				summary: "G Single 30".to_string(),
+				startTime: DateTime::from_seconds(1753833600),
+				endTime: DateTime::from_seconds(1753920000),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "O Single 30".to_string(),
+				startTime: DateTime::from_seconds(1753833600),
+				endTime: DateTime::from_seconds(1753920000),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Single 30".to_string(),
+				startTime: DateTime::from_seconds(1753833600),
+				endTime: DateTime::from_seconds(1753920000),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Single 30".to_string(),
+				startTime: DateTime::from_seconds(1753833600),
+				endTime: DateTime::from_seconds(1753920000),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Weekly Wednesday".to_string(),
+				startTime: DateTime::from_seconds(1753228800),
+				endTime: DateTime::from_seconds(1753315200),
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Weekly Wednesday".to_string(),
+				startTime: DateTime::from_seconds(1753228800),
+				endTime: DateTime::from_seconds(1753315200),
+				..create_test_entity()
+			},
+		];
+
+		let events_at_31 = [CalendarEvent {
+			summary: "Single 31".to_string(),
+			startTime: DateTime::from_seconds(1753920000),
+			endTime: DateTime::from_seconds(1754006400),
+			..create_test_entity()
+		}];
+
+		let mut events = vec![];
+		events.extend(&events_at_27);
+		events.extend(&events_at_28);
+		events.extend(&events_at_29);
+		events.extend(&events_at_30);
+		events.extend(&events_at_31);
+
+		let binding = CalendarEvent {
+			summary: "Monday Night".to_string(),
+			startTime: DateTime::from_seconds(1753722000),
+			endTime: DateTime::from_seconds(1753738200),
+			..create_test_entity()
+		};
+		events.push(&binding);
+
+		let all_events: Vec<CalendarEvent> = events.into_iter().map(|e| e.clone()).collect();
+
+		let filtered_events = calendar_facade.filter_events_in_range(
+			timestamp_start.as_millis(),
+			timestamp_end.as_millis(),
+			&RangeWithOffset(
+				OffsetDateTime::from_unix_timestamp(timestamp_today.as_seconds() as i64)
+					.unwrap()
+					.to_offset(UtcOffset::from_whole_seconds(offset).unwrap()),
+				OffsetDateTime::from_unix_timestamp(timestamp_end.as_seconds() as i64)
+					.unwrap()
+					.to_offset(UtcOffset::from_whole_seconds(offset).unwrap()),
+			),
+			all_events.as_slice(), //&events.as_slice().iter().map(|e| e.deref().deref().clone()).collect::<Vec<CalendarEvent>>().as_slice(),
+		);
+		assert_eq!(filtered_events.len(), 7);
+		assert!(filtered_events.iter().eq(events_at_29.iter()));
+
+		let filtered_events_at_negative_offset = calendar_facade.filter_events_in_range(
+			timestamp_start.as_millis(),
+			timestamp_end.as_millis(),
+			&RangeWithOffset(
+				OffsetDateTime::from_unix_timestamp(timestamp_today.as_seconds() as i64)
+					.unwrap()
+					.to_offset(UtcOffset::from_whole_seconds(negative_offset).unwrap()),
+				OffsetDateTime::from_unix_timestamp(timestamp_end.as_seconds() as i64)
+					.unwrap()
+					.to_offset(UtcOffset::from_whole_seconds(negative_offset).unwrap()),
+			),
+			all_events.as_slice(), //&events.as_slice().iter().map(|e| e.deref().deref().clone()).collect::<Vec<CalendarEvent>>().as_slice(),
+		);
+
+		let mut events_with_event_that_spans = events_at_28.clone().to_vec();
+		events_with_event_that_spans.push(event_that_spans_between_two_days_on_different_timezones);
+		assert_eq!(filtered_events_at_negative_offset.len(), 7);
+		assert!(filtered_events_at_negative_offset
+			.iter()
+			.eq(events_with_event_that_spans.iter()));
+	}
+
+	#[test]
+	fn should_remove_events_not_in_range_multiple_days() {
+		let mut mock_crypto_entity_client = MockCryptoEntityClient::default();
+		let mut mock_user_facade = MockUserFacade::default();
+		let mock_contact_facade = MockContactFacade::default();
+		let mock_customer_facade = MockCustomerFacade::default();
+		let event_facade = EventFacade {};
+
+		let user_group = GeneratedId::test_random();
+		let calendar_id = GeneratedId::test_random();
+
+		let mock_user = create_mock_user(&user_group, &calendar_id, AccountType::FREE);
+		mock_user_facade.expect_get_user().return_const(mock_user);
+
+		let mock_user_settings_group_root =
+			create_mock_user_settings_group_root(None, None, None, None);
+		mock_crypto_entity_client
+			.expect_load::<UserSettingsGroupRoot, GeneratedId>()
+			.return_const(Ok(mock_user_settings_group_root));
+
+		let mock_group_info = create_mock_group_info(&calendar_id, None);
+		mock_crypto_entity_client
+			.expect_load::<GroupInfo, IdTupleGenerated>()
+			.return_const(Ok(mock_group_info));
+
+		let calendar_facade = CalendarFacade::new(
+			Arc::new(mock_crypto_entity_client),
+			Arc::new(mock_user_facade),
+			Arc::new(mock_contact_facade),
+			Arc::new(mock_customer_facade),
+			Arc::new(event_facade),
+		);
+
+		let timestamp_start = DateTime::from_seconds(1753675200); // Mon Jul 28 2025 04:00:00 GMT+0000
+		let timestamp_end = DateTime::from_seconds(1753912800); // Wed Jul 30 2025 22:00:00 GMT+0000
+		let timestamp_today = DateTime::from_seconds(1753653600); // Sun Jul 27 2025 22:00:00 GMT+0000
+		let offset = 7200;
+		let negative_offset = -39600;
+
+		let events_at_27 = [CalendarEvent {
+			summary: "Single 27 ".to_string(),
+			startTime: DateTime::from_seconds(1753574400), // Sun Jul 27 2025 00:00:00 GMT+0000
+			endTime: DateTime::from_seconds(1753660800),   // Mon Jul 28 2025 00:00:00 GMT+0000
+			..create_test_entity()
+		}];
+
+		let events_at_28 = [
+			CalendarEvent {
+				summary: "G Single 28".to_string(),
+				startTime: DateTime::from_seconds(1753660800), // Mon Jul 28 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753747200),   // Tue Jul 29 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "O Single 28".to_string(),
+				startTime: DateTime::from_seconds(1753660800), // Mon Jul 28 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753747200),   // Tue Jul 29 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Single 28".to_string(),
+				startTime: DateTime::from_seconds(1753660800), // Mon Jul 28 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753747200),   // Tue Jul 29 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Single 28".to_string(),
+				startTime: DateTime::from_seconds(1753660800), // Mon Jul 28 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753747200),   // Tue Jul 29 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Weekly Monday".to_string(),
+				startTime: DateTime::from_seconds(1753660800), // Mon Jul 28 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753747200),   // Tue Jul 29 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Weekly Monday".to_string(),
+				startTime: DateTime::from_seconds(1753660800), // Mon Jul 28 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753747200),   // Tue Jul 29 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+		];
+
+		let event_that_spans_between_two_days_on_different_timezones = CalendarEvent {
+			summary: "Monday Afternoon till Tuesday morning on -11. Tuesday on +2".to_string(),
+			startTime: DateTime::from_seconds(1753776000), // Tue Jul 29 2025 08:00:00 GMT+0000
+			endTime: DateTime::from_seconds(1753822000),   // Tue Jul 29 2025 20:46:40 GMT+0000
+			..create_test_entity()
+		};
+
+		let events_at_29 = [
+			CalendarEvent {
+				summary: "G Single 29".to_string(),
+				startTime: DateTime::from_seconds(1753747200), // Tue Jul 29 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753833600),   // Wed Jul 30 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "O Single 29".to_string(),
+				startTime: DateTime::from_seconds(1753747200), // Tue Jul 29 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753833600),   // Wed Jul 30 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Single 29".to_string(),
+				startTime: DateTime::from_seconds(1753747200), // Tue Jul 29 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753833600),   // Wed Jul 30 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Single 29".to_string(),
+				startTime: DateTime::from_seconds(1753747200), // Tue Jul 29 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753833600),   // Wed Jul 30 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Weekly Tuesday".to_string(),
+				startTime: DateTime::from_seconds(1753747200), // Tue Jul 29 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753833600),   // Wed Jul 30 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Weekly Tuesday".to_string(),
+				startTime: DateTime::from_seconds(1753747200), // Tue Jul 29 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753833600),   // Wed Jul 30 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			event_that_spans_between_two_days_on_different_timezones.clone(),
+		];
+
+		let events_at_30 = [
+			CalendarEvent {
+				summary: "G Single 30".to_string(),
+				startTime: DateTime::from_seconds(1753833600), // Wed Jul 30 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753920000),   // Thu Jul 31 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "O Single 30".to_string(),
+				startTime: DateTime::from_seconds(1753833600), // Wed Jul 30 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753920000),   // Thu Jul 31 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "-11 Island Single 30".to_string(),
+				startTime: DateTime::from_seconds(1753833600), // Wed Jul 30 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753920000),   // Thu Jul 31 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+			CalendarEvent {
+				summary: "Single 30".to_string(),
+				startTime: DateTime::from_seconds(1753833600), // Wed Jul 30 2025 00:00:00 GMT+0000
+				endTime: DateTime::from_seconds(1753920000),   // Thu Jul 31 2025 00:00:00 GMT+0000
+				..create_test_entity()
+			},
+		];
+
+		let events_at_31 = [CalendarEvent {
+			summary: "Single 31".to_string(),
+			startTime: DateTime::from_seconds(1753920000), // Thu Jul 31 2025 00:00:00 GMT+0000
+			endTime: DateTime::from_seconds(1754006400),   // Fri Aug 01 2025 00:00:00 GMT+0000
+			..create_test_entity()
+		}];
+
+		let mut events = vec![];
+		events.extend(&events_at_27);
+		events.extend(&events_at_28);
+		events.extend(&events_at_29);
+		events.extend(&events_at_30);
+		events.extend(&events_at_31);
+
+		let binding = CalendarEvent {
+			summary: "Monday Night".to_string(),
+			startTime: DateTime::from_seconds(1753722000), // Mon Jul 28 2025 17:00:00 GMT+0000
+			endTime: DateTime::from_seconds(1753738200),   // Mon Jul 28 2025 21:30:00 GMT+0000
+			..create_test_entity()
+		};
+		events.push(&binding);
+
+		let all_events: Vec<CalendarEvent> =
+			events.clone().into_iter().map(|e| e.clone()).collect();
+
+		let filtered_events = calendar_facade.filter_events_in_range(
+			timestamp_start.as_millis(),
+			timestamp_end.as_millis(),
+			&RangeWithOffset(
+				OffsetDateTime::from_unix_timestamp(timestamp_today.as_seconds() as i64)
+					.unwrap()
+					.to_offset(UtcOffset::from_whole_seconds(offset).unwrap()),
+				OffsetDateTime::from_unix_timestamp(timestamp_end.as_seconds() as i64)
+					.unwrap()
+					.to_offset(UtcOffset::from_whole_seconds(offset).unwrap()),
+			),
+			all_events.as_slice(), //&events.as_slice().iter().map(|e| e.deref().deref().clone()).collect::<Vec<CalendarEvent>>().as_slice(),
+		);
+
+		let mut tested_events = vec![];
+		tested_events.extend(&events_at_28);
+		tested_events.extend(&events_at_29);
+		tested_events.extend(&events_at_30);
+		tested_events.push(&binding);
+
+		assert_eq!(filtered_events.len(), tested_events.len());
+		assert!(filtered_events.iter().eq(tested_events.clone()));
+
+		let filtered_events_at_negative_offset = calendar_facade.filter_events_in_range(
+			timestamp_start.as_millis(),
+			timestamp_end.as_millis(),
+			&RangeWithOffset(
+				OffsetDateTime::from_unix_timestamp(timestamp_today.as_seconds() as i64)
+					.unwrap()
+					.to_offset(UtcOffset::from_whole_seconds(negative_offset).unwrap()),
+				OffsetDateTime::from_unix_timestamp(timestamp_end.as_seconds() as i64)
+					.unwrap()
+					.to_offset(UtcOffset::from_whole_seconds(negative_offset).unwrap()),
+			),
+			all_events.as_slice(),
+		);
+
+		let mut tested_negative_events = vec![];
+		tested_negative_events.extend(&events_at_27);
+		tested_negative_events.extend(&events_at_28);
+		tested_negative_events.extend(&events_at_29);
+		tested_negative_events.push(&binding);
+
+		assert_eq!(
+			filtered_events_at_negative_offset.len(),
+			tested_negative_events.len()
+		);
+		assert!(filtered_events_at_negative_offset
+			.iter()
+			.eq(tested_negative_events));
+	}
+
 	#[tokio::test]
 	async fn test_private_default_calendar_render_info() {
 		let mut mock_crypto_entity_client = MockCryptoEntityClient::default();
@@ -791,7 +1376,7 @@ mod calendar_facade_unit_tests {
 			Arc::new(event_facade),
 		);
 
-		let calendars_render_data = calendar_facade.get_calendars_render_data().await;
+		let calendars_render_data = calendar_facade.get_calendars_render_data().await.unwrap();
 		let calendar_render_data = calendars_render_data.get(&calendar_id).unwrap();
 
 		assert_eq!(calendar_render_data.name, DEFAULT_CALENDAR_NAME);
@@ -837,7 +1422,7 @@ mod calendar_facade_unit_tests {
 			Arc::new(event_facade),
 		);
 
-		let calendars_render_data = calendar_facade.get_calendars_render_data().await;
+		let calendars_render_data = calendar_facade.get_calendars_render_data().await.unwrap();
 		let calendar_render_data = calendars_render_data.get(&calendar_id).unwrap();
 
 		assert_eq!(calendar_render_data.name, custom_name);
@@ -881,7 +1466,7 @@ mod calendar_facade_unit_tests {
 			Arc::new(event_facade),
 		);
 
-		let calendars_render_data = calendar_facade.get_calendars_render_data().await;
+		let calendars_render_data = calendar_facade.get_calendars_render_data().await.unwrap();
 		let calendar_render_data = calendars_render_data.get(&calendar_id).unwrap();
 
 		assert_eq!(calendar_render_data.name, DEFAULT_CALENDAR_NAME);
@@ -927,7 +1512,7 @@ mod calendar_facade_unit_tests {
 			Arc::new(event_facade),
 		);
 
-		let calendars_render_data = calendar_facade.get_calendars_render_data().await;
+		let calendars_render_data = calendar_facade.get_calendars_render_data().await.unwrap();
 		let calendar_render_data = calendars_render_data.get(&calendar_id).unwrap();
 
 		assert_eq!(calendar_render_data.name, custom_name.to_string());
@@ -953,7 +1538,7 @@ mod calendar_facade_unit_tests {
 			create_mock_user_settings_group_root(None, None, None, None);
 		mock_crypto_entity_client
 			.expect_load::<UserSettingsGroupRoot, GeneratedId>()
-			.return_const(Ok(mock_user_settings_group_root));
+			.return_const(Ok(mock_user_settings_group_root.clone()));
 
 		let mock_group_info = create_mock_group_info(&calendar_id, None);
 		mock_crypto_entity_client
@@ -977,17 +1562,15 @@ mod calendar_facade_unit_tests {
 			Arc::new(event_facade),
 		);
 
-		let formated_id = format!(
-			"{}#{}",
-			user_id.as_str(),
-			CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID
-		);
+		let formated_id = format!("{}#{}", user_id.as_str(), BIRTHDAY_CALENDAR_BASE_ID);
 		let birthday_calendar_id = GeneratedId(formated_id);
 
-		let calendars_render_data = calendar_facade.get_calendars_render_data().await;
+		let calendars_render_data = calendar_facade.get_calendars_render_data().await.unwrap();
 		let render_data = calendars_render_data.get(&birthday_calendar_id).unwrap();
 
-		let client_only_calendars = calendar_facade.generate_client_only_calendars().await;
+		let client_only_calendars = calendar_facade
+			.get_birthday_calendar_data(&mock_user_settings_group_root)
+			.await;
 		let birthday_calendar = client_only_calendars.get(&birthday_calendar_id).unwrap();
 
 		assert_eq!(render_data.name, birthday_calendar.name);
@@ -1013,7 +1596,7 @@ mod calendar_facade_unit_tests {
 			create_mock_user_settings_group_root(None, None, None, None);
 		mock_crypto_entity_client
 			.expect_load::<UserSettingsGroupRoot, GeneratedId>()
-			.return_const(Ok(mock_user_settings_group_root));
+			.return_const(Ok(mock_user_settings_group_root.clone()));
 
 		let mock_group_info = create_mock_group_info(&calendar_id, None);
 		mock_crypto_entity_client
@@ -1037,18 +1620,16 @@ mod calendar_facade_unit_tests {
 			Arc::new(event_facade),
 		);
 
-		let formated_id = format!(
-			"{}#{}",
-			user_id.as_str(),
-			CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID
-		);
+		let formated_id = format!("{}#{}", user_id.as_str(), BIRTHDAY_CALENDAR_BASE_ID);
 		let birthday_calendar_id = GeneratedId(formated_id);
 
-		let calendars_render_data = calendar_facade.get_calendars_render_data().await;
+		let calendars_render_data = calendar_facade.get_calendars_render_data().await.unwrap();
 		let render_data = calendars_render_data.get(&birthday_calendar_id);
 		assert!(render_data.is_none());
 
-		let client_only_calendars = calendar_facade.generate_client_only_calendars().await;
+		let client_only_calendars = calendar_facade
+			.get_birthday_calendar_data(&mock_user_settings_group_root)
+			.await;
 		let birthday_calendar = client_only_calendars.get(&birthday_calendar_id);
 		assert!(birthday_calendar.is_none());
 	}
@@ -1072,7 +1653,7 @@ mod calendar_facade_unit_tests {
 			create_mock_user_settings_group_root(None, None, None, None);
 		mock_crypto_entity_client
 			.expect_load::<UserSettingsGroupRoot, GeneratedId>()
-			.return_const(Ok(mock_user_settings_group_root));
+			.return_const(Ok(mock_user_settings_group_root.clone()));
 
 		let mock_group_info = create_mock_group_info(&calendar_id, None);
 		mock_crypto_entity_client
@@ -1087,18 +1668,16 @@ mod calendar_facade_unit_tests {
 			Arc::new(event_facade),
 		);
 
-		let formated_id = format!(
-			"{}#{}",
-			user_id.as_str(),
-			CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID
-		);
+		let formated_id = format!("{}#{}", user_id.as_str(), BIRTHDAY_CALENDAR_BASE_ID);
 		let birthday_calendar_id = GeneratedId(formated_id);
 
-		let calendars_render_data = calendar_facade.get_calendars_render_data().await;
+		let calendars_render_data = calendar_facade.get_calendars_render_data().await.unwrap();
 		let render_data = calendars_render_data.get(&birthday_calendar_id);
 		assert!(render_data.is_none());
 
-		let client_only_calendars = calendar_facade.generate_client_only_calendars().await;
+		let client_only_calendars = calendar_facade
+			.get_birthday_calendar_data(&mock_user_settings_group_root)
+			.await;
 		let birthday_calendar = client_only_calendars.get(&birthday_calendar_id);
 		assert!(birthday_calendar.is_none());
 	}

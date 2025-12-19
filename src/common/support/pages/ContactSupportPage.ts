@@ -7,7 +7,7 @@ import { locator } from "../../api/main/CommonLocator.js"
 import { lang } from "../../misc/LanguageViewModel.js"
 import { Card } from "../../gui/base/Card.js"
 import { LoginButton } from "../../gui/base/buttons/LoginButton.js"
-import { htmlSanitizer } from "../../misc/HtmlSanitizer.js"
+import { getHtmlSanitizer, HtmlSanitizer } from "../../misc/HtmlSanitizer.js"
 import { MailMethod, PlanTypeToName } from "../../api/common/TutanotaConstants.js"
 import type { SendMailModel } from "../../mailFunctionality/SendMailModel.js"
 import { convertTextToHtml } from "../../misc/Formatter.js"
@@ -31,6 +31,7 @@ type Props = {
 
 export class ContactSupportPage implements Component<Props> {
 	private sendMailModel: SendMailModel | undefined
+	private readonly htmlSanitizer: HtmlSanitizer = getHtmlSanitizer()
 
 	private htmlEditor: HtmlEditor | null = null
 
@@ -121,8 +122,8 @@ export class ContactSupportPage implements Component<Props> {
 
 	view({ attrs: { data, onSuccess, isRating } }: Vnode<Props>): Children {
 		return m(
-			".flex.flex-column.pt.height-100p.gap-vpad",
-			m(Card, m("", m("p.h4.m-0", lang.get("supportForm_title")), m("p.m-0.mt-s", data.helpText()))),
+			".flex.flex-column.pt-16.height-100p.gap-16",
+			m(Card, m("", m("p.h4.m-0", lang.get("supportForm_title")), m("p.m-0.mt-8", data.helpText()))),
 			m(
 				Card,
 				{
@@ -136,7 +137,7 @@ export class ContactSupportPage implements Component<Props> {
 			),
 
 			m(
-				".flex.flex-column.gap-vpad.pb",
+				".flex.flex-column.gap-16.pb-16",
 				{
 					style: {
 						marginTop: "auto",
@@ -159,8 +160,8 @@ export class ContactSupportPage implements Component<Props> {
 						}),
 						(this.sendMailModel?.getAttachments() ?? []).map((attachment) =>
 							m(
-								".flex.center-vertically.flex-space-between.pb-s.pt-s",
-								{ style: { paddingInline: px(size.vpad_small) } },
+								".flex.center-vertically.flex-space-between.pb-8.pt-8",
+								{ style: { paddingInline: px(size.spacing_8) } },
 								m("span.smaller", attachment.name),
 								m(
 									BaseButton,
@@ -176,10 +177,9 @@ export class ContactSupportPage implements Component<Props> {
 										icon: Icons.Trash,
 										style: {
 											fill: getColors(ButtonColor.Content).button,
-											paddingInline: px((size.icon_size_large - size.icon_size_medium) / 2),
+											paddingInline: px((size.icon_24 - size.icon_16) / 2),
 										},
 										title: lang.get("remove_action"),
-										size: IconSize.Normal,
 									}),
 								),
 							),
@@ -188,7 +188,7 @@ export class ContactSupportPage implements Component<Props> {
 				),
 				m(
 					Card,
-					m(".flex.gap-vpad-s.items-center", [
+					m(".flex.gap-8.items-center", [
 						m(
 							Switch,
 							{
@@ -221,7 +221,7 @@ export class ContactSupportPage implements Component<Props> {
 								? `${data.supportRequestHtml}${clientInfoString(new Date(), true).message}`
 								: data.supportRequestHtml
 							mailBody += `<br>Customer ID: ${customerId}`
-							const sanitisedBody = htmlSanitizer.sanitizeHTML(convertTextToHtml(mailBody), {
+							const sanitisedBody = this.htmlSanitizer.sanitizeHTML(convertTextToHtml(mailBody), {
 								blockExternalContent: true,
 							}).html
 

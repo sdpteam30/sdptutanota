@@ -3,14 +3,19 @@
 import { DAY_IN_MILLIS, downcast } from "@tutao/tutanota-utils"
 import type { CertificateInfo, CreditCard, EmailSenderListElement, GroupMembership } from "../entities/sys/TypeRefs.js"
 import { AccountingInfo, Customer } from "../entities/sys/TypeRefs.js"
-import type { CalendarEventAttendee, ContactCustomDate, ContactRelationship, UserSettingsGroupRoot } from "../entities/tutanota/TypeRefs.js"
-import { ContactSocialId, MailFolder } from "../entities/tutanota/TypeRefs.js"
+import {
+	CalendarEventAttendee,
+	ContactCustomDate,
+	ContactRelationship,
+	ContactSocialId,
+	MailSet,
+	UserSettingsGroupRoot,
+} from "../entities/tutanota/TypeRefs.js"
 import { isApp, isElectronClient, isIOSApp } from "./Env"
 import type { Country } from "./CountryList"
 import { ProgrammingError } from "./error/ProgrammingError"
-import { TranslationKey } from "../../misc/LanguageViewModel.js"
 
-export const MAX_NBR_MOVE_DELETE_MAIL_SERVICE = 50
+export const MAX_NBR_OF_MAILS_SYNC_OPERATION = 50
 export const MAX_NBR_OF_CONVERSATIONS = 50
 
 // visible for testing
@@ -24,13 +29,17 @@ export const REQUEST_SIZE_LIMIT_MAP: Map<string, number> = new Map([
 
 export const SYSTEM_GROUP_MAIL_ADDRESS = "system@tutanota.de"
 
-export const getMailFolderType = (folder: MailFolder): MailSetKind => downcast(folder.folderType)
+export const getMailFolderType = (folder: MailSet): MailSetKind => downcast(folder.folderType)
 
-export function isFolder(folder: MailFolder): boolean {
+export function isFolder(folder: MailSet): boolean {
 	return folder.folderType !== MailSetKind.ALL && folder.folderType !== MailSetKind.LABEL && folder.folderType !== MailSetKind.Imported
 }
 
-export function isLabel(folder: MailFolder): boolean {
+export function isNestableMailSet(mailSet: MailSet): boolean {
+	return mailSet.folderType === MailSetKind.CUSTOM
+}
+
+export function isLabel(folder: MailSet): boolean {
 	return folder.folderType === MailSetKind.LABEL
 }
 
@@ -85,7 +94,7 @@ export const enum PermissionType {
 	Public_Symmetric = "2",
 	/** Instances without ownerEncSessionKey (e.g. MailBody, FileData) after asymmetric decryption, used for reference counting. */
 	Unencrypted = "3",
-	/** Sending parts of email for external users. */
+	/** Sending components of email for external users. */
 	External = "5",
 	/** Used to mark the owner of the list. */
 	Owner_List = "8",
@@ -109,13 +118,14 @@ export enum MailSetKind {
 	Imported = "9",
 }
 
-export type SystemFolderType = MailSetKind.INBOX | MailSetKind.SENT | MailSetKind.TRASH | MailSetKind.ARCHIVE | MailSetKind.SPAM | MailSetKind.DRAFT
+export const SYSTEM_FOLDERS = [MailSetKind.INBOX, MailSetKind.SENT, MailSetKind.TRASH, MailSetKind.ARCHIVE, MailSetKind.SPAM, MailSetKind.DRAFT] as const
+export type SystemFolderType = (typeof SYSTEM_FOLDERS)[number]
 
-export function getMailSetKind(folder: MailFolder): MailSetKind {
+export function getMailSetKind(folder: MailSet): MailSetKind {
 	return folder.folderType as MailSetKind
 }
 
-export type SimpleMoveMailTarget = MailSetKind.TRASH | MailSetKind.ARCHIVE | MailSetKind.SPAM | MailSetKind.INBOX
+export type SimpleMoveMailTarget = MailSetKind.INBOX | MailSetKind.SENT | MailSetKind.TRASH | MailSetKind.ARCHIVE | MailSetKind.SPAM | MailSetKind.DRAFT
 
 export const enum ReplyType {
 	NONE = "0",
@@ -140,13 +150,15 @@ export const enum ContactPhoneNumberType {
 	CUSTOM = "5",
 }
 
-export const enum ContactSocialType {
+export enum ContactSocialType {
 	TWITTER = "0",
 	FACEBOOK = "1",
 	XING = "2",
 	LINKED_IN = "3",
-	OTHER = "4",
-	CUSTOM = "5",
+	BLUESKY = "4",
+	FEDIVERSE = "5",
+	OTHER = "6",
+	CUSTOM = "7",
 }
 
 export const enum ContactRelationshipType {
@@ -169,8 +181,9 @@ export const enum ContactMessengerHandleType {
 	WHATSAPP = "1",
 	TELEGRAM = "2",
 	DISCORD = "3",
-	OTHER = "4",
-	CUSTOM = "5",
+	MATRIX = "4",
+	OTHER = "5",
+	CUSTOM = "6",
 }
 
 export const enum ContactWebsiteType {
@@ -277,6 +290,7 @@ export const NewPaidPlans: readonly AvailablePlanType[] = Object.freeze([
 ])
 export const NewBusinessPlans: readonly AvailablePlanType[] = Object.freeze([PlanType.Essential, PlanType.Advanced, PlanType.Unlimited])
 export const NewPersonalPlans: readonly AvailablePlanType[] = Object.freeze([PlanType.Free, PlanType.Revolutionary, PlanType.Legend])
+export const NewPersonalPaidPlans: readonly AvailablePlanType[] = Object.freeze([PlanType.Revolutionary, PlanType.Legend])
 
 export const LegacyPlans: readonly PlanType[] = Object.freeze([
 	PlanType.Premium,
@@ -514,27 +528,36 @@ export enum SecondFactorType {
 	webauthn = "2", // actually refers to u2f in client
 }
 
-export enum KeyVerificationSourceOfTruth {
-	LocalTrusted = "LocalTrusted",
-	PublicKeyService = "PublicKeyService",
+export enum IdentityKeySourceOfTrust {
+	Manual = 0,
+	TOFU = 1,
+	Not_Supported = 2,
 }
 
-export enum KeyVerificationMethodType {
+export enum IdentityKeyVerificationMethod {
 	text = "0",
 	qr = "1",
 }
 
-export const enum KeyVerificationResultType {
+export const enum IdentityKeyQrVerificationResult {
 	QR_OK = "0",
 	QR_MALFORMED_PAYLOAD = "1",
 	QR_MAIL_ADDRESS_NOT_FOUND = "2",
 	QR_FINGERPRINT_MISMATCH = "3",
 }
 
-export enum KeyVerificationState {
-	NO_ENTRY, // Identity is not trusted by user
-	VERIFIED, // Identity is trusted and verified
-	MISMATCH, // Identity is trusted but not verified
+export enum EncryptionKeyVerificationState {
+	NO_ENTRY, // No identity key exists
+	VERIFIED_MANUAL, // Identity is manually trusted and verified
+	VERIFIED_TOFU, // Identity is trusted and verified via TOFU
+	NOT_SUPPORTED, // Identity key verification is not supported, e.g. when loading via group id instead of mail address as identifier or when we do not have access to a trust database
+}
+
+/* For displaying the key verification result in the UI */
+export enum PresentableKeyVerificationState {
+	NONE = "0",
+	SECURE = "1",
+	ALERT = "2",
 }
 
 export const MAX_ATTACHMENT_SIZE = 1024 * 1024 * 25
@@ -565,6 +588,9 @@ export enum FeatureType {
 	Unused16 = "16",
 	MultipleUsers = "17", // Multi-user support for new personal plans.
 	KeyVerification = "18", // Enables key verification for internal testing and volunteers
+	SpamClientClassification = "19",
+	QuickActions = "20",
+	ReceivesNoTutaNewsletters = "21",
 }
 
 export const FULL_INDEXED_TIMESTAMP: number = 0
@@ -670,7 +696,7 @@ export const enum EndType {
 	UntilDate = "2",
 }
 
-export const defaultCalendarColor = "2196f3"
+export const DEFAULT_CALENDAR_COLOR = "2196f3"
 
 export const enum EventTextTimeOption {
 	START_TIME = "startTime",
@@ -841,6 +867,10 @@ export const Keys = Object.freeze({
 	"-": {
 		code: "-",
 		name: "-",
+	},
+	PLUS: {
+		code: "Add",
+		name: "Plus",
 	},
 	"0": {
 		code: "0",
@@ -1318,9 +1348,8 @@ export function asPublicKeyIdentifier(maybe: NumberString): PublicKeyIdentifierT
 	throw new Error("bad key identifier type")
 }
 
-export const CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID = "clientOnly_birthdays"
-export const CLIENT_ONLY_CALENDARS: Map<Id, TranslationKey> = new Map([[CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID, "birthdayCalendar_label"]])
-export const DEFAULT_CLIENT_ONLY_CALENDAR_COLORS: Map<Id, string> = new Map([[CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID, "FF9933"]])
+export const BIRTHDAY_CALENDAR_BASE_ID = "birthday_calendar"
+export const DEFAULT_BIRTHDAY_CALENDAR_COLOR = "FF9933"
 
 export const MAX_LABELS_PER_MAIL = 5
 
@@ -1343,3 +1372,53 @@ export const TUTA_CALENDAR_APP_STORE_URL = "https://apps.apple.com/app/tuta-cale
 export function getCurrentDate(fallback = new Date()) {
 	return Const.CURRENT_DATE ?? fallback
 }
+
+export enum RolloutType {
+	UserIdentityKeyCreation = "0",
+	SharedMailboxIdentityKeyCreation = "1",
+	AdminOrUserGroupKeyRotation = "2",
+	OtherGroupKeyRotation = "3",
+	GroupKeyUpdatePending = "4",
+}
+
+/**
+ * The type of signature of a public encryption key, signed with an identity key pair.
+ */
+export enum PublicKeySignatureType {
+	RsaEcc = "0", // the signed public key is RSA ECC key
+	TutaCrypt = "1", // the signed public key is a TutaCrypt key
+	RsaFormerGroupKey = "2", // the signed public key is a former(!) group key Rsa only (only kept for decryption of existing data)
+}
+
+export function asPublicKeySignatureType(maybe: NumberString): PublicKeySignatureType {
+	if (Object.values(PublicKeySignatureType).includes(maybe as PublicKeySignatureType)) {
+		return maybe as PublicKeySignatureType
+	}
+	throw new Error("bad public key signature type")
+}
+
+export enum DeactivationReason {
+	UserRequest,
+	AntiSpam,
+	Unused,
+	PaymentDispute,
+	Custom,
+	MassSignup,
+}
+
+export enum SpamDecision {
+	NONE = "0",
+	WHITELIST = "1",
+	BLACKLIST = "2",
+	DISCARD = "3",
+}
+
+export enum ProcessingState {
+	INBOX_RULE_PROCESSED_AND_SPAM_PREDICTION_MADE = "0",
+	INBOX_RULE_NOT_PROCESSED = "1",
+	INBOX_RULE_APPLIED = "2",
+	INBOX_RULE_PROCESSED_AND_SPAM_PREDICTION_PENDING = "3",
+	INBOX_RULE_NOT_PROCESSED_AND_DO_NOT_RUN_SPAM_PREDICTION = "4",
+}
+
+export const PLAN_SELECTOR_SELECTED_BOX_SCALE = "1.03"

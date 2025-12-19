@@ -1,7 +1,7 @@
 import m, { Children, ClassComponent, Vnode } from "mithril"
-import { BubbleTextField, BubbleTextFieldAttrs } from "./base/BubbleTextField.js"
+import { BubbleTextField, BubbleTextFieldAttrs, BubbleTextFieldClickBehaviour } from "./base/BubbleTextField.js"
 import { Recipient } from "../api/common/recipients/Recipient.js"
-import { px, size } from "./size.js"
+import { component_size, px, size } from "./size.js"
 import { Icon, IconSize, progressIcon } from "./base/Icon.js"
 import { lang, TranslationKey } from "../misc/LanguageViewModel.js"
 import { stringToNameAndMailAddress } from "../misc/parsing/MailAddressParser.js"
@@ -14,15 +14,17 @@ import { SearchDropDown } from "./SearchDropDown.js"
 import { Icons } from "./base/icons/Icons.js"
 import { theme } from "./theme.js"
 import { getMailAddressDisplayText } from "../mailFunctionality/SharedMailUtils.js"
-import { KeyVerificationState } from "../api/common/TutanotaConstants.js"
+import { ResolvableRecipient } from "../api/main/RecipientsModel"
+import { PresentableKeyVerificationState } from "../api/common/TutanotaConstants"
 
 export interface MailRecipientsTextFieldAttrs {
 	label: TranslationKey
 	text: string
 	onTextChanged: (text: string) => void
-	recipients: ReadonlyArray<Recipient>
+	recipients: ReadonlyArray<ResolvableRecipient>
 	onRecipientAdded: (address: string, name: string | null, contact: Contact | null) => void
 	onRecipientRemoved: (address: string) => void
+	onRecipientClicked?: (address: string) => void
 	getRecipientClickedDropdownAttrs?: (address: string) => Promise<DropdownChildAttrs[]>
 	injectionsRight?: Children | null
 	disabled: boolean
@@ -46,7 +48,7 @@ export class MailRecipientsTextField implements ClassComponent<MailRecipientsTex
 	}
 
 	private renderTextField(attrs: MailRecipientsTextFieldAttrs): Children {
-		const bubbleTextFieldAttrs: BubbleTextFieldAttrs<Recipient> = {
+		const bubbleTextFieldAttrs: BubbleTextFieldAttrs<ResolvableRecipient> = {
 			label: attrs.label,
 			text: attrs.text,
 			helpLabel: attrs.helpLabel,
@@ -75,25 +77,25 @@ export class MailRecipientsTextField implements ClassComponent<MailRecipientsTex
 			},
 			items: attrs.recipients,
 			getBubbleIcon: (recipient: Recipient) => {
-				if (recipient.verificationState === KeyVerificationState.MISMATCH) {
+				if (recipient.verificationState === PresentableKeyVerificationState.ALERT) {
 					return m(Icon, {
-						icon: Icons.AlertCircle,
-						size: IconSize.Large, // we want 20px
+						icon: Icons.BrokenShield,
+						size: IconSize.PX20, // we want 20px
 						style: {
-							fill: theme.error_color,
+							fill: theme.error,
 							position: "relative",
-							top: "4px",
+							top: "3px",
 							right: "1px",
 						},
 					})
-				} else if (recipient.verificationState === KeyVerificationState.VERIFIED) {
+				} else if (recipient.verificationState === PresentableKeyVerificationState.SECURE) {
 					return m(Icon, {
 						icon: Icons.Shield,
-						size: IconSize.Normal,
+						size: IconSize.PX20,
 						style: {
-							fill: theme.content_accent,
+							fill: theme.success,
 							position: "relative",
-							top: "2px",
+							top: "3px",
 							right: "1px",
 						},
 					})
@@ -107,7 +109,20 @@ export class MailRecipientsTextField implements ClassComponent<MailRecipientsTex
 
 				return lang.makeTranslation(recipient.address, getMailAddressDisplayText(name, recipient.address, false) + verified)
 			},
-			getBubbleDropdownAttrs: async (recipient) => (await attrs.getRecipientClickedDropdownAttrs?.(recipient.address)) ?? [],
+			onClick: (recipient: ResolvableRecipient) => {
+				if (recipient.verificationState === PresentableKeyVerificationState.ALERT) {
+					import("../settings/keymanagement/KeyVerificationRecoveryDialog.js").then(
+						async ({ SenderKeyVerificationRecoveryDialogPages, showSenderKeyVerificationRecoveryDialog }) =>
+							showSenderKeyVerificationRecoveryDialog(await recipient.resolve(), SenderKeyVerificationRecoveryDialogPages.INFO),
+					)
+					return BubbleTextFieldClickBehaviour.SKIP_DROPDOWN
+				} else {
+					return BubbleTextFieldClickBehaviour.SHOW_DROPDOWN
+				}
+			},
+			getBubbleDropdownAttrs: async (recipient) => {
+				return (await attrs.getRecipientClickedDropdownAttrs?.(recipient.address)) ?? []
+			},
 			onBackspace: () => {
 				if (attrs.text === "" && attrs.recipients.length > 0) {
 					const { address } = attrs.recipients.slice().pop()!
@@ -142,11 +157,11 @@ export class MailRecipientsTextField implements ClassComponent<MailRecipientsTex
 				// Placeholder element for the suggestion progress icon with a fixed width and height to avoid flickering.
 				// when reaching the end of the input line and when entering a text into the second line.
 				m(
-					".flex.align-right.mr-s.flex.items-end.pb-s",
+					".flex.align-right.mr-8.flex.items-end.pb-8",
 					{
 						style: {
 							width: px(20), // in case the progress icon is not shown we reserve the width of the progress icon
-							height: px(size.button_height_compact),
+							height: px(component_size.button_height_compact),
 						},
 					},
 					attrs.search.isLoading() ? progressIcon() : null,
@@ -173,7 +188,7 @@ export class MailRecipientsTextField implements ClassComponent<MailRecipientsTex
 							firstRow: m(Icon, {
 								icon: Icons.People,
 								style: {
-									fill: theme.content_fg,
+									fill: theme.on_surface,
 									"aria-describedby": lang.get("contactListName_label"),
 								},
 							}),

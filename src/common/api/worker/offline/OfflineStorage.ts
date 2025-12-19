@@ -23,6 +23,7 @@ import {
 	groupByAndMap,
 	isEmpty,
 	mapNullable,
+	Nullable,
 	parseTypeString,
 	splitInChunks,
 	typedEntries,
@@ -44,10 +45,7 @@ import { ModelMapper } from "../crypto/ModelMapper"
 import { AttributeModel } from "../../common/AttributeModel"
 import { TypeModelResolver } from "../../common/EntityFunctions"
 import { collapseId, expandId } from "../rest/RestClientIdUtils"
-import { Nullable } from "@tutao/tutanota-utils/dist/Utils"
 import { Category, syncMetrics } from "../utils/SyncMetrics"
-import { hasError } from "../../common/utils/ErrorUtils"
-import { ProgrammingError } from "../../common/error/ProgrammingError"
 
 /**
  * this is the value of SQLITE_MAX_VARIABLE_NUMBER in sqlite3.c
@@ -102,6 +100,9 @@ export interface OfflineDbMeta {
 	timeRangeDays: number
 	// offline db schema version
 	"offline-version": number
+	lastTrainedTime: number
+	lastTrainedFromScratchTime: number
+	lastTrainingDataId: Id
 }
 
 export const TableDefinitions = Object.freeze({
@@ -280,6 +281,7 @@ export class OfflineStorage implements CacheStorage {
 	async deinit() {
 		this.userId = null
 		this.databaseKey = null
+		this.timeRangeDate = null
 		await this.sqlCipherFacade.closeDb()
 	}
 
@@ -585,13 +587,8 @@ export class OfflineStorage implements CacheStorage {
 		table: string,
 	): Promise<Array<StorableInstance>> {
 		const storables = await Promise.all(
-			instances.map(async (instance): Promise<StorableInstance> => {
+			instances.map(async (instance): Promise<Nullable<StorableInstance>> => {
 				const { listId, elementId } = expandId(AttributeModel.getAttribute<IdTuple | Id>(instance, "_id", typeModel))
-				if (hasError(instance)) {
-					console.warn(
-						`Trying to put parsed instance with _errors to offline storage. Type: ${typeModel.app}/${typeModel.name}, Id: ["${listId}", "${elementId}"]`,
-					)
-				}
 				const ownerGroup = AttributeModel.getAttribute<Id>(instance, "_ownerGroup", typeModel)
 				const serializedInstance = await this.serialize(instance)
 				return {
@@ -607,7 +604,7 @@ export class OfflineStorage implements CacheStorage {
 				}
 			}),
 		)
-		return storables
+		return storables.filter((storable) => storable !== null)
 	}
 
 	private async fetchRowIds(

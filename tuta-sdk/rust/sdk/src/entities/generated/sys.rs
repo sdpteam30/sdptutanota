@@ -1604,16 +1604,20 @@ pub struct DeleteCustomerData {
 	#[serde(rename = "643")]
 	pub undelete: bool,
 	#[serde(rename = "644")]
-	pub reason: Option<String>,
+	pub formattedReason: Option<String>,
 	#[serde(rename = "1077")]
 	pub takeoverMailAddress: Option<String>,
 	#[serde(rename = "1325")]
 	#[serde(with = "serde_bytes")]
 	pub authVerifier: Option<Vec<u8>>,
+	#[serde(rename = "2659")]
+	pub reason: Option<i64>,
 	#[serde(rename = "645")]
 	pub customer: GeneratedId,
 	#[serde(rename = "2312")]
 	pub surveyData: Option<SurveyData>,
+	#[serde(rename = "2660")]
+	pub abuseDeactivationInfos: Vec<AbuseInfo>,
 }
 
 impl Entity for DeleteCustomerData {
@@ -1642,6 +1646,8 @@ pub struct CustomerProperties {
 	pub _ownerGroup: Option<GeneratedId>,
 	#[serde(rename = "2025")]
 	pub usageDataOptedOut: bool,
+	#[serde(rename = "2661")]
+	pub requireTwoFactor: bool,
 	#[serde(rename = "922")]
 	pub smallLogo: Option<File>,
 	#[serde(rename = "923")]
@@ -3421,6 +3427,8 @@ pub struct RegistrationCaptchaServiceGetData {
 	pub timelockChallengeSolution: Option<String>,
 	#[serde(rename = "2624")]
 	pub language: String,
+	#[serde(rename = "2640")]
+	pub isAutomatedBrowser: bool,
 }
 
 impl Entity for RegistrationCaptchaServiceGetData {
@@ -4789,6 +4797,9 @@ pub struct InstanceSessionKey {
 	pub encryptionAuthStatus: Option<Vec<u8>>,
 	#[serde(rename = "2254")]
 	pub symKeyVersion: i64,
+	#[serde(rename = "2639")]
+	#[serde(with = "serde_bytes")]
+	pub keyVerificationState: Option<Vec<u8>>,
 	#[serde(rename = "2039")]
 	pub typeInfo: TypeInfo,
 }
@@ -5264,6 +5275,10 @@ pub struct SurveyData {
 	pub details: Option<String>,
 	#[serde(rename = "2300")]
 	pub version: i64,
+	#[serde(rename = "2646")]
+	pub clientVersion: String,
+	#[serde(rename = "2647")]
+	pub clientPlatform: i64,
 }
 
 impl Entity for SurveyData {
@@ -6192,6 +6207,10 @@ pub struct TimelockCaptchaGetIn {
 	pub _format: i64,
 	#[serde(rename = "2631")]
 	pub signupToken: String,
+	#[serde(rename = "2645")]
+	pub timeToSolveCalibrationChallenge: Option<i64>,
+	#[serde(rename = "2644")]
+	pub deviceInfo: Option<ClientPerformanceInfo>,
 }
 
 impl Entity for TimelockCaptchaGetIn {
@@ -6221,6 +6240,44 @@ impl Entity for TimelockCaptchaGetOut {
 		TypeRef {
 			app: AppName::Sys,
 			type_id: TypeId::from(2632),
+		}
+	}
+}
+
+#[derive(uniffi::Record, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "testing"), derive(PartialEq, Debug))]
+pub struct ClientPerformanceInfo {
+	#[serde(rename = "2642")]
+	pub _id: Option<CustomId>,
+	#[serde(rename = "2643")]
+	pub isAutomatedBrowser: bool,
+}
+
+impl Entity for ClientPerformanceInfo {
+	fn type_ref() -> TypeRef {
+		TypeRef {
+			app: AppName::Sys,
+			type_id: TypeId::from(2641),
+		}
+	}
+}
+
+#[derive(uniffi::Record, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "testing"), derive(PartialEq, Debug))]
+pub struct AbuseInfo {
+	#[serde(rename = "2651")]
+	pub _id: Option<CustomId>,
+	#[serde(rename = "2652")]
+	pub criterion: String,
+	#[serde(rename = "2653")]
+	pub value: String,
+}
+
+impl Entity for AbuseInfo {
+	fn type_ref() -> TypeRef {
+		TypeRef {
+			app: AppName::Sys,
+			type_id: TypeId::from(2650),
 		}
 	}
 }

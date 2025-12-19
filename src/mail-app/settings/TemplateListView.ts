@@ -20,7 +20,7 @@ import ColumnEmptyMessageBox from "../../common/gui/base/ColumnEmptyMessageBox.j
 import { theme } from "../../common/gui/theme.js"
 import { Icons } from "../../common/gui/base/icons/Icons.js"
 import { List, ListAttrs, MultiselectMode, RenderConfig } from "../../common/gui/base/List.js"
-import { size } from "../../common/gui/size.js"
+import { component_size, size } from "../../common/gui/size.js"
 import { TemplateDetailsViewer } from "./TemplateDetailsViewer.js"
 import { listSelectionKeyboardShortcuts, onlySingleSelection, VirtualRow } from "../../common/gui/base/ListUtils.js"
 import { IconButton } from "../../common/gui/base/IconButton.js"
@@ -43,7 +43,7 @@ export class TemplateListView implements UpdatableSettingsViewer {
 	private listModel: ListElementListModel<EmailTemplate>
 	private listStateSubscription: Stream<unknown> | null = null
 	private readonly renderConfig: RenderConfig<EmailTemplate, TemplateRow> = {
-		itemHeight: size.list_row_height,
+		itemHeight: component_size.list_row_height,
 		multiselectionAllowed: MultiselectMode.Disabled,
 		swipe: null,
 		createElement: (dom) => {
@@ -113,7 +113,7 @@ export class TemplateListView implements UpdatableSettingsViewer {
 			ListColumnWrapper,
 			{
 				headerContent: m(
-					".flex.flex-space-between.center-vertically.plr-l",
+					".flex.flex-space-between.center-vertically.plr-24",
 					m(BaseSearchBar, {
 						text: this.searchQuery,
 						onInput: (text) => this.updateQuery(text),
@@ -128,7 +128,7 @@ export class TemplateListView implements UpdatableSettingsViewer {
 					} satisfies BaseSearchBarAttrs),
 					this.userCanEdit()
 						? m(
-								".mr-negative-s",
+								".mr-negative-8",
 								m(IconButton, {
 									title: "addTemplate_label",
 									icon: Icons.Add,
@@ -142,7 +142,7 @@ export class TemplateListView implements UpdatableSettingsViewer {
 			},
 			this.listModel.isEmptyAndDone()
 				? m(ColumnEmptyMessageBox, {
-						color: theme.list_message_bg,
+						color: theme.on_surface_variant,
 						icon: Icons.ListAlt,
 						message: "noEntries_msg",
 					})
@@ -164,9 +164,8 @@ export class TemplateListView implements UpdatableSettingsViewer {
 
 	async entityEventsReceived(updates: ReadonlyArray<EntityUpdateData>): Promise<void> {
 		for (const update of updates) {
-			const { instanceListId, instanceId, operation } = update
-			if (isUpdateForTypeRef(EmailTemplateTypeRef, update) && isSameId(this.templateListId(), instanceListId)) {
-				await this.listModel.entityEventReceived(instanceListId, instanceId, operation)
+			if (isUpdateForTypeRef(EmailTemplateTypeRef, update) && isSameId(this.templateListId(), update.instanceListId)) {
+				await this.listModel.entityEventReceived(update.instanceListId, update.instanceId, update.operation)
 			}
 		}
 		// we need to make another search in case items have changed
@@ -230,7 +229,7 @@ export class TemplateRow implements VirtualRow<EmailTemplate> {
 						oncreate: (vnode) => (this.titleDom = vnode.dom as HTMLElement),
 					}),
 				]),
-				m(".smaller.mt-xxs", {
+				m(".smaller.mt-4", {
 					oncreate: (vnode) => (this.idDom = vnode.dom as HTMLElement),
 				}),
 			]),

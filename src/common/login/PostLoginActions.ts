@@ -2,7 +2,7 @@ import m, { Component } from "mithril"
 import type { LoggedInEvent, PostLoginAction } from "../api/main/LoginController"
 import { LoginController } from "../api/main/LoginController"
 import { isAdminClient, isApp, isDesktop, LOGIN_TITLE } from "../api/common/Env"
-import { assertNotNull, defer, delay, neverNull, noOp, ofClass } from "@tutao/tutanota-utils"
+import { assertNotNull, defer, delay, isEmpty, LazyLoaded, neverNull, newPromise, noOp, ofClass } from "@tutao/tutanota-utils"
 import { windowFacade } from "../misc/WindowFacade.js"
 import { checkApprovalStatus } from "../misc/LoginUtils.js"
 import { locator } from "../api/main/CommonLocator"
@@ -14,12 +14,11 @@ import { isNotificationCurrentlyActive, loadOutOfOfficeNotification } from "../m
 import * as notificationOverlay from "../gui/base/NotificationOverlay"
 import { ButtonType } from "../gui/base/Button.js"
 import { Dialog } from "../gui/base/Dialog"
-import { CloseEventBusOption, Const, SecondFactorType } from "../api/common/TutanotaConstants"
+import { CloseEventBusOption, Const, FeatureType, SecondFactorType } from "../api/common/TutanotaConstants"
 import { showMoreStorageNeededOrderDialog } from "../misc/SubscriptionDialogs.js"
 import { notifications } from "../gui/Notifications"
-import { LockedError } from "../api/common/error/RestError"
+import { LockedError, NotAuthorizedError } from "../api/common/error/RestError"
 import { CredentialsProvider, usingKeychainAuthenticationWithOptions } from "../misc/credentials/CredentialsProvider.js"
-import type { ThemeCustomizations } from "../misc/WhitelabelCustomizations.js"
 import { getThemeCustomizations } from "../misc/WhitelabelCustomizations.js"
 import { CredentialEncryptionMode } from "../misc/credentials/CredentialEncryptionMode.js"
 import { SecondFactorHandler } from "../misc/2fa/SecondFactorHandler.js"
@@ -37,6 +36,9 @@ import { ThemeController } from "../gui/ThemeController.js"
 import { EntityUpdateData, isUpdateForTypeRef } from "../api/common/utils/EntityUpdateUtils.js"
 import { showSnackBar } from "../gui/base/SnackBar"
 import { SyncTracker } from "../api/main/SyncTracker"
+import { GENERATED_MIN_ID } from "../api/common/utils/EntityUtils"
+import { showRequestPasswordDialog } from "../misc/passwords/PasswordRequestDialog"
+import { LoginFacade } from "../api/worker/facades/LoginFacade"
 
 /**
  * This is a collection of all things that need to be initialized/global state to be set after a user has logged in successfully.
@@ -55,8 +57,8 @@ export class PostLoginActions implements PostLoginAction {
 		private readonly themeController: ThemeController,
 		private readonly syncTracker: SyncTracker,
 		private readonly showSetupWizard: () => unknown,
-		private readonly setUpClientOnlyCalendars: () => unknown,
 		private readonly updateClient: () => unknown,
+		private readonly loginFacade: LoginFacade,
 	) {}
 
 	async onPartialLoginSuccess(loggedInEvent: LoggedInEvent): Promise<void> {
@@ -81,8 +83,6 @@ export class PostLoginActions implements PostLoginAction {
 			if (document.title === LOGIN_TITLE) {
 				document.title = "Tuta Mail"
 			}
-
-			return
 		} else {
 			let postLoginTitle = document.title === LOGIN_TITLE ? "Tuta Mail" : document.title
 			document.title = neverNull(this.logins.getUserController().userGroupInfo.mailAddress) + " - " + postLoginTitle
@@ -115,10 +115,8 @@ export class PostLoginActions implements PostLoginAction {
 			return
 		}
 
-		// Do not wait
-		this.fullLoginAsyncActions()
-
-		this.showSetupWizardIfNeeded()
+		// Show credentials reminder after everything is done (and avoid showing it over the setup wizard)
+		Promise.all([this.fullLoginAsyncActions(), this.showSetupWizardIfNeeded(), this.syncTracker.waitSync()]).then(() => this.enforceUpToDateCredentials())
 	}
 
 	// Runs the user approval check after the user has been updated or after a timeout
@@ -178,8 +176,6 @@ export class PostLoginActions implements PostLoginAction {
 			this.handleExternalSync()
 		}
 
-		this.setUpClientOnlyCalendars()
-
 		if (this.logins.isGlobalAdminUserLoggedIn() && !isAdminClient()) {
 			const receiveInfoData = createReceiveInfoServiceData({
 				language: lang.code,
@@ -191,8 +187,6 @@ export class PostLoginActions implements PostLoginAction {
 				})
 			}
 		}
-
-		this.enforcePasswordChange()
 
 		const usageTestModel = locator.usageTestModel
 		await usageTestModel.init()
@@ -207,6 +201,11 @@ export class PostLoginActions implements PostLoginAction {
 
 		// Redraw to render usage tests and news, among other things that may have changed.
 		m.redraw()
+
+		// Whitelabel can only be migrated when the logged-in user is global admin
+		if (!this.logins.isEnabled(FeatureType.WhitelabelChild) && this.logins.getUserController().isGlobalAdmin()) {
+			await this.migrateWhiteLabelToMaterial3()
+		}
 	}
 
 	private deactivateOutOfOfficeNotification(notification: OutOfOfficeNotification): Promise<void> {
@@ -239,19 +238,42 @@ export class PostLoginActions implements PostLoginAction {
 		})
 	}
 
+	/**
+	 * Migrate old customizations to new Material3 customizations
+	 * Could be removed after all users who have whitelabel color customization are migrated.
+	 */
+	private async migrateWhiteLabelToMaterial3(): Promise<void> {
+		const domainInfoAndConfig = await this.logins.getUserController().loadWhitelabelConfig()
+		const whitelabelConfig = domainInfoAndConfig?.whitelabelConfig
+		if (whitelabelConfig && whitelabelConfig.jsonTheme) {
+			const parsedTheme = getThemeCustomizations(whitelabelConfig)
+			// jsonTheme.version was introduced with Material3, so old customizations don't have it
+			// for old whitelabel themes, content_accent is null when there are no color customizations
+			if (parsedTheme.version == null && parsedTheme.content_accent) {
+				const material3Customizations = await this.themeController.getMaterial3Customizations(parsedTheme)
+				const mappedTheme = ThemeController.mapNewToOldColorTokens(material3Customizations)
+				mappedTheme.themeId = (parsedTheme.themeId ?? domainInfoAndConfig.domainInfo.domain) as string
+				whitelabelConfig.jsonTheme = JSON.stringify(mappedTheme)
+				await this.entityClient.update(whitelabelConfig)
+			}
+		}
+	}
+
 	private async storeNewCustomThemes(): Promise<void> {
 		const domainInfoAndConfig = await this.logins.getUserController().loadWhitelabelConfig()
 		if (domainInfoAndConfig && domainInfoAndConfig.whitelabelConfig.jsonTheme) {
-			const customizations: ThemeCustomizations = getThemeCustomizations(domainInfoAndConfig.whitelabelConfig)
+			const customizations = getThemeCustomizations(domainInfoAndConfig.whitelabelConfig)
 			// jsonTheme is stored on WhitelabelConfig as an empty json string ("{}", or whatever JSON.stringify({}) gives you)
 			// so we can't just check `!whitelabelConfig.jsonTheme`
 			if (Object.keys(customizations).length > 0) {
-				// Custom theme is missing themeId, so we update it with the whitelabel domain
-				if (!customizations.themeId) {
-					customizations.themeId = domainInfoAndConfig.domainInfo.domain
-				}
+				// in case customizations are old
+				const material3Customizations = await this.themeController.getMaterial3Customizations(customizations)
 
-				await this.themeController.storeCustomThemeForCustomizations(customizations)
+				// Custom theme is missing themeId, so we update it with the whitelabel domain
+				if (!material3Customizations.themeId) {
+					material3Customizations.themeId = domainInfoAndConfig.domainInfo.domain
+				}
+				await this.themeController.storeCustomThemeForCustomizations(material3Customizations)
 
 				// Update the already loaded custom themes to their latest version
 				const previouslySavedThemes = await this.themeController.getCustomThemes()
@@ -274,13 +296,18 @@ export class PostLoginActions implements PostLoginAction {
 			const confirmed = await Dialog.upgradeReminder(lang.get("upgradeReminderTitle_msg"), lang.get("premiumOffer_msg"))
 			if (confirmed) {
 				const wizard = await import("../subscription/UpgradeSubscriptionWizard.js")
-				await wizard.showUpgradeWizard(this.logins)
+				await wizard.showUpgradeWizard({ logins: this.logins, isCalledBySatisfactionDialog: false })
 			}
 
 			const newCustomerProperties = createCustomerProperties(await this.logins.getUserController().loadCustomerProperties())
 			newCustomerProperties.lastUpgradeReminder = new Date(this.dateProvider.now())
 			this.entityClient.update(newCustomerProperties).catch(ofClass(LockedError, noOp))
 		}
+	}
+
+	private async enforceUpToDateCredentials(): Promise<void> {
+		await this.enforcePasswordChange()
+		await this.enforceTwoFactor()
 	}
 
 	private async enforcePasswordChange(): Promise<void> {
@@ -312,6 +339,81 @@ export class PostLoginActions implements PostLoginAction {
 				])
 			}
 		}
+	}
+
+	private async enforceTwoFactor(): Promise<void> {
+		// First check if the setting is turned on.
+		const customerProperties = await this.logins.getUserController().loadCustomerProperties()
+		if (!customerProperties.requireTwoFactor) {
+			return
+		}
+
+		// Next, check if we have at least one.
+		const user = this.logins.getUserController().user
+		const secondFactors = await this.entityClient.loadRange(SecondFactorTypeRef, assertNotNull(user.auth).secondFactors, GENERATED_MIN_ID, 1, false)
+		if (!isEmpty(secondFactors)) {
+			return
+		}
+
+		// Admins can disregard this nag once per login as well as close any and all dialogs in this process.
+		const isAdmin = this.logins.getUserController().isGlobalAdmin()
+		if (!isAdmin) {
+			await Dialog.message("twoFactorRequired_message")
+		} else {
+			const shouldProceed = await Dialog.confirm("twoFactorRequired_message")
+			if (!shouldProceed) {
+				return
+			}
+		}
+
+		// The user will have to deal with another two dialogs: the password entry dialog (to get a token) and the 2FA
+		// dialog.
+		//
+		// If they are not an admin, these dialogs cannot be closed without exiting the app.
+		return newPromise<void>((accept, reject) => {
+			const showDialog = () => {
+				const dialog = showRequestPasswordDialog({
+					action: async (passphrase) => {
+						try {
+							const { SecondFactorEditDialog } = await import("../settings/login/secondfactor/SecondFactorEditDialog.js")
+							const token = await this.loginFacade.getVerifierToken(passphrase)
+
+							await SecondFactorEditDialog.loadAndShow(this.entityClient, LazyLoaded.newLoaded(user), token, {
+								allowCancel: isAdmin,
+
+								// If the token expires (which is possible if the user takes too long), they need to retry
+								onTokenExpired: async () => {
+									await Dialog.message("requestTimeout_msg")
+									showDialog()
+								},
+
+								// Otherwise, we can proceed
+								onComplete: () => {
+									accept()
+								},
+							})
+						} catch (e) {
+							if (e instanceof NotAuthorizedError) {
+								return lang.getTranslation("invalidPassword_msg").text
+							} else {
+								reject(e)
+								throw e
+							}
+						}
+						dialog.close()
+						return ""
+					},
+					cancel: isAdmin
+						? {
+								textId: "cancel_action",
+								action: noOp,
+							}
+						: null,
+				})
+			}
+
+			showDialog()
+		})
 	}
 
 	// Show the onboarding wizard if this is the first time the app has been opened since install

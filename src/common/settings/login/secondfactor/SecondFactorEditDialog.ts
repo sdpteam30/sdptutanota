@@ -25,18 +25,30 @@ import { UserError } from "../../../api/main/UserError.js"
 import { LoginButton } from "../../../gui/base/buttons/LoginButton.js"
 import { NotAuthorizedError } from "../../../api/common/error/RestError"
 
+export interface SecondFactorEditDialogAttrs {
+	allowCancel?: boolean
+	onTokenExpired?: () => unknown
+	onComplete?: () => unknown
+}
+
 export class SecondFactorEditDialog {
 	private readonly dialog: Dialog
 
-	constructor(private readonly model: SecondFactorEditModel) {
+	constructor(
+		private readonly model: SecondFactorEditModel,
+		private readonly attrs?: SecondFactorEditDialogAttrs,
+	) {
 		this.dialog = Dialog.createActionDialog({
 			title: "add_action",
 			allowOkWithReturn: true,
 			child: {
 				view: () => this.render(),
 			},
-			okAction: () => showProgressDialog("pleaseWait_msg", this.okAction()),
-			allowCancel: true,
+			okAction: async () => {
+				await showProgressDialog("pleaseWait_msg", this.okAction())
+				attrs?.onComplete?.()
+			},
+			allowCancel: attrs?.allowCancel ?? true,
 			okActionTextId: "save_action",
 			cancelAction: () => this.model.abort(),
 			validator: () => this.model.validationMessage(),
@@ -44,6 +56,9 @@ export class SecondFactorEditDialog {
 	}
 
 	async okAction(): Promise<void> {
+		if (!this.dialog.visible) {
+			return
+		}
 		try {
 			const user = await this.model.save()
 			if (user != null) this.finalize(user)
@@ -53,7 +68,11 @@ export class SecondFactorEditDialog {
 				Dialog.message(lang.makeTranslation("error_msg", e.message))
 			} else if (e instanceof NotAuthorizedError) {
 				this.dialog.close()
-				Dialog.message("contactFormSubmitError_msg")
+				if (this.attrs?.onTokenExpired) {
+					this.attrs?.onTokenExpired()
+				} else {
+					Dialog.message("contactFormSubmitError_msg")
+				}
 				return
 			} else {
 				throw e
@@ -66,8 +85,8 @@ export class SecondFactorEditDialog {
 		RecoverCodeDialog.showRecoverCodeDialogAfterPasswordVerificationAndInfoDialog(user)
 	}
 
-	static async loadAndShow(entityClient: EntityClient, lazyUser: LazyLoaded<User>, token?: string): Promise<void> {
-		const dialog: SecondFactorEditDialog = await showProgressDialog("pleaseWait_msg", this.loadWebauthnClient(entityClient, lazyUser, token))
+	static async loadAndShow(entityClient: EntityClient, lazyUser: LazyLoaded<User>, token?: string, attrs?: SecondFactorEditDialogAttrs): Promise<void> {
+		const dialog: SecondFactorEditDialog = await showProgressDialog("pleaseWait_msg", this.loadWebauthnClient(entityClient, lazyUser, token, attrs))
 		dialog.dialog.show()
 	}
 
@@ -115,7 +134,7 @@ export class SecondFactorEditDialog {
 	private renderU2FFields(): Children {
 		return this.model.verificationStatus === VerificationStatus.Initial
 			? null
-			: m("p.flex.items-center", [m(".mr-s", this.statusIcon()), m("", this.statusMessage())])
+			: m("p.flex.items-center", [m(".mr-8", this.statusIcon()), m("", this.statusMessage())])
 	}
 
 	private renderOtpFields(): Children {
@@ -125,7 +144,7 @@ export class SecondFactorEditDialog {
 			icon: Icons.Clipboard,
 			size: ButtonSize.Compact,
 		}
-		return m(".mb", [
+		return m(".mb-16", [
 			m(TextField, {
 				label: "totpSecret_label",
 				helpLabel: () => lang.get(isApp() ? "totpTransferSecretApp_msg" : "totpTransferSecret_msg"),
@@ -135,7 +154,7 @@ export class SecondFactorEditDialog {
 			}),
 			isApp()
 				? m(
-						".pt",
+						".pt-16",
 						m(LoginButton, {
 							label: "addOpenOTPApp_action",
 							onclick: () => this.openOtpLink(),
@@ -148,7 +167,7 @@ export class SecondFactorEditDialog {
 				helpLabel: () => this.statusMessage(),
 				autocompleteAs: Autocomplete.oneTimeCode,
 				oninput: (newValue) => this.model.onTotpValueChange(newValue),
-				onReturnKeyPressed: () => this.model.save(),
+				onReturnKeyPressed: () => this.okAction(),
 			}),
 		])
 	}
@@ -159,7 +178,7 @@ export class SecondFactorEditDialog {
 		if (otpInfo) {
 			const qrCodeSvg = assertNotNull(otpInfo.qrCodeSvg)
 			// sanitized in the model
-			return m(".flex-center.pt", m.trust(qrCodeSvg))
+			return m(".flex-center.pt-16", m.trust(qrCodeSvg))
 		} else {
 			return null
 		}
@@ -175,7 +194,12 @@ export class SecondFactorEditDialog {
 		}
 	}
 
-	private static async loadWebauthnClient(entityClient: EntityClient, lazyUser: LazyLoaded<User>, token?: string): Promise<SecondFactorEditDialog> {
+	private static async loadWebauthnClient(
+		entityClient: EntityClient,
+		lazyUser: LazyLoaded<User>,
+		token?: string,
+		attrs?: SecondFactorEditDialogAttrs,
+	): Promise<SecondFactorEditDialog> {
 		const totpKeys = await locator.loginFacade.generateTotpSecret()
 		const user = await lazyUser.getAsync()
 		const webauthnSupported = await locator.webAuthn.isSupported()
@@ -191,7 +215,7 @@ export class SecondFactorEditDialog {
 			m.redraw,
 			token,
 		)
-		return new SecondFactorEditDialog(model)
+		return new SecondFactorEditDialog(model, attrs)
 	}
 
 	private statusIcon(): Children {
@@ -202,18 +226,18 @@ export class SecondFactorEditDialog {
 			case VerificationStatus.Success:
 				return m(Icon, {
 					icon: Icons.Checkmark,
-					size: IconSize.Medium,
+					size: IconSize.PX24,
 					style: {
-						fill: theme.content_accent,
+						fill: theme.primary,
 					},
 				})
 
 			case VerificationStatus.Failed:
 				return m(Icon, {
 					icon: Icons.Cancel,
-					size: IconSize.Medium,
+					size: IconSize.PX24,
 					style: {
-						fill: theme.content_accent,
+						fill: theme.primary,
 					},
 				})
 

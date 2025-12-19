@@ -6,6 +6,11 @@ import { createAsyncDropdown, DropdownChildAttrs } from "./Dropdown.js"
 import { lazy } from "@tutao/tutanota-utils"
 import { BaseButton, BaseButtonAttrs } from "./buttons/BaseButton.js"
 
+export enum BubbleTextFieldClickBehaviour {
+	SHOW_DROPDOWN,
+	SKIP_DROPDOWN,
+}
+
 export interface BubbleTextFieldAttrs<T> {
 	label: MaybeTranslation
 	items: ReadonlyArray<T>
@@ -23,6 +28,7 @@ export interface BubbleTextFieldAttrs<T> {
 	onFocus: () => void
 	onBlur: () => void
 	helpLabel?: lazy<Children> | null
+	onClick?: (item: T) => BubbleTextFieldClickBehaviour
 }
 
 export class BubbleTextField<T> implements ClassComponent<BubbleTextFieldAttrs<T>> {
@@ -55,10 +61,23 @@ export class BubbleTextField<T> implements ClassComponent<BubbleTextFieldAttrs<T
 							},
 							onclick: (e: MouseEvent) => {
 								e.stopPropagation() // do not focus the text field
-								createAsyncDropdown({
-									lazyButtons: () => attrs.getBubbleDropdownAttrs(item),
-									width: 250,
-								})(e, e.target as HTMLElement)
+								// if a onclick event have been registered it takes precedence over the dropdown
+								// behaviour below, this is necessary for the display of the recover dialog when
+								// there is a VERIFICATION ERROR
+								let showDropdown = true
+
+								if (attrs.onClick) {
+									if (attrs.onClick(item) === BubbleTextFieldClickBehaviour.SKIP_DROPDOWN) {
+										showDropdown = false
+									}
+								}
+
+								if (showDropdown) {
+									createAsyncDropdown({
+										lazyButtons: () => attrs.getBubbleDropdownAttrs(item),
+										width: 250,
+									})(e, e.target as HTMLElement)
+								}
 							},
 						}
 						if (bubbleIcon) {
@@ -68,7 +87,7 @@ export class BubbleTextField<T> implements ClassComponent<BubbleTextFieldAttrs<T
 						return m(".flex.overflow-hidden.items-end", [
 							m(".flex-no-grow-shrink-auto.overflow-hidden", m(BaseButton, baseButtonAttrs)),
 							// Comma is shown when there's text/another bubble afterwards or if the field is active
-							this.active || idx < items.length - 1 || attrs.text !== "" ? m("span.pr", ",") : null,
+							this.active || idx < items.length - 1 || attrs.text !== "" ? m("span.pr-12", ",") : null,
 						])
 					})
 				},

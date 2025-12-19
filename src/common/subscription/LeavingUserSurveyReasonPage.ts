@@ -55,7 +55,7 @@ export class LeavingUserSurveyReasonPage implements WizardPageN<LeavingUserSurve
 			[
 				m(DropDownSelector, {
 					style: {
-						border: `2px solid ${theme.content_border}`,
+						border: `2px solid ${theme.outline}`,
 						borderRadius: "6px",
 						padding: "4px 8px",
 					},
@@ -68,7 +68,7 @@ export class LeavingUserSurveyReasonPage implements WizardPageN<LeavingUserSurve
 					},
 					dropdownWidth: 350,
 				} satisfies DropDownSelectorAttrs<NumberString | null>),
-				m(".pt", m(this.customReasonEditor)),
+				m(".pt-16", m(this.customReasonEditor)),
 			],
 		)
 	}

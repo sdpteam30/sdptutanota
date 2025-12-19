@@ -17,7 +17,7 @@ import {
 	MailDetails,
 	MailDetailsBlobTypeRef,
 	MailDetailsDraftTypeRef,
-	MailFolderTypeRef,
+	MailSetTypeRef,
 	MailSetEntry,
 	MailSetEntryTypeRef,
 	MailTypeRef,
@@ -33,11 +33,12 @@ import {
 	first,
 	isEmpty,
 	isNotNull,
+	newPromise,
 	ofClass,
 	promiseMap,
 } from "@tutao/tutanota-utils"
 import { deconstructMailSetEntryId, elementIdPart, getElementId, isSameId, listIdPart } from "../../../common/api/common/utils/EntityUtils.js"
-import { filterMailMemberships } from "../../../common/api/worker/search/IndexUtils.js"
+import { filterMailMemberships } from "../../../common/api/common/utils/IndexUtils.js"
 import { IndexingErrorReason, SearchIndexStateInfo } from "../../../common/api/worker/search/SearchTypes.js"
 import { CancelledError } from "../../../common/api/common/error/CancelledError.js"
 import type { DateProvider } from "../../../common/api/worker/DateProvider.js"
@@ -456,14 +457,21 @@ export class MailIndexer {
 
 	/** A helper to cancel an async operation with {@link CancelledError} as soon as possible. */
 	private abortAware<T>(loading: () => Promise<T>): Promise<T> {
-		return Promise.race([loading(), this.abortPromise()])
-	}
+		type AbortEventListener = Parameters<AbortSignal["addEventListener"]>[1]
 
-	private abortPromise(): Promise<any> {
-		return new Promise<void>((_, reject) => {
-			// return right away if already aborted
-			if (this.abortController.signal.aborted) reject(new CancelledError("mail indexing canceled"))
-			this.abortController.signal.addEventListener("abort", () => reject(new CancelledError("mail indexing canceled")), { once: true })
+		let listener: AbortEventListener | null = null
+		return Promise.race([
+			loading(),
+			newPromise<T>((_, reject) => {
+				// return right away if already aborted
+				if (this.abortController.signal.aborted) reject(new CancelledError("mail indexing canceled"))
+				listener = () => reject(new CancelledError("mail indexing canceled"))
+				this.abortController.signal.addEventListener("abort", listener, { once: true })
+			}),
+		]).finally(() => {
+			if (listener) {
+				this.abortController.signal.removeEventListener("abort", listener)
+			}
 		})
 	}
 
@@ -509,17 +517,17 @@ export class MailIndexer {
 	 * Provides all mail set list ids of the given mailbox
 	 */
 	private async loadMailFolderListIds(mailbox: MailBox): Promise<Id[]> {
-		const mailSets = await this.entityClient.loadAll(MailFolderTypeRef, assertNotNull(mailbox.folders).folders)
+		const mailSets = await this.entityClient.loadAll(MailSetTypeRef, mailbox.mailSets.mailSets)
 		return mailSets.filter(isFolder).map((set) => set.entries)
 	}
 
-	private async processImportStateEntityEvents(event: EntityUpdateData): Promise<void> {
+	private async processImportStateEntityEvents(operation: OperationType, importStateId: IdTuple): Promise<void> {
 		await this.initialized.promise
 		if (!this._mailIndexingEnabled) return
 		// we can only process create and update events (create is because of EntityEvent optimization
 		// (CREATE + UPDATE = CREATE) which requires us to process CREATE events with imported mails)
-		if (event.operation === OperationType.CREATE || event.operation === OperationType.UPDATE) {
-			const mailIds: IdTuple[] = await this.loadImportedMailIdsInIndexDateRange([event.instanceListId, event.instanceId])
+		if (operation === OperationType.CREATE || operation === OperationType.UPDATE) {
+			const mailIds: IdTuple[] = await this.loadImportedMailIdsInIndexDateRange(importStateId)
 
 			const mailData = await this.preloadMails(mailIds)
 			for (const singleMailData of mailData) {
@@ -579,7 +587,7 @@ export class MailIndexer {
 
 		for (const event of events) {
 			if (isUpdateForTypeRef(ImportMailStateTypeRef, event)) {
-				await this.processImportStateEntityEvents(event)
+				await this.processImportStateEntityEvents(event.operation, [event.instanceListId, event.instanceId])
 			}
 		}
 	}

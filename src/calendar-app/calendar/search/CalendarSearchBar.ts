@@ -1,5 +1,5 @@
 import m, { Component, Vnode } from "mithril"
-import { px, size } from "../../../common/gui/size"
+import { component_size, px, size } from "../../../common/gui/size"
 import stream from "mithril/stream"
 import Stream from "mithril/stream"
 import type { PositionRect } from "../../../common/gui/base/Overlay"
@@ -18,7 +18,7 @@ import { hasMoreResults } from "./model/CalendarSearchModel.js"
 import type { SearchRestriction, SearchResult } from "../../../common/api/worker/search/SearchTypes"
 import { LayerType } from "../../../RootView"
 import { BaseSearchBar, BaseSearchBarAttrs } from "../../../common/gui/base/BaseSearchBar.js"
-import { generateCalendarInstancesInRange, isClientOnlyCalendar, retrieveClientOnlyEventsForUser } from "../../../common/calendar/date/CalendarUtils.js"
+import { generateCalendarInstancesInRange, isBirthdayCalendar, retrieveBirthdayEventsForUser } from "../../../common/calendar/date/CalendarUtils.js"
 
 import { loadMultipleFromLists } from "../../../common/api/common/EntityClient.js"
 import { SearchRouter } from "../../../common/search/view/SearchRouter.js"
@@ -265,14 +265,14 @@ export class CalendarSearchBar implements Component<CalendarSearchBarAttrs> {
 			}
 		} else if (window.innerWidth < 500) {
 			overlayRect = {
-				top: px(size.navbar_height_mobile + 6),
+				top: px(component_size.navbar_height_mobile + 6),
 				left: px(16),
 				right: px(16),
 				zIndex: LayerType.LowPriorityOverlay,
 			}
 		} else {
 			overlayRect = {
-				top: px(size.navbar_height_mobile + 6),
+				top: px(component_size.navbar_height_mobile + 6),
 				left: px(domRect.left),
 				right: px(window.innerWidth - domRect.right),
 				zIndex: LayerType.LowPriorityOverlay,
@@ -426,12 +426,12 @@ export class CalendarSearchBar implements Component<CalendarSearchBarAttrs> {
 	}
 
 	private async showResultsInOverlay(result: SearchResult): Promise<void> {
-		const filteredEvents = result.results.filter(([calendarId, eventId]) => !isClientOnlyCalendar(calendarId))
+		const filteredEvents = result.results.filter(([calendarId, eventId]) => !isBirthdayCalendar(calendarId))
 
 		const eventsRepository = await calendarLocator.calendarEventsRepository()
 		const entries = [
 			...(await loadMultipleFromLists(result.restriction.type, calendarLocator.entityClient, filteredEvents)),
-			...(await retrieveClientOnlyEventsForUser(calendarLocator.logins, result.results, eventsRepository.getBirthdayEvents())),
+			...(await retrieveBirthdayEventsForUser(calendarLocator.logins, result.results, eventsRepository.getBirthdayEvents())),
 		]
 
 		// If there was no new search while we've been downloading the result

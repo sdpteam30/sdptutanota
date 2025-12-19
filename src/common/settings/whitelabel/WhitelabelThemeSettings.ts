@@ -13,6 +13,7 @@ import { locator } from "../../api/main/CommonLocator.js"
 import { showFileChooser } from "../../file/FileController.js"
 import { IconButton } from "../../gui/base/IconButton.js"
 import { ButtonSize } from "../../gui/base/ButtonSize.js"
+import type { WhitelabelThemeGenerator } from "../../gui/WhitelabelThemeGenerator"
 
 export type WhitelabelData = {
 	customTheme: ThemeCustomizations
@@ -21,6 +22,7 @@ export type WhitelabelData = {
 }
 export type WhitelabelThemeSettingsAttrs = {
 	whitelabelData: null | WhitelabelData
+	whitelabelThemeGenerator: WhitelabelThemeGenerator
 }
 
 export class WhitelabelThemeSettings implements Component<WhitelabelThemeSettingsAttrs> {
@@ -107,19 +109,21 @@ export class WhitelabelThemeSettings implements Component<WhitelabelThemeSetting
 	}
 
 	private async editCustomLogo({ customTheme, whitelabelConfig, whitelabelDomainInfo }: WhitelabelData) {
-		const files = await showFileChooser(false)
-		let extension = files[0].name.toLowerCase().substring(files[0].name.lastIndexOf(".") + 1)
+		const [file] = await showFileChooser(false)
+		if (!file) return
 
-		if (files[0].size > MAX_LOGO_SIZE || !contains(ALLOWED_IMAGE_FORMATS, extension)) {
+		let extension = file.name.toLowerCase().substring(file.name.lastIndexOf(".") + 1)
+
+		if (file.size > MAX_LOGO_SIZE || !contains(ALLOWED_IMAGE_FORMATS, extension)) {
 			Dialog.message("customLogoInfo_msg")
 		} else {
 			let imageData: string
 
 			if (extension === "svg") {
-				imageData = utf8Uint8ArrayToString(files[0].data)
+				imageData = utf8Uint8ArrayToString(file.data)
 			} else {
 				const ext = extension === "jpeg" ? "jpg" : extension
-				const b64 = uint8ArrayToBase64(files[0].data)
+				const b64 = uint8ArrayToBase64(file.data)
 				imageData = `<img src="data:image/${ext};base64,${b64}">`
 			}
 
@@ -155,6 +159,7 @@ export class WhitelabelThemeSettings implements Component<WhitelabelThemeSetting
 			locator.themeController,
 			locator.entityClient,
 			locator.logins,
+			locator.whitelabelThemeGenerator,
 		)
 		EditCustomColorsDialog.show(viewModel)
 	}

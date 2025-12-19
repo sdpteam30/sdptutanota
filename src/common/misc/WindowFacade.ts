@@ -2,8 +2,7 @@ import m, { Params } from "mithril"
 import { assertMainOrNodeBoot, isApp, isElectronClient, isIOSApp, Mode } from "../api/common/Env"
 import { lang } from "./LanguageViewModel"
 import { client } from "./ClientDetector"
-import type { IndexedDbIndexer } from "../../mail-app/workerUtils/index/IndexedDbIndexer.js"
-import { noOp, remove } from "@tutao/tutanota-utils"
+import { isSessionStorageAvailable, noOp, remove } from "@tutao/tutanota-utils"
 import { WebsocketConnectivityModel } from "./WebsocketConnectivityModel.js"
 import { LoginController } from "../api/main/LoginController.js"
 
@@ -17,7 +16,6 @@ export class WindowFacade {
 	windowCloseConfirmation: boolean
 	private _windowCloseListeners: Set<(e: Event) => unknown>
 	private _historyStateEventListeners: Array<(e: Event) => boolean> = []
-	private indexerFacade: IndexedDbIndexer | null = null
 	// following two properties are for the iOS
 	private _keyboardSize: number = 0
 	private _keyboardSizeListeners: KeyboardSizeListener[] = []
@@ -162,8 +160,10 @@ export class WindowFacade {
 			let m = lang.get("closeWindowConfirmation_msg")
 			e.returnValue = m
 			return m
-		} else {
+		} else if (this.logins?.isUserLoggedIn()) {
 			this.logins?.logout(true)
+			return null
+		} else {
 			return null
 		}
 	}
@@ -216,8 +216,8 @@ export class WindowFacade {
 	}
 
 	_onUnload() {
-		if (this.windowCloseConfirmation && this.logins) {
-			this.logins.logout(true)
+		if (this.windowCloseConfirmation && this.logins && this.logins.isUserLoggedIn()) {
+			const _ = this.logins.logout(true)
 		}
 	}
 
@@ -230,21 +230,22 @@ export class WindowFacade {
 	}
 
 	async reload(args: Params) {
+		if (!Object.hasOwn(args, "noAutoLogin")) {
+			args.noAutoLogin = true
+		}
+		const stringifiedArgs: Record<string, string> = {}
+		for (const [k, v] of Object.entries(args)) {
+			if (v != null) {
+				stringifiedArgs[k] = String(v)
+			}
+		}
 		if (isApp() || isElectronClient()) {
-			if (!Object.hasOwn(args, "noAutoLogin")) {
-				args.noAutoLogin = true
-			}
-
 			const { locator } = await import("../api/main/CommonLocator")
-
-			const stringifiedArgs: Record<string, string> = {}
-			for (const [k, v] of Object.entries(args)) {
-				if (v != null) {
-					stringifiedArgs[k] = String(v)
-				}
-			}
 			await locator.commonSystemFacade.reload(stringifiedArgs)
 		} else {
+			if (isSessionStorageAvailable()) {
+				sessionStorage.setItem("reloadArgs", JSON.stringify(stringifiedArgs))
+			}
 			window.location.reload()
 		}
 	}

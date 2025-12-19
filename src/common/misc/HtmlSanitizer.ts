@@ -338,7 +338,19 @@ export class HtmlSanitizer {
 			let attribute = htmlNode.attributes.getNamedItem(attrName)
 
 			if (attribute) {
-				if (config.usePlaceholderForInlineImages && attribute.value.startsWith("cid:")) {
+				if (config.blockExternalContent && attribute.value.startsWith("cid:")) {
+					// Block inline images (cid:) when external content is blocked
+					// This prevents inline images from loading until user clicks "Show" or "Known sender"
+					this.externalContent++
+					const cid = attribute.value.substring(4)
+					this.inlineImageCids.push(cid)
+					htmlNode.setAttribute("draft-" + attribute.name, attribute.value)
+					htmlNode.setAttribute("cid", cid)
+					attribute.value = PREVENT_EXTERNAL_IMAGE_LOADING_ICON
+					htmlNode.attributes.setNamedItem(attribute) // Persist the change to the element
+					htmlNode.style.maxWidth = "100px"
+					htmlNode.classList.add("tutanota-placeholder")
+				} else if (config.usePlaceholderForInlineImages && attribute.value.startsWith("cid:")) {
 					// replace embedded image with local image until the embedded image is loaded and ready to be shown.
 					const cid = attribute.value.substring(4)
 
@@ -390,6 +402,11 @@ export class HtmlSanitizer {
 					if (attribute.name === "draft-src") {
 						htmlNode.setAttribute("src", attribute.value)
 						htmlNode.removeAttribute(attribute.name)
+						// Collect CID for inline images when restoring
+						if (attribute.value.startsWith("cid:")) {
+							const cid = attribute.value.substring(4)
+							this.inlineImageCids.push(cid)
+						}
 					} else if (attribute.name === "draft-href" || attribute.name === "draft-xlink:href") {
 						const hrefTag = attribute.name === "draft-href" ? "href" : "xlink:href"
 						htmlNode.setAttribute(hrefTag, attribute.value)
@@ -559,3 +576,8 @@ function isTextElement(node: Node): node is Text {
 }
 
 export const htmlSanitizer: HtmlSanitizer = new HtmlSanitizer()
+
+/** @deprecated Use htmlSanitizer singleton directly instead */
+export function getHtmlSanitizer(): HtmlSanitizer {
+	return htmlSanitizer
+}

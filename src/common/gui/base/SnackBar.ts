@@ -1,5 +1,5 @@
 import m, { Component, Vnode } from "mithril"
-import { px, size } from "../size"
+import { layout_size, px, size } from "../size"
 import { DefaultAnimationTime } from "../animation/Animations"
 import { displayOverlay } from "./Overlay"
 import type { ButtonAttrs } from "./Button.js"
@@ -9,10 +9,12 @@ import { styles } from "../styles"
 import { LayerType } from "../../../RootView"
 import type { ClickHandler } from "./GuiUtils"
 import { assertMainOrNode } from "../../api/common/Env"
-import { debounce, isEmpty, remove } from "@tutao/tutanota-utils"
+import { isNotEmpty, remove } from "@tutao/tutanota-utils"
+import { IconButton, IconButtonAttrs } from "./IconButton"
 
 assertMainOrNode()
-const SNACKBAR_SHOW_TIME = 6000
+const SNACKBAR_SHOW_TIME = 6000 // ms
+const SNACKBAR_HIDE_DELAY_TIME = 1500 // ms
 const MAX_SNACKBAR_WIDTH = 400
 export type SnackBarButtonAttrs = {
 	label: MaybeTranslation
@@ -21,8 +23,10 @@ export type SnackBarButtonAttrs = {
 type SnackBarAttrs = {
 	message: MaybeTranslation
 	button: ButtonAttrs | null
+	dismissButton?: IconButtonAttrs
+	onHoverChange: (hovered: boolean) => void
 }
-type QueueItem = SnackBarAttrs & {
+type QueueItem = Omit<SnackBarAttrs, "onHoverChange"> & {
 	onClose: ((timedOut: boolean) => unknown) | null
 	onShow: (() => unknown) | null
 	doCancel: { cancel: () => unknown }
@@ -36,10 +40,23 @@ let cancelCurrentSnackbar: (() => unknown) | null = null
 class SnackBar implements Component<SnackBarAttrs> {
 	view(vnode: Vnode<SnackBarAttrs>) {
 		// use same padding as MinimizedEditor
-		return m(".snackbar-content.flex.flex-space-between.border-radius.plr.pb-xs.pt-xs", [
-			m(".flex.center-vertically.smaller", lang.getTranslationText(vnode.attrs.message)),
-			vnode.attrs.button ? m(".flex-end.center-vertically.pl", m(Button, vnode.attrs.button)) : null,
-		])
+		return m(
+			".snackbar-content.flex.flex-space-between.border-radius.pb-4.pt-4",
+			{
+				class: vnode.attrs.dismissButton ? "pl-12" : "plr-12",
+				onmouseenter: () => {
+					vnode.attrs.onHoverChange(true)
+				},
+				onmouseleave: () => {
+					vnode.attrs.onHoverChange(false)
+				},
+			},
+			[
+				m(".flex.center-vertically.smaller", lang.getTranslationText(vnode.attrs.message)),
+				vnode.attrs.button ? m(".flex-end.center-vertically.pl-12", m(Button, vnode.attrs.button)) : null,
+				vnode.attrs.dismissButton ? m(".flex.items-center.justify-right", [m(IconButton, vnode.attrs.dismissButton)]) : null,
+			],
+		)
 	}
 }
 
@@ -66,44 +83,48 @@ function makeButtonAttrsForSnackBar(button: SnackBarButtonAttrs): ButtonAttrs {
 export function showSnackBar(args: {
 	message: MaybeTranslation
 	button: SnackBarButtonAttrs
+	dismissButton?: IconButtonAttrs
 	onShow?: () => unknown
 	onClose?: (timedOut: boolean) => unknown
 	waitingTime?: number
 	showingTime?: number
 	replace?: boolean
 }): () => void {
-	const { message, button, onClose, onShow, waitingTime, showingTime = SNACKBAR_SHOW_TIME, replace = false } = args
+	const { message, button, dismissButton, onClose, onShow, waitingTime, showingTime = SNACKBAR_SHOW_TIME, replace = false } = args
 
-	let cancelled = false
 	const doCancel = {
+		/** cancel will be overwritten in {@link showNextNotification } once the snackbar  is shown */
 		cancel: () => {
 			remove(notificationQueue, queueEntry)
 		},
 	}
 
 	const buttonAttrs = makeButtonAttrsForSnackBar(button)
+
 	const queueEntry: QueueItem = {
 		message: message,
 		button: buttonAttrs,
+		dismissButton: dismissButton,
 		onClose: onClose ?? null,
 		onShow: onShow ?? null,
 		doCancel,
 		showingTime,
 	}
 
+	let currentSnackbarTimeout: TimeoutID | null = null
 	const cancelSnackbar = () => {
-		cancelled = true
+		if (currentSnackbarTimeout != null) {
+			// The Snackbar was cancelled before it was shown (triggerSnackbar not yet called)
+			clearTimeout(currentSnackbarTimeout)
+			currentSnackbarTimeout = null
+		}
 		doCancel.cancel()
 	}
 
 	const triggerSnackbar = () => {
-		if (cancelled) {
-			return
-		}
-
-		if (replace && !isEmpty(notificationQueue)) {
-			// there is currently a notification being displayed, so we should put this one ahead of it and then run its
-			// cancel function
+		if (replace && isNotEmpty(notificationQueue)) {
+			// there is currently a notification being displayed, so we should put this one after it and then run the
+			// currently displayed notification's cancel function
 			notificationQueue.splice(1, 0, queueEntry)
 			if (cancelCurrentSnackbar) {
 				cancelCurrentSnackbar()
@@ -121,7 +142,7 @@ export function showSnackBar(args: {
 	}
 
 	if (waitingTime) {
-		debounce(waitingTime, triggerSnackbar)()
+		currentSnackbarTimeout = setTimeout(triggerSnackbar, waitingTime)
 	} else {
 		triggerSnackbar()
 	}
@@ -131,8 +152,8 @@ export function showSnackBar(args: {
 
 function getSnackBarPosition() {
 	// The snackbar will be moved up from off the bottom of the viewport by the transformation animation.
-	const snackBarMargin = styles.isUsingBottomNavigation() ? size.hpad : size.hpad_medium
-	const leftOffset = styles.isDesktopLayout() ? size.drawer_menu_width : 0
+	const snackBarMargin = styles.isUsingBottomNavigation() ? size.spacing_12 : size.spacing_24
+	const leftOffset = styles.isDesktopLayout() ? layout_size.drawer_menu_width : 0
 	const snackBarWidth = Math.min(window.innerWidth - leftOffset - 2 * snackBarMargin, MAX_SNACKBAR_WIDTH)
 	return {
 		bottom: px(snackBarMargin),
@@ -144,9 +165,13 @@ function getSnackBarPosition() {
 }
 
 function showNextNotification() {
-	const { message, button, onClose, onShow, doCancel, showingTime } = notificationQueue[0] //we shift later because it is still shown
+	const { message, button, dismissButton, onClose, onShow, doCancel, showingTime } = notificationQueue[0] //we shift later because it is still shown
 	clearTimeout(currentAnimationTimeout)
 	currentAnimationTimeout = null
+
+	let hovered = false
+	let hoveredTimer: TimeoutID | null = null
+
 	const closeFunction = displayOverlay(
 		() => getSnackBarPosition(),
 		{
@@ -154,6 +179,10 @@ function showNextNotification() {
 				m(SnackBar, {
 					message,
 					button,
+					dismissButton: dismissButton,
+					onHoverChange: (isHovered) => {
+						hovered = isHovered
+					},
 				}),
 		},
 		"slide-bottom",
@@ -164,6 +193,11 @@ function showNextNotification() {
 	let closed = false
 
 	const closeAndOpenNext = (timedOut: boolean) => {
+		if (timedOut && hovered) {
+			hoveredTimer = setTimeout(closeAndOpenNext, SNACKBAR_HIDE_DELAY_TIME, true)
+			return
+		}
+
 		closed = true
 		cancelCurrentSnackbar = null
 
@@ -187,6 +221,7 @@ function showNextNotification() {
 		const originClickHandler: ClickHandler | undefined = button.click
 
 		button.click = (e, dom) => {
+			clearTimeout(hoveredTimer)
 			clearTimeout(autoRemoveTimer)
 			originClickHandler?.(e, dom)
 			closeAndOpenNext(false)
@@ -197,6 +232,7 @@ function showNextNotification() {
 	doCancel.cancel = () => {
 		if (!closed) {
 			closed = true
+			clearTimeout(hoveredTimer)
 			clearTimeout(autoRemoveTimer)
 			closeAndOpenNext(false)
 		}

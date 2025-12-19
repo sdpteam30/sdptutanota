@@ -32,8 +32,8 @@ import { IconButton, IconButtonAttrs } from "../../../common/gui/base/IconButton
 import { TEMPLATE_LIST_ENTRY_WIDTH, TEMPLATE_POPUP_HEIGHT, TEMPLATE_POPUP_TWO_COLUMN_MIN_WIDTH } from "./TemplateConstants.js"
 
 /**
- *	Creates a Modal/Popup that allows user to paste templates directly into the MailEditor.
- *	Also allows user to change desired language when pasting.
+ *    Creates a Modal/Popup that allows user to paste templates directly into the MailEditor.
+ *    Also allows user to change desired language when pasting.
  */
 export function showTemplatePopupInEditor(templateModel: TemplatePopupModel, editor: Editor, template: EmailTemplate | null, highlightedText: string) {
 	const initialSearchString = template ? TEMPLATE_SHORTCUT_PREFIX + template.tag : highlightedText
@@ -189,9 +189,9 @@ export class TemplatePopup implements ModalComponent {
 			},
 			[
 				this._renderHeader(),
-				m(".flex.flex-grow.scroll.mb-s", [
+				m(".flex.flex-grow.scroll.mb-8", [
 					m(
-						".flex.flex-column.scroll" + (showTwoColumns ? ".pr" : ""),
+						".flex.flex-column.scroll" + (showTwoColumns ? ".pr-12" : ""),
 						{
 							style: {
 								flex: "1 1 40%",
@@ -218,7 +218,7 @@ export class TemplatePopup implements ModalComponent {
 	_renderHeader(): Children {
 		const selectedTemplate = this._templateModel.getSelectedTemplate()
 
-		return m(".flex-space-between.center-vertically.pl.pr-s", [
+		return m(".flex-space-between.center-vertically.pl-12.pr-4", [
 			m(".flex-start", [m(".flex.center-vertically", this._renderSearchBar()), this._renderAddButton()]),
 			m(".flex-end", [
 				selectedTemplate
@@ -308,7 +308,10 @@ export class TemplatePopup implements ModalComponent {
 				childAttrs: () =>
 					writeableGroups.map((groupInstances) => {
 						return {
-							label: lang.makeTranslation("group_name", getSharedGroupName(groupInstances.groupInfo, locator.logins.getUserController(), true)),
+							label: lang.makeTranslation(
+								"group_name",
+								getSharedGroupName(groupInstances.groupInfo, locator.logins.getUserController().userSettingsGroupRoot, true),
+							),
 							click: () => this.showTemplateEditor(null, groupInstances.groupRoot),
 						}
 					}),
@@ -325,7 +328,7 @@ export class TemplatePopup implements ModalComponent {
 
 		const canEdit = !!selectedGroup && hasCapabilityOnGroup(locator.logins.getUserController().user, selectedGroup.group, ShareCapability.Write)
 		return [
-			m(".flex.flex-column.justify-center.mr-m", selectedContent ? m("", lang.get(languageByCode[selectedContent.languageCode].textId)) : ""),
+			m(".flex.flex-column.justify-center.mr-24", selectedContent ? m("", lang.get(languageByCode[selectedContent.languageCode].textId)) : ""),
 			m(
 				IconButton,
 				attachDropdown({
@@ -368,7 +371,7 @@ export class TemplatePopup implements ModalComponent {
 						}),
 					]
 				: null,
-			m(".pr-s", m(".nav-bar-spacer")),
+			m(".pr-4", m(".nav-bar-spacer")),
 			m(
 				"",
 				{

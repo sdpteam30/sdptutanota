@@ -2,15 +2,9 @@ import { ListElementListModel } from "../../../common/misc/ListElementListModel.
 import { SearchResultListEntry } from "./SearchListView.js"
 import { SearchRestriction, SearchResult } from "../../../common/api/worker/search/SearchTypes.js"
 import { EntityEventsListener, EventController } from "../../../common/api/main/EventController.js"
-import { CalendarEvent, CalendarEventTypeRef, Contact, ContactTypeRef, Mail, MailFolder, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs.js"
+import { CalendarEvent, CalendarEventTypeRef, Contact, ContactTypeRef, Mail, MailSet, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { ListElementEntity } from "../../../common/api/common/EntityTypes.js"
-import {
-	CLIENT_ONLY_CALENDARS,
-	FULL_INDEXED_TIMESTAMP,
-	MailSetKind,
-	NOTHING_INDEXED_TIMESTAMP,
-	OperationType,
-} from "../../../common/api/common/TutanotaConstants.js"
+import { FULL_INDEXED_TIMESTAMP, MailSetKind, NOTHING_INDEXED_TIMESTAMP, OperationType } from "../../../common/api/common/TutanotaConstants.js"
 import {
 	assertIsEntity,
 	assertIsEntity2,
@@ -25,6 +19,7 @@ import {
 import { ListLoadingState, ListState } from "../../../common/gui/base/List.js"
 import {
 	assertNotNull,
+	collectToMap,
 	deepEqual,
 	defer,
 	downcast,
@@ -33,12 +28,13 @@ import {
 	incrementMonth,
 	isSameDayOfDate,
 	isSameTypeRef,
-	LazyLoaded,
+	mapAndFilterNull,
 	memoizedWithHiddenArgument,
 	neverNull,
 	ofClass,
 	stringToBase64,
 	TypeRef,
+	YEAR_IN_MILLIS,
 } from "@tutao/tutanota-utils"
 import { areResultsForTheSameQuery, hasMoreResults, isSameSearchRestriction, SearchModel } from "../model/SearchModel.js"
 import { NotFoundError } from "../../../common/api/common/error/RestError.js"
@@ -60,29 +56,23 @@ import { EntityClient, loadMultipleFromLists } from "../../../common/api/common/
 import { SearchRouter } from "../../../common/search/view/SearchRouter.js"
 import { MailOpenedListener } from "../../mail/view/MailViewModel.js"
 import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js"
-import { CalendarInfo } from "../../../calendar-app/calendar/model/CalendarModel.js"
-import { locator } from "../../../common/api/main/CommonLocator.js"
-import m from "mithril"
+import { CalendarInfoBase, CalendarModel, isBirthdayCalendarInfo, isCalendarInfo } from "../../../calendar-app/calendar/model/CalendarModel.js"
 import { CalendarFacade } from "../../../common/api/worker/facades/lazy/CalendarFacade.js"
 import { ProgrammingError } from "../../../common/api/common/error/ProgrammingError.js"
 import { ProgressTracker } from "../../../common/api/main/ProgressTracker.js"
-import { ClientOnlyCalendarsInfo, ListAutoSelectBehavior } from "../../../common/misc/DeviceConfig.js"
-import { generateCalendarInstancesInRange, retrieveClientOnlyEventsForUser } from "../../../common/calendar/date/CalendarUtils.js"
+import { ListAutoSelectBehavior } from "../../../common/misc/DeviceConfig.js"
+import { generateCalendarInstancesInRange, isBirthdayCalendar, retrieveBirthdayEventsForUser } from "../../../common/calendar/date/CalendarUtils.js"
 import { mailLocator } from "../../mailLocator.js"
 import { getMailFilterForType, MailFilterType } from "../../mail/view/MailViewerUtils.js"
 import { CalendarEventsRepository } from "../../../common/calendar/date/CalendarEventsRepository.js"
-import { getClientOnlyCalendars } from "../../../calendar-app/calendar/gui/CalendarGuiUtils.js"
-import { YEAR_IN_MILLIS } from "@tutao/tutanota-utils/dist/DateUtils.js"
 import { ListFilter } from "../../../common/misc/ListModel"
 import { client } from "../../../common/misc/ClientDetector"
 import { OfflineStorageSettingsModel } from "../../../common/offline/OfflineStorageSettingsModel"
 import { getStartOfTheWeekOffsetForUser } from "../../../common/misc/weekOffset"
 import { Indexer } from "../../workerUtils/index/Indexer"
 import { SearchFacade } from "../../workerUtils/index/SearchFacade"
-import { compareMails } from "../../mail/model/MailUtils"
 import { isOfflineStorageAvailable } from "../../../common/api/common/Env"
 import { SearchToken } from "../../../common/api/common/utils/QueryTokenUtils"
-import { getSharedGroupName } from "../../../common/sharing/GroupUtils"
 
 const SEARCH_PAGE_SIZE = 100
 
@@ -124,7 +114,7 @@ export class SearchViewModel {
 	 * result might be nonexistent if there is no query or we're not done searching
 	 * yet.
 	 */
-	get searchedType(): TypeRef<Mail> | TypeRef<Contact> | TypeRef<CalendarEvent> {
+	get searchedType(): TypeRef<Mail | Contact | CalendarEvent> {
 		return (this.searchResult?.restriction ?? this.router.getRestriction()).type
 	}
 
@@ -159,20 +149,20 @@ export class SearchViewModel {
 	}
 
 	// isn't an IdTuple because it is two list ids
-	private _selectedCalendar: readonly [Id, Id] | string | null = null
-	get selectedCalendar(): CalendarInfo | string | null {
-		const calendars = this.getAvailableCalendars()
-		return (
-			calendars.find((calendar) => {
-				if (typeof calendar.info === "string") {
-					return calendar.info === this._selectedCalendar
+	private _selectedCalendar: readonly [Id, Id] | Id | null = null // [longListId, shorListId] || birthDay_calendar_id | null
+	get selectedCalendar(): CalendarInfoBase | null {
+		const calendars = this.getAvailableCalendars(true)
+		const selectedCalendar =
+			calendars.find((calendarInfo) => {
+				if (isBirthdayCalendarInfo(calendarInfo)) {
+					return calendarInfo.id === this._selectedCalendar
 				}
-
-				// It isn't a string, so it can be only a Calendar Info
-				const calendarValue = calendar.info
-				return isSameId([calendarValue.groupRoot.longEvents, calendarValue.groupRoot.shortEvents], this._selectedCalendar)
-			})?.info ?? null
-		)
+				if (isCalendarInfo(calendarInfo)) {
+					const groupRoot = calendarInfo.groupRoot
+					return isSameId([groupRoot.longEvents, groupRoot.shortEvents], this._selectedCalendar)
+				}
+			}) ?? null
+		return selectedCalendar
 	}
 
 	private _mailboxes: MailboxDetail[] = []
@@ -187,7 +177,25 @@ export class SearchViewModel {
 
 	// Contains load more results even when searchModel doesn't.
 	// Load more should probably be moved to the model to update it's result stream.
-	private searchResult: SearchResult | null = null
+	private _searchResult: SearchResult | null = null
+	private searchResultIdToIndex: Map<Id, number> | null = null
+
+	private set searchResult(what: SearchResult | null) {
+		this._searchResult = what
+		if (this._searchResult == null) {
+			this.searchResultIdToIndex = null
+		} else if (isOfflineStorageAvailable()) {
+			this.searchResultIdToIndex = new Map()
+			for (let i = 0; i < this._searchResult.results.length; i++) {
+				this.searchResultIdToIndex.set(elementIdPart(this._searchResult.results[i]), i)
+			}
+		}
+	}
+
+	private get searchResult(): SearchResult | null {
+		return this._searchResult
+	}
+
 	private mailFilterType: ReadonlySet<MailFilterType> = new Set()
 	private latestMailRestriction: SearchRestriction | null = null
 	private latestCalendarRestriction: SearchRestriction | null = null
@@ -195,16 +203,6 @@ export class SearchViewModel {
 	private resultSubscription: Stream<void> | null = null
 	private listStateSubscription: Stream<unknown> | null = null
 	loadingAllForSearchResult: SearchResult | null = null
-	private readonly lazyCalendarInfos: LazyLoaded<ReadonlyMap<string, CalendarInfo>> = new LazyLoaded(async () => {
-		const calendarModel = await locator.calendarModel()
-		const calendarInfos = await calendarModel.getCalendarInfos()
-		m.redraw()
-		return calendarInfos
-	})
-
-	private readonly userHasNewPaidPlan: LazyLoaded<boolean> = new LazyLoaded<boolean>(async () => {
-		return await this.logins.getUserController().isNewPaidPlan()
-	})
 
 	private currentQuery: string = ""
 
@@ -225,47 +223,13 @@ export class SearchViewModel {
 		private readonly progressTracker: ProgressTracker,
 		private readonly conversationViewModelFactory: ConversationViewModelFactory | null,
 		private readonly eventsRepository: CalendarEventsRepository,
+		private readonly calendarModel: CalendarModel,
 		private readonly updateUi: () => unknown,
 		private readonly selectionBehavior: ListAutoSelectBehavior,
-		private readonly localCalendars: Map<Id, ClientOnlyCalendarsInfo>,
 		private readonly offlineStorageSettings: OfflineStorageSettingsModel | null,
 	) {
 		this.currentQuery = this.search.result()?.query ?? ""
 		this._listModel = this.createList()
-	}
-
-	getLazyCalendarInfos() {
-		return this.lazyCalendarInfos
-	}
-
-	getAvailableCalendars(): Array<{ info: CalendarInfo | string; name: string }> {
-		if (this.getLazyCalendarInfos().isLoaded() && this.getUserHasNewPaidPlan().isLoaded()) {
-			// Load user's calendar list
-			const items: {
-				info: CalendarInfo | string
-				name: string
-			}[] = Array.from(this.getLazyCalendarInfos().getLoaded().values()).map((ci) => ({
-				info: ci,
-				name: getSharedGroupName(ci.groupInfo, locator.logins.getUserController(), true),
-			}))
-
-			if (this.getUserHasNewPaidPlan().getSync()) {
-				const localCalendars = this.getLocalCalendars().map((cal) => ({
-					info: cal.id,
-					name: cal.name,
-				}))
-
-				items.push(...localCalendars)
-			}
-
-			return items
-		} else {
-			return []
-		}
-	}
-
-	getUserHasNewPaidPlan() {
-		return this.userHasNewPaidPlan
 	}
 
 	async init(extendIndexConfirmationCallback: SearchViewModel["extendIndexConfirmationCallback"]) {
@@ -381,24 +345,19 @@ export class SearchViewModel {
 				this._startDate = restriction.start ? new Date(restriction.start) : null
 				this._endDate = restriction.end ? new Date(restriction.end) : null
 				this._includeRepeatingEvents = restriction.eventSeries ?? true
-				this.lazyCalendarInfos.load()
-				this.userHasNewPaidPlan.load()
 				this.latestCalendarRestriction = restriction
 
-				// Check if user is trying to search in a client only calendar while using a free account
-				const selectedCalendar = this.extractCalendarListIds(restriction.folderIds)
-				if (!selectedCalendar || Array.isArray(selectedCalendar)) {
-					this._selectedCalendar = selectedCalendar
-				} else if (CLIENT_ONLY_CALENDARS.has(selectedCalendar.toString())) {
-					this.getUserHasNewPaidPlan()
-						.getAsync()
-						.then((isNewPaidPlan) => {
-							if (!isNewPaidPlan) {
-								return (this._selectedCalendar = null)
-							}
-
-							this._selectedCalendar = selectedCalendar
-						})
+				// Check if user is trying to search in a birthday calendar while using a free account
+				const listIdsOrBirthdayCalendarId = this.extractCalendarListIds(restriction.folderIds)
+				if (!listIdsOrBirthdayCalendarId || Array.isArray(listIdsOrBirthdayCalendarId)) {
+					this._selectedCalendar = listIdsOrBirthdayCalendarId
+				} else if (isBirthdayCalendar(listIdsOrBirthdayCalendarId.toString())) {
+					const availableCalendars = this.getAvailableCalendars(true)
+					if (availableCalendars.some(isBirthdayCalendarInfo)) {
+						this._selectedCalendar = listIdsOrBirthdayCalendarId
+					}
+					this._selectedCalendar = null
+					return
 				}
 
 				if (args.id != null) {
@@ -567,10 +526,12 @@ export class SearchViewModel {
 		return PaidFunctionResult.Success
 	}
 
-	selectCalendar(calendarInfo: CalendarInfo | string | null) {
-		if (typeof calendarInfo === "string" || calendarInfo == null) {
-			this._selectedCalendar = calendarInfo
-		} else {
+	selectCalendar(calendarInfo: CalendarInfoBase | null) {
+		if (!calendarInfo) {
+			this._selectedCalendar = null
+		} else if (isBirthdayCalendarInfo(calendarInfo)) {
+			this._selectedCalendar = calendarInfo.id
+		} else if (isCalendarInfo(calendarInfo)) {
 			this._selectedCalendar = [calendarInfo.groupRoot.longEvents, calendarInfo.groupRoot.shortEvents]
 		}
 		this.searchAgain()
@@ -694,13 +655,14 @@ export class SearchViewModel {
 	}
 
 	private getCalendarLists(): string[] {
-		if (typeof this.selectedCalendar === "string") {
-			return [this.selectedCalendar]
-		} else if (this.selectedCalendar != null) {
-			const calendarInfo = this.selectedCalendar
-			return [calendarInfo.groupRoot.longEvents, calendarInfo.groupRoot.shortEvents]
+		const selectedCalendar = this.selectedCalendar
+		if (!selectedCalendar) {
+			return []
+		} else if (isBirthdayCalendarInfo(selectedCalendar)) {
+			return [this.selectedCalendar.id]
+		} else if (isCalendarInfo(selectedCalendar)) {
+			return [selectedCalendar.groupRoot.longEvents, selectedCalendar.groupRoot.shortEvents]
 		}
-
 		return []
 	}
 
@@ -747,15 +709,15 @@ export class SearchViewModel {
 		}
 	}
 
-	private isPossibleABirthdayContactUpdate(update: EntityUpdateData): boolean {
+	private isPossibleABirthdayContactUpdate(update: EntityUpdateData): update is EntityUpdateData<Contact> {
 		if (isUpdateForTypeRef(ContactTypeRef, update) && isSameTypeRef(this.searchedType, CalendarEventTypeRef)) {
 			const { instanceListId, instanceId } = update
 			const encodedContactId = stringToBase64(`${instanceListId}/${instanceId}`)
 
 			return this.listModel.stateStream().items.some((searchEntry) => searchEntry._id[1].endsWith(encodedContactId))
+		} else {
+			return false
 		}
-
-		return false
 	}
 
 	private isSelectedEventAnUpdatedBirthday(update: EntityUpdateData): boolean {
@@ -775,7 +737,7 @@ export class SearchViewModel {
 	}
 
 	private async entityEventReceived(update: EntityUpdateData): Promise<void> {
-		const lastType = this.searchedType
+		const lastType: TypeRef<Mail | CalendarEvent | Contact> = this.searchedType
 		const isPossibleABirthdayContactUpdate = this.isPossibleABirthdayContactUpdate(update)
 
 		if (!isUpdateForTypeRef(lastType, update) && !isPossibleABirthdayContactUpdate) {
@@ -976,14 +938,24 @@ export class SearchViewModel {
 				} else if (isSameTypeRef(o1.entry._type, CalendarEventTypeRef)) {
 					return downcast(o1.entry).startTime.getTime() - downcast(o2.entry).startTime.getTime()
 				} else if (isSameTypeRef(o1.entry._type, MailTypeRef)) {
-					// Ideally we would not need to do this check here, however we can only safely sort by received date
-					// on SQLite results, as we get all results upfront.
-					//
-					// IndexedDb only loads a small amount of results at once, expanding the results as we scroll
-					// through the list, and since it's loaded by ID range, results can jump around mid-scroll.
 					if (isOfflineStorageAvailable()) {
-						return compareMails(downcast(o1.entry), downcast(o2.entry))
+						if (this.searchResultIdToIndex == null) {
+							return 0
+						}
+
+						// SQLite results are already sorted, thus we don't need to do any further sorting here (and we
+						// want to avoid changing sort order anyway)
+						const resultA = this.searchResultIdToIndex.get(getElementId(o1.entry))
+						const resultB = this.searchResultIdToIndex.get(getElementId(o2.entry))
+
+						if (resultA == null || resultB == null) {
+							return sortCompareByReverseId(o1.entry, o2.entry)
+						}
+
+						return resultA - resultB
 					} else {
+						// IndexedDb only loads a small amount of results at once, expanding the results as we scroll
+						// through the list, and since it's loaded by ID range, results can jump around mid-scroll.
 						return sortCompareByReverseId(o1.entry, o2.entry)
 					}
 				} else {
@@ -1027,8 +999,14 @@ export class SearchViewModel {
 			let startIndex = 0
 
 			if (startId !== GENERATED_MAX_ID) {
-				// this relies on the results being sorted from newest to oldest ID
-				startIndex = updatedResult.results.findIndex((id) => id[1] <= startId)
+				if (isOfflineStorageAvailable()) {
+					// offline storage is always sorted correctly
+					startIndex = updatedResult.results.findIndex((id) => id[1] === startId)
+				} else {
+					// this relies on the results being sorted from newest to oldest ID
+					startIndex = updatedResult.results.findIndex((id) => id[1] <= startId)
+				}
+
 				if (elementIdPart(updatedResult.results[startIndex]) === startId) {
 					// the start element is already loaded, so we exclude it from the next load
 					startIndex++
@@ -1041,7 +1019,13 @@ export class SearchViewModel {
 
 			// Ignore count when slicing here because we would have to modify SearchResult too
 			const toLoad = updatedResult.results.slice(startIndex)
-			items = await this.loadAndFilterInstances(currentResult.restriction.type, toLoad, updatedResult, startIndex)
+			items = (await this.loadAndFilterInstances(currentResult.restriction.type, toLoad, updatedResult, startIndex)) as Mail[]
+
+			// Restore the original sorting order
+			if (isOfflineStorageAvailable()) {
+				const itemsMapped = collectToMap(items, getElementId)
+				items = mapAndFilterNull(updatedResult.results, (id) => itemsMapped.get(elementIdPart(id)))
+			}
 		} else if (isSameTypeRef(currentResult.restriction.type, ContactTypeRef)) {
 			try {
 				// load all contacts to sort them by name afterwards
@@ -1071,8 +1055,16 @@ export class SearchViewModel {
 	}
 
 	private async getClientOnlyEventsSeries(start: number, end: number, events: IdTuple[]) {
-		const eventList = await retrieveClientOnlyEventsForUser(this.logins, events, this.eventsRepository.getBirthdayEvents())
+		const eventList = await retrieveBirthdayEventsForUser(this.logins, events, this.eventsRepository.getBirthdayEvents())
 		return generateCalendarInstancesInRange(eventList, { start, end })
+	}
+
+	getAvailableCalendars(includesBirthday: boolean): ReadonlyArray<CalendarInfoBase> {
+		return this.calendarModel.getAvailableCalendars(includesBirthday)
+	}
+
+	loadCalendarInfos() {
+		return this.calendarModel.getCalendarInfos()
 	}
 
 	/**
@@ -1114,10 +1106,6 @@ export class SearchViewModel {
 		this.search.sendCancelSignal()
 	}
 
-	getLocalCalendars() {
-		return getClientOnlyCalendars(this.logins.getUserController().userId, this.localCalendars)
-	}
-
 	dispose() {
 		this.stopLoadAll()
 		this.extendIndexConfirmationCallback = null
@@ -1131,7 +1119,7 @@ export class SearchViewModel {
 		this.eventController.removeEntityListener(this.entityEventsListener)
 	}
 
-	getLabelsForMail(mail: Mail): MailFolder[] {
+	getLabelsForMail(mail: Mail): MailSet[] {
 		return mailLocator.mailModel.getLabelsForMail(mail)
 	}
 }

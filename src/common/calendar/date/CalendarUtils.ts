@@ -20,14 +20,7 @@ import {
 	neverNull,
 	TIMESTAMP_ZERO_YEAR,
 } from "@tutao/tutanota-utils"
-import {
-	CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID,
-	CLIENT_ONLY_CALENDARS,
-	EndType,
-	EventTextTimeOption,
-	RepeatPeriod,
-	TimeFormat,
-} from "../../api/common/TutanotaConstants"
+import { BIRTHDAY_CALENDAR_BASE_ID, EndType, EventTextTimeOption, RepeatPeriod } from "../../api/common/TutanotaConstants"
 import { DateTime, DurationLikeObject, FixedOffsetZone, IANAZone, MonthNumbers, WeekdayNumbers } from "luxon"
 import {
 	AdvancedRepeatRule,
@@ -38,12 +31,11 @@ import {
 	createCalendarEvent,
 	createCalendarRepeatRule,
 	GroupSettings,
-	UserSettingsGroupRoot,
 } from "../../api/entities/tutanota/TypeRefs.js"
 import { CalendarEventTimes, DAYS_SHIFTED_MS, generateEventElementId, isAllDayEvent, isAllDayEventByTimes } from "../../api/common/utils/CommonCalendarUtils"
-import { CalendarAdvancedRepeatRule, createDateWrapper, DateWrapper, GroupInfo, RepeatRule, User } from "../../api/entities/sys/TypeRefs.js"
+import { CalendarAdvancedRepeatRule, createDateWrapper, DateWrapper, RepeatRule, User } from "../../api/entities/sys/TypeRefs.js"
 import { isSameId, StrippedEntity } from "../../api/common/utils/EntityUtils"
-import type { Time } from "./Time.js"
+import { Time } from "./Time.js"
 import { CalendarInfo } from "../../../calendar-app/calendar/model/CalendarModel"
 import { DateProvider } from "../../api/common/DateProvider"
 import { EntityClient } from "../../api/common/EntityClient.js"
@@ -52,6 +44,10 @@ import { ParserError } from "../../misc/parsing/ParserCombinator.js"
 import { LoginController } from "../../api/main/LoginController.js"
 import { BirthdayEventRegistry } from "./CalendarEventsRepository.js"
 import type { TranslationKey } from "../../misc/LanguageViewModel.js"
+import { isoDateToBirthday } from "../../api/common/utils/BirthdayUtils"
+import { EventWrapper, type EventWrapperFlags } from "../../../calendar-app/calendar/view/CalendarViewModel.js"
+import { AllIcons } from "../../gui/base/Icon"
+import { Icons } from "../../gui/base/icons/Icons"
 
 export type CalendarTimeRange = {
 	start: number
@@ -60,6 +56,10 @@ export type CalendarTimeRange = {
 
 export function eventStartsBefore(currentDate: Date, zone: string, event: CalendarEvent): boolean {
 	return getEventStart(event, zone).getTime() < currentDate.getTime()
+}
+
+export function eventStartsBeforeDay(currentDate: Date, zone: string, event: CalendarEvent): boolean {
+	return getEventStart(event, zone).getTime() < getStartOfDayWithZone(currentDate, zone).getTime()
 }
 
 export function eventEndsBefore(date: Date, zone: string, event: CalendarEvent): boolean {
@@ -83,7 +83,7 @@ export function generateUid(groupId: Id, timestamp: number): string {
 }
 
 export function isBirthdayEvent(uid?: string | null) {
-	return uid?.includes(CLIENT_ONLY_CALENDAR_BIRTHDAYS_BASE_ID) ?? false
+	return uid?.includes(BIRTHDAY_CALENDAR_BASE_ID) ?? false
 }
 
 /** get the timestamps of the start date and end date of the month the given date is in. */
@@ -153,6 +153,21 @@ export function getStartOfNextDayWithZone(date: Date, zone: string): Date {
 			millisecond: 0,
 		})
 		.plus({ day: 1 })
+		.toJSDate()
+}
+
+/** @param date a date object representing some time on some calendar date (like 1st of May 2023) in {@param zone}
+ * @param zone the time zone for which to calculate the calendar date that {@param date} represents
+ * @returns a date object representing the start of the previous calendar date (30nd of April 2023 00:00) in {@param zone} */
+export function getStartOfPreviousDayWithZone(date: Date, zone: string): Date {
+	return DateTime.fromJSDate(date, { zone })
+		.set({
+			hour: 0,
+			minute: 0,
+			second: 0,
+			millisecond: 0,
+		})
+		.minus({ day: 1 })
 		.toJSDate()
 }
 
@@ -327,6 +342,7 @@ function expandByDayRuleForAnnuallyEvents(
 	date: DateTime,
 	newDates: DateTime[],
 	wkst: WeekdayNumbers,
+	hasByMonthRule: boolean | undefined,
 ) {
 	const weekChangeValue = leadingValue ?? 0
 	if (hasWeekNo && weekChangeValue !== 0) {
@@ -351,14 +367,39 @@ function expandByDayRuleForAnnuallyEvents(
 				newDates.push(dt)
 			}
 		} else {
-			// There's a target week day so the occurrenceNumber indicates the week of the year
+			// There's a target week day so the weekChangeValue indicates the week of the year
 			// that the event will happen
-			const absWeeks = weekChangeValue > 0 ? weekChangeValue : Math.ceil(date.daysInMonth! / 7) - Math.abs(weekChangeValue) + 1
+			let dt = date
+			if (!hasByMonthRule) {
+				if (weekChangeValue > 0) {
+					dt = date.set({ day: 1, month: 1 }).plus({ week: weekChangeValue - 1 })
 
-			const dt = date.set({ day: 1 }).set({ weekday: targetWeekDay }).plus({ week: absWeeks })
-			if (dt.toMillis() >= date.toMillis()) {
-				newDates.push(dt)
+					while (date.weekday !== targetWeekDay) {
+						dt = dt.plus({ day: 1 })
+					}
+				} else {
+					dt = date.set({ day: 31, month: 12 }).minus({ week: weekChangeValue - 1 })
+
+					while (date.weekday !== targetWeekDay) {
+						dt = dt.minus({ day: 1 })
+					}
+				}
+			} else {
+				// There's a target week day and a byMonthRule so the weekChangeValue indicates the week within the month
+				const absWeeks = weekChangeValue > 0 ? weekChangeValue : Math.ceil(date.daysInMonth! / 7) - Math.abs(weekChangeValue) + 1
+
+				dt = date.set({ day: 1 })
+				let weekCount = dt.weekday === targetWeekDay ? 1 : 0
+
+				while (weekCount < absWeeks) {
+					dt = dt.plus({ day: 1 })
+					if (dt.weekday === targetWeekDay) {
+						weekCount++
+					}
+				}
 			}
+
+			newDates.push(dt)
 		}
 	} else if (hasWeekNo) {
 		if (!targetWeekDay) {
@@ -405,6 +446,7 @@ function applyByDayRules(
 	hasWeekNo?: boolean,
 	monthDays?: number[],
 	yearDays?: number[],
+	hasByMonthRules?: boolean,
 ) {
 	if (parsedRules.length === 0) {
 		return dates
@@ -442,7 +484,7 @@ function applyByDayRules(
 			} else if (frequency === RepeatPeriod.MONTHLY) {
 				expandByDayRuleForMonthlyEvents(targetWeekDay, leadingValue, date, monthDays, newDates, validMonths)
 			} else if (frequency === RepeatPeriod.ANNUALLY) {
-				expandByDayRuleForAnnuallyEvents(leadingValue, hasWeekNo, targetWeekDay, date, newDates, wkst)
+				expandByDayRuleForAnnuallyEvents(leadingValue, hasWeekNo, targetWeekDay, date, newDates, wkst, hasByMonthRules)
 			}
 		}
 	}
@@ -605,11 +647,9 @@ function applyWeekNo(dates: DateTime[], parsedRules: CalendarAdvancedRepeatRule[
 				// Also, it starts expanding for next week when the offset is -50?
 				// Is that a problem for negative only?
 				// newDt = date.set({ weekNumber: date.weeksInWeekYear - Math.abs(parsedWeekNumber) + 1 })
-				console.log("Negative weeknumber ", { parsedWeekNumber, newDt })
 			} else {
 				newDt = date.set({ weekNumber: parsedWeekNumber })
 				weekNumber = parsedWeekNumber
-				console.log("Postive weeknumber ", { parsedWeekNumber, newDt })
 			}
 
 			const yearOffset = newDt.toMillis() < date.toMillis() ? 1 : 0
@@ -805,11 +845,6 @@ export function getRangeOfDays(startDay: Date, numDays: number): Array<Date> {
 	return days
 }
 
-export function getTimeFormatForUser(userSettingsGroupRoot: UserSettingsGroupRoot): TimeFormat {
-	// it's saved as a string, but is a const enum.
-	return userSettingsGroupRoot.timeFormat as TimeFormat
-}
-
 export function getWeekNumber(startOfTheWeek: Date): number {
 	// Currently it doesn't support US-based week numbering system with partial weeks.
 	return DateTime.fromJSDate(startOfTheWeek).weekNumber
@@ -864,10 +899,10 @@ export function assignEventId(event: CalendarEvent, zone: string, groupRoot: Cal
 }
 
 /** predicate that tells us if two CalendarEvent objects refer to the same instance or different ones.*/
-export function isSameEventInstance(left: Pick<CalendarEvent, "_id" | "startTime">, right: Pick<CalendarEvent, "_id" | "startTime">): boolean {
+export function isSameEventInstance(left: EventWrapper, right: EventWrapper): boolean {
 	// in addition to the id we compare the start time equality to be able to distinguish repeating events. They have the same id but different start time.
 	// altered events with recurrenceId never have the same Id as another event instance, but might start at the same time.
-	return isSameId(left._id, right._id) && left.startTime.getTime() === right.startTime.getTime()
+	return isSameId(left.event._id, right.event._id) && left.event.startTime.getTime() === right.event.startTime.getTime()
 }
 
 export function hasAlarmsForTheUser(user: User, event: CalendarEvent): boolean {
@@ -875,8 +910,8 @@ export function hasAlarmsForTheUser(user: User, event: CalendarEvent): boolean {
 	return event.alarmInfos.some(([listId]) => isSameId(listId, useAlarmList))
 }
 
-export function eventComparator(l: CalendarEvent, r: CalendarEvent): number {
-	return l.startTime.getTime() - r.startTime.getTime()
+export function eventComparator(l: EventWrapper, r: EventWrapper): number {
+	return l.event.startTime.getTime() - r.event.startTime.getTime()
 }
 
 function assertDateIsValid(date: Date) {
@@ -921,13 +956,13 @@ const MAX_EVENT_ITERATIONS = 10000
  *
  * ignores repeat rules.
  * @param daysToEvents
- * @param event
+ * @param eventWrapper
  * @param range
  * @param zone
  */
-export function addDaysForEventInstance(daysToEvents: Map<number, Array<CalendarEvent>>, event: CalendarEvent, range: CalendarTimeRange, zone: string) {
+export function addDaysForEventInstance(daysToEvents: Map<number, Array<EventWrapper>>, eventWrapper: EventWrapper, range: CalendarTimeRange, zone: string) {
 	const { start: rangeStart, end: rangeEnd } = range
-	const clippedRange = clipRanges(getEventStart(event, zone).getTime(), getEventEnd(event, zone).getTime(), rangeStart, rangeEnd)
+	const clippedRange = clipRanges(getEventStart(eventWrapper.event, zone).getTime(), getEventEnd(eventWrapper.event, zone).getTime(), rangeStart, rangeEnd)
 	// the event and range do not intersect
 	if (clippedRange == null) return
 	const { start: eventStartInRange, end: eventEndInRange } = clippedRange
@@ -940,13 +975,10 @@ export function addDaysForEventInstance(daysToEvents: Map<number, Array<Calendar
 		assert(iterations <= MAX_EVENT_ITERATIONS, "Run into the infinite loop, addDaysForEvent")
 		if (calculationTime < eventEndInRange) {
 			const eventsForCalculationDate = getFromMap(daysToEvents, calculationTime, () => [])
-			insertIntoSortedArray(event, eventsForCalculationDate, eventComparator, isSameEventInstance)
+			insertIntoSortedArray(eventWrapper, eventsForCalculationDate, eventComparator, isSameEventInstance)
 		} else {
 			// If the duration of the original event instance was reduced, we also have to delete the remaining days of the previous event instance.
-			const removed = findAllAndRemove(
-				getFromMap(daysToEvents, calculationTime, () => []),
-				(e) => isSameEventInstance(e, event),
-			)
+			const removed = findAllAndRemove(daysToEvents.get(calculationTime) ?? [], (e) => isSameEventInstance(e, eventWrapper))
 			if (!removed) {
 				// no further days this event instance occurred on
 				break
@@ -1024,21 +1056,21 @@ function filterEventOccurancesBySetPos(posRulesValues: string[], frequency: Repe
  * @param timeZone
  */
 export function addDaysForRecurringEvent(
-	daysToEvents: Map<number, Array<CalendarEvent>>,
-	event: CalendarEvent,
+	daysToEvents: Map<number, Array<EventWrapper>>,
+	baseEvent: EventWrapper,
 	range: CalendarTimeRange,
 	timeZone: string = getTimeZone(),
 ) {
-	const repeatRule = event.repeatRule
+	const repeatRule = baseEvent.event.repeatRule
 
 	if (repeatRule == null) {
-		throw new Error("Invalid argument: event doesn't have a repeatRule" + JSON.stringify(event))
+		throw new Error("Invalid argument: event doesn't have a repeatRule" + JSON.stringify(baseEvent))
 	}
-	const allDay = isAllDayEvent(event)
+	const allDay = isAllDayEvent(baseEvent.event)
 	const exclusions = allDay
 		? repeatRule.excludedDates.map(({ date }) => createDateWrapper({ date: getAllDayDateForTimezone(date, timeZone) }))
 		: repeatRule.excludedDates
-	const generatedEvents = eventOccurencesGenerator(event, timeZone, new Date(range.end))
+	const generatedEvents = eventOccurencesGenerator(baseEvent.event, timeZone, new Date(range.end))
 
 	for (const { startTime, endTime } of generatedEvents) {
 		if (startTime.getTime() > range.end) break
@@ -1047,16 +1079,16 @@ export function addDaysForRecurringEvent(
 			const eventsOnExcludedDay = daysToEvents.get(getStartOfDayWithZone(startTime, timeZone).getTime())
 			if (!eventsOnExcludedDay) continue
 		} else {
-			const eventClone = clone(event)
+			const eventCloneWrapper = clone(baseEvent)
 			if (allDay) {
-				eventClone.startTime = getAllDayDateUTCFromZone(startTime, timeZone)
-				eventClone.endTime = getAllDayDateUTCFromZone(endTime, timeZone)
+				eventCloneWrapper.event.startTime = getAllDayDateUTCFromZone(startTime, timeZone)
+				eventCloneWrapper.event.endTime = getAllDayDateUTCFromZone(endTime, timeZone)
 			} else {
-				eventClone.startTime = new Date(startTime)
-				eventClone.endTime = new Date(endTime)
+				eventCloneWrapper.event.startTime = new Date(startTime)
+				eventCloneWrapper.event.endTime = new Date(endTime)
 			}
 
-			addDaysForEventInstance(daysToEvents, eventClone, range, timeZone)
+			addDaysForEventInstance(daysToEvents, eventCloneWrapper, range, timeZone)
 		}
 	}
 }
@@ -1238,11 +1270,6 @@ function* eventOccurencesGenerator(
 	yield { startTime: calcStartTime, endTime: calcEndTime }
 
 	while ((endOccurrences == null || iteration <= endOccurrences) && (repeatEndTime == null || calcStartTime.getTime() < repeatEndTime.getTime())) {
-		// We reached our range end, no need to continue generating/evaluating events
-		if (calcStartTime.getTime() > maxDate.getTime()) {
-			break
-		}
-
 		const byMonthRules = repeatRule.advancedRules.filter((rule) => rule.ruleType === ByRule.BYMONTH)
 		const byDayRules = repeatRule.advancedRules.filter((rule) => rule.ruleType === ByRule.BYDAY)
 		const byMonthDayRules = repeatRule.advancedRules.filter((rule) => rule.ruleType === ByRule.BYMONTHDAY)
@@ -1276,23 +1303,35 @@ function* eventOccurencesGenerator(
 				byWeekNoRules.length > 0,
 				validMonthDays,
 				validYearDays,
+				byMonthRules.length > 0,
 			),
 			validMonths as MonthNumbers[],
 			eventStartTime,
-		)
+		).sort((a, b) => a.toMillis() - b.toMillis())
 
 		const setPosRules = repeatRule.advancedRules.filter((rule) => rule.ruleType === ByRule.BYSETPOS)
 		const setPosRulesValues = setPosRules.map((rule) => rule.interval)
 		const shouldApplySetPos = isNotEmpty(setPosRules) && setPosRules.length < repeatRule.advancedRules.length
 		let eventCount = 0
 
-		for (const event of events) {
-			if (iteration === 1 && event.toJSDate().getTime() === eventStartTime.getTime()) {
+		// We reached our range end, no need to continue generating/evaluating events
+		if (calcStartTime.getTime() > maxDate.getTime() && events.length === 0) {
+			return
+		}
+
+		for (const generatedEvent of events) {
+			const newStartTime = generatedEvent.toJSDate()
+
+			// We reached our range end, no need to continue generating/evaluating events
+			if (newStartTime.getTime() > maxDate.getTime()) {
+				return
+			}
+
+			if (iteration === 1 && generatedEvent.toJSDate().getTime() === eventStartTime.getTime()) {
 				// Already yielded
 				continue
 			}
 
-			const newStartTime = event.toJSDate()
 			const newEndTime = allDay
 				? incrementByRepeatPeriod(newStartTime, RepeatPeriod.DAILY, calcDuration, repeatTimeZone)
 				: DateTime.fromJSDate(newStartTime).plus(calcDuration).toJSDate()
@@ -1303,6 +1342,11 @@ function* eventOccurencesGenerator(
 
 			assertDateIsValid(newStartTime)
 			assertDateIsValid(newEndTime)
+
+			if (newStartTime.getTime() < event.startTime.getTime()) {
+				continue // We have an instance before the original progenitor
+			}
+
 			yield { startTime: newStartTime, endTime: newEndTime }
 		}
 
@@ -1606,6 +1650,8 @@ export function alarmIntervalToLuxonDurationLikeObject(alarmInterval: AlarmInter
 			return { days: alarmInterval.value }
 		case AlarmIntervalUnit.WEEK:
 			return { weeks: alarmInterval.value }
+		default:
+			throw new Error(`Unknown alarm unit: ${alarmInterval.unit}`)
 	}
 }
 
@@ -1645,87 +1691,81 @@ export function areAllAdvancedRepeatRulesValid(advancedRules: AdvancedRepeatRule
 
 /**
  * Converts db representation of alarm to a runtime one.
+ * Deserializes an alarm interval string (e.g. "5M") into an AlarmInterval object.
+ *
+ * @example
+ * parseAlarmInterval("5M") // => { value: 5, unit: AlarmIntervalUnit.MINUTE }
+ *
+ * @param serialized - The alarm interval string in the format (\d+)([MHDW])
+ * @returns An {@link AlarmInterval} object with numeric value and unit as {@link AlarmIntervalUnit}
+ *
+ * @throws {ParserError} If the string does not match the expected format
+ *
+ * @see {@link serializeAlarmInterval} - The inverse operation
  */
 export function parseAlarmInterval(serialized: string): AlarmInterval {
 	const matched = serialized.match(/^(\d+)([MHDW])$/)
-	if (matched) {
-		const [_, digits, unit] = matched
-		const value = filterInt(digits)
-		if (isNaN(value)) {
-			throw new ParserError(`Invalid value: ${value}`)
-		} else {
-			return { value, unit: unit as AlarmIntervalUnit }
-		}
-	} else {
-		throw new ParserError(`Invalid alarm interval: ${serialized}`)
+
+	if (!matched) {
+		throw new ParserError(`Invalid alarm interval: ${serialized} - Uknown format`)
 	}
+
+	const [_, digits, unit] = matched
+	const value = filterInt(digits)
+	if (isNaN(value)) {
+		throw new ParserError(`Invalid alarm interval: ${serialized} - NaN value`)
+	}
+
+	return { value, unit: unit as AlarmIntervalUnit }
 }
 
 export enum CalendarType {
-	NORMAL,
-	URL, // External calendar
-	CLIENT_ONLY,
-}
-
-export enum RenderType {
 	Private,
 	Shared,
 	External,
-	ClientOnly,
+	Birthday,
 }
 
-export const RENDER_TYPE_TRANSLATION_MAP: ReadonlyMap<RenderType, TranslationKey> = freezeMap(
+export const CALENDAR_TYPE_TRANSLATION_MAP: ReadonlyMap<CalendarType, TranslationKey> = freezeMap(
 	new Map([
-		[RenderType.Private, "yourCalendars_label"],
-		[RenderType.External, "calendarSubscriptions_label"],
-		[RenderType.Shared, "calendarShared_label"],
+		[CalendarType.Private, "yourCalendars_label"],
+		[CalendarType.External, "calendarSubscriptions_label"],
+		[CalendarType.Shared, "calendarShared_label"],
 	]),
 )
 
-export function isPrivateRenderType(calendarInfo: CalendarInfo) {
-	return calendarInfo.userIsOwner && !calendarInfo.isExternal && !isClientOnlyCalendar(calendarInfo.group._id)
+type CalendarTypeInfo = {
+	calendarId: string
+	isExternalCalendar: boolean
+	isUserOwner: boolean
 }
 
-export function isSharedRenderType(calendarInfo: CalendarInfo) {
-	return !calendarInfo.userIsOwner
-}
-
-export function isExternalRenderType(calendarInfo: CalendarInfo) {
-	return calendarInfo.userIsOwner && calendarInfo.isExternal
-}
-
-export function getCalendarRenderType(calendarInfo: CalendarInfo): RenderType {
-	if (isPrivateRenderType(calendarInfo)) return RenderType.Private
-	if (isSharedRenderType(calendarInfo)) return RenderType.Shared
-	if (isExternalRenderType(calendarInfo)) return RenderType.External
+export function getCalendarType(calendarTypeInfo: CalendarTypeInfo): CalendarType {
+	if (isBirthdayCalendar(calendarTypeInfo.calendarId)) return CalendarType.Birthday
+	if (isPrivateRenderType(calendarTypeInfo)) return CalendarType.Private
+	if (isSharedRenderType(calendarTypeInfo)) return CalendarType.Shared
+	if (isExternalRenderType(calendarTypeInfo)) return CalendarType.External
 	throw new Error("Unknown calendar Render Type")
 }
 
-export function isClientOnlyCalendar(calendarId: Id) {
-	const clientOnlyId = calendarId.match(/#(.*)/)?.[1]!
-	return CLIENT_ONLY_CALENDARS.has(clientOnlyId)
+function isPrivateRenderType(calendarTypeInfo: CalendarTypeInfo) {
+	return calendarTypeInfo.isUserOwner && !calendarTypeInfo.isExternalCalendar && !isBirthdayCalendar(calendarTypeInfo.calendarId)
 }
 
-export function isClientOnlyCalendarType(calendarType: CalendarType) {
-	return calendarType === CalendarType.CLIENT_ONLY
+function isSharedRenderType(calendarTypeInfo: CalendarTypeInfo) {
+	return !calendarTypeInfo.isUserOwner
 }
 
-export function isNormalCalendarType(calendarType: CalendarType) {
-	return calendarType === CalendarType.NORMAL
+function isExternalRenderType(calendarTypeInfo: CalendarTypeInfo) {
+	return calendarTypeInfo.isUserOwner && calendarTypeInfo.isExternalCalendar
 }
 
-export function isExternalCalendarType(calendarType: CalendarType) {
-	return calendarType === CalendarType.URL
+export function isBirthdayCalendar(calendarId: Id) {
+	return calendarId.includes(BIRTHDAY_CALENDAR_BASE_ID)
 }
 
 export function hasSourceUrl(groupSettings: GroupSettings | null | undefined) {
 	return isNotNull(groupSettings?.sourceUrl) && groupSettings?.sourceUrl !== ""
-}
-
-export function getCalendarType(groupSettings: GroupSettings | null, groupInfo: GroupInfo): CalendarType {
-	if (hasSourceUrl(groupSettings)) return CalendarType.URL
-	if (isClientOnlyCalendar(groupSettings ? groupSettings._id : groupInfo.group)) return CalendarType.CLIENT_ONLY
-	return CalendarType.NORMAL
 }
 
 export function extractYearFromBirthday(birthday: string | null): number | null {
@@ -1745,16 +1785,22 @@ export function extractYearFromBirthday(birthday: string | null): number | null 
 	return Number.parseInt(dateParts[0])
 }
 
-export async function retrieveClientOnlyEventsForUser(logins: LoginController, events: IdTuple[], localEvents: Map<number, BirthdayEventRegistry[]>) {
+export async function retrieveBirthdayEventsForUser(
+	logins: LoginController,
+	searchResultEventIds: IdTuple[],
+	birthdayEventsByMonth: Map<number, BirthdayEventRegistry[]>,
+) {
 	if (!(await logins.getUserController().isNewPaidPlan())) {
 		return []
 	}
 
-	const clientOnlyEvents = events.filter(([calendarId, _]) => isClientOnlyCalendar(calendarId)).flatMap((event) => event.join("/"))
+	const birthdayEventsFromSearchResult = searchResultEventIds.filter(([calendarId, _]) => isBirthdayCalendar(calendarId))
+	const birthdayEventIdsString = birthdayEventsFromSearchResult.flatMap((eventId) => eventId.join("/"))
 	const retrievedEvents: CalendarEvent[] = []
 
-	for (const event of Array.from(localEvents.values()).flat()) {
-		if (clientOnlyEvents.includes(event.event._id.join("/"))) {
+	const allBirthdayEvents = Array.from(birthdayEventsByMonth.values()).flat()
+	for (const event of allBirthdayEvents) {
+		if (birthdayEventIdsString.includes(event.event._id.join("/"))) {
 			retrievedEvents.push(event.event)
 		}
 	}
@@ -1776,6 +1822,45 @@ export function extractContactIdFromEvent(id: string | null | undefined): string
 	}
 
 	return decodeBase64("utf-8", id)
+}
+
+/**
+ * Converts a birthday ISO string into UTC start and end dates
+ * representing a full-day event in the given time zone.
+ *
+ * This is useful for recurring dates like birthdays where you want the
+ * "all-day" event range in UTC that corresponds to the local calendar day.
+ *
+ * @param {string} isoDateString - The desired date as an ISO date string (e.g., "1999-05-12").
+ * @param {string} zone - The IANA time zone identifier (e.g., "Europe/Berlin", "America/New_York").
+ * @returns {{ startDate: Date; endDate: Date }} An object containing:
+ * - `startDate`: The UTC `Date` representing the start of the day (00:00 UTC converted to local time).
+ * - `endDate`: The UTC `Date` representing the end of the day (00:00 UTC of the following day converted to local time).
+ *
+ * @example
+ * // For a birthday on May 12 in Berlin time
+ * const { startDate, endDate } = getAllDayDatesUTCFromIso("1999-05-12", "Europe/Berlin");
+ * console.log(startDate); // 1999-05-11T22:00:00.000Z (depending on DST)
+ * console.log(endDate);   // 1999-05-12T22:00:00.000Z (depending on DST)
+ */
+export function getAllDayDatesUTCFromIso(isoDateString: string, zone: string): { startDate: Date; endDate: Date } {
+	const birthday = isoDateToBirthday(isoDateString)
+	// We use Luxon to create a JsDate in the same day as the ISO string but in the specified timezone
+	const birthdayDateInTimezone = DateTime.fromObject(
+		{
+			year: parseInt(birthday.year ?? "1970"),
+			month: parseInt(birthday.month),
+			day: parseInt(birthday.day),
+		},
+		{ zone },
+	).toJSDate()
+
+	const startDateUtc = getAllDayDateUTCFromZone(birthdayDateInTimezone, zone)
+	const endDateUtc = getAllDayDateUTCFromZone(getStartOfNextDayWithZone(birthdayDateInTimezone, zone), zone)
+	return {
+		startDate: startDateUtc,
+		endDate: endDateUtc,
+	}
 }
 
 export enum ByRule {
@@ -1803,3 +1888,17 @@ export const BYRULE_MAP = freezeMap(
 		["WKST", ByRule.WKST],
 	]),
 )
+
+export function getTimeFromClickInteraction(e: MouseEvent, time: Time): Time {
+	const rect = (e.target as HTMLElement).getBoundingClientRect()
+	const mousePositionRelativeToRectHeight = Math.abs(rect.top - e.clientY)
+	if (mousePositionRelativeToRectHeight > rect.height / 2) return new Time(time.hour, time.minute + 30)
+	return time
+}
+
+export type EventWrapperFlagKeys = keyof Pick<EventWrapperFlags, "hasAlarms" | "isAlteredInstance" | "isBirthdayEvent">
+export const FlagKeyToIcon: Record<EventWrapperFlagKeys, AllIcons> = {
+	hasAlarms: Icons.Notifications,
+	isAlteredInstance: Icons.Edit,
+	isBirthdayEvent: Icons.Gift,
+}

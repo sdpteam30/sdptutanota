@@ -1,11 +1,9 @@
 import { DbError } from "../../common/error/DbError"
-import { delay, downcast, LazyLoaded, stringToUtf8Uint8Array, uint8ArrayToBase64 } from "@tutao/tutanota-utils"
+import { delay, downcast, LazyLoaded, newPromise, stringToUtf8Uint8Array, uint8ArrayToBase64 } from "@tutao/tutanota-utils"
 import { IndexingNotSupportedError } from "../../common/error/IndexingNotSupportedError"
 import { QuotaExceededError } from "../../common/error/QuotaExceededError"
 import { sha256Hash } from "@tutao/tutanota-crypto"
 import { IndexName, ObjectStoreName } from "./IndexTables.js"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 export const osName = (objectStoreName: ObjectStoreName): string => objectStoreName
 export type DbKey = string | number | Uint8Array
@@ -49,6 +47,18 @@ export class DbFacade {
 	private _activeTransactions: number
 	indexingSupported: boolean = true
 
+	/**
+	 * Construct an indexed db facade
+	 *
+	 * {@link onupgrade} will be called if a version upgrade is needed.
+	 *
+	 * IMPORTANT: {@link onupgrade} is not awaited! If you use any async code in your callback, all DB setup code that
+	 *            needs to be run during a version change transaction (e.g. createObjectStore) MUST be done before any
+	 *            promises are awaited
+	 *
+	 * @param version
+	 * @param onupgrade
+	 */
 	constructor(version: number, onupgrade: (event: any, db: IDBDatabase, dbFacade: DbFacade) => void) {
 		this._activeTransactions = 0
 		this._db = new LazyLoaded(() => {

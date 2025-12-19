@@ -1,15 +1,15 @@
 import { EntityClient } from "../../../api/common/EntityClient.js"
 import { createSecondFactor, GroupInfoTypeRef, U2fRegisteredDevice, User } from "../../../api/entities/sys/TypeRefs.js"
 import { validateWebauthnDisplayName, WebauthnClient } from "../../../misc/2fa/webauthn/WebauthnClient.js"
-import { TotpSecret } from "@tutao/tutanota-crypto"
-import { assertNotNull, LazyLoaded, neverNull } from "@tutao/tutanota-utils"
+import type { TotpSecret } from "@tutao/tutanota-crypto"
+import { assertNotNull, LazyLoaded, neverNull, singleAsync } from "@tutao/tutanota-utils"
 import { isApp } from "../../../api/common/Env.js"
-import { LanguageViewModel, TranslationKey } from "../../../misc/LanguageViewModel.js"
+import { TranslationKey } from "../../../misc/LanguageViewModel.js"
 import { SecondFactorType } from "../../../api/common/TutanotaConstants.js"
 import { ProgrammingError } from "../../../api/common/error/ProgrammingError.js"
 import { LoginFacade } from "../../../api/worker/facades/LoginFacade.js"
 import { UserError } from "../../../api/main/UserError.js"
-import { htmlSanitizer } from "../../../misc/HtmlSanitizer.js"
+import { getHtmlSanitizer } from "../../../misc/HtmlSanitizer.js"
 import QRCode from "qrcode-svg"
 
 export const enum VerificationStatus {
@@ -64,7 +64,7 @@ export class SecondFactorEditModel {
 
 			const totpQRCodeSvg = isApp()
 				? null
-				: htmlSanitizer.sanitizeSVG(
+				: getHtmlSanitizer().sanitizeSVG(
 						new QRCode({
 							height: 150,
 							width: 150,
@@ -158,7 +158,7 @@ export class SecondFactorEditModel {
 	 * returns the user that the second factor was created in case any follow-up operations
 	 * are needed
 	 */
-	async save(): Promise<User | null> {
+	save = singleAsync(async () => {
 		this.setDefaultNameIfNeeded()
 		if (this.selectedType === SecondFactorType.webauthn) {
 			// Prevent starting in parallel
@@ -208,7 +208,7 @@ export class SecondFactorEditModel {
 		}
 		await this.entityClient.setup(assertNotNull(this.user.auth).secondFactors, sf, this.token ? { token: this.token } : undefined)
 		return this.user
-	}
+	})
 
 	/** see https://github.com/google/google-authenticator/wiki/Key-Uri-Format */
 	private async getOtpAuthUrl(secret: string): Promise<string> {

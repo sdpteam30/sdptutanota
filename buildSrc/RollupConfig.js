@@ -17,10 +17,11 @@ export const dependencyMap = {
 	cborg: path.normalize("./libs/cborg.js"),
 	// below this, the modules are only running in the desktop main thread.
 	"electron-updater": path.normalize("./libs/electron-updater.mjs"),
-	winreg: path.normalize("./libs/winreg.mjs"),
 	undici: path.normalize("./libs/undici.mjs"),
 	jsqr: path.normalize("./libs/jsQR.js"),
 	"@signalapp/sqlcipher": path.normalize("./libs/node-sqlcipher.mjs"),
+	"@fingerprintjs/botd": path.normalize("./libs/botd.mjs"),
+	"./tensorflow-custom": path.normalize("./libs/tensorflow.js"),
 }
 
 /**
@@ -45,6 +46,7 @@ export const allowedImports = {
 	contacts: ["polyfill-helpers", "common-min", "common", "boot", "gui-base", "main", "mail-view", "date", "date-gui", "mail-editor"],
 	"calendar-view": ["polyfill-helpers", "common-min", "common", "boot", "gui-base", "main", "date", "date-gui", "sharing", "contacts"],
 	login: ["polyfill-helpers", "common-min", "common", "boot", "gui-base", "main"],
+	"spam-classifier": ["polyfill-helpers", "common", "common-min"],
 	worker: ["polyfill-helpers", "common-min", "common", "native-common", "native-worker", "wasm", "wasm-fallback"],
 	"pow-worker": [],
 	settings: [
@@ -125,6 +127,7 @@ export const allowedImports = {
 	"worker-search": ["common-min", "common", "worker", "worker-lazy"],
 	linkify: [],
 	invoice: ["common-min"],
+	"material-color-utilities": [],
 }
 
 /** resolves certain imports to vendored libraries for the dist build */
@@ -171,7 +174,8 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		isIn("libs/mithril") ||
 		isIn("src/mail-app/app.ts") ||
 		isIn("src/calendar-app/calendar-app.ts") ||
-		code.includes("@bundleInto:boot")
+		code.includes("@bundleInto:boot") ||
+		moduleId.includes("libs/botd.mjs")
 	) {
 		// if detecting this does not work even though the comment is there, add a blank line after the annotation.
 		// everything marked as assertMainOrNodeBoot goes into boot bundle right now
@@ -181,7 +185,6 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		isIn("src/calendar-app/calendar/export") ||
 		isIn("src/common/misc/DateParser") ||
 		isIn("src/common/misc/ElevenYearsTutaUtils") ||
-		isIn("src/common/ratings") ||
 		isIn("src/calendar-app/calendar/model") ||
 		isIn("src/calendar-app/calendar/gui") ||
 		isIn("src/common/calendar/gui") ||
@@ -221,7 +224,6 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		isIn("src/mail-app/contacts/model") ||
 		isIn("src/mail-app/search/model") ||
 		isIn("src/calendar-app/calendar/search/model") ||
-		isIn("src/common/misc/ErrorHandlerImpl") ||
 		isIn("src/common/misc") ||
 		isIn("src/common/file") ||
 		isIn("src/common/gui") ||
@@ -240,6 +242,8 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		return "wasm"
 	} else if (moduleId.includes("wasm-fallback")) {
 		return "wasm-fallback"
+	} else if (isIn("src/mail-app/workerUtils/spamClassification") || moduleId.includes("libs/tensorflow.js")) {
+		return "spam-classifier"
 	} else if (
 		isIn("src/common/native/worker") ||
 		isIn("src/mail-app/workerUtils/worker") ||
@@ -284,7 +288,14 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		moduleId.includes("commonjs-dynamic-modules")
 	) {
 		return "polyfill-helpers"
-	} else if (isIn("src/common/settings") || isIn("src/common/subscription") || isIn("libs/qrcode") || isIn("libs/jsQR") || isIn("src/common/termination")) {
+	} else if (
+		isIn("src/common/settings") ||
+		isIn("src/common/subscription") ||
+		isIn("libs/qrcode") ||
+		isIn("src/common/ratings") ||
+		isIn("libs/jsQR") ||
+		isIn("src/common/termination")
+	) {
 		// subscription and settings depend on each other right now.
 		// subscription is also a kitchen sink with signup, utils and views, we should break it up
 		return "settings"
@@ -308,6 +319,8 @@ export function getChunkName(moduleId, { getModuleInfo }) {
 		return "worker" // avoid that crypto stuff is only put into native
 	} else if (isIn("libs/jszip")) {
 		return "jszip"
+	} else if (isIn("node_modules/@material/material-color-utilities")) {
+		return "material-color-utilities"
 	} else {
 		// Put all translations into "translation-code"
 		// Almost like in Rollup example: https://rollupjs.org/guide/en/#outputmanualchunks

@@ -1,6 +1,5 @@
 use crate::crypto::crypto_facade::ResolvedSessionKey;
 use crate::crypto::key::GenericAesKey;
-use crate::crypto::randomizer_facade::RandomizerFacade;
 use crate::crypto::{aes::Iv, PlaintextAndIv};
 use crate::date::DateTime;
 use crate::element_value::{ElementValue, ParsedEntity};
@@ -14,6 +13,7 @@ use crate::{ApiCallError, TypeRef};
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use core::str;
+use crypto_primitives::randomizer_facade::RandomizerFacade;
 use lz4_flex::block::DecompressError;
 use minicbor::Encode;
 use std::collections::HashMap;
@@ -360,7 +360,9 @@ impl EntityFacadeImpl {
 		if type_model.is_encrypted() {
 			// Only top-level types are expected to have `_errors` in the end but it is removed
 			// from the aggregates by `extract_errors()`.
-			mapped_decrypted.insert("_errors".to_string(), ElementValue::Dict(mapped_errors));
+			if !mapped_errors.is_empty() {
+				mapped_decrypted.insert("_errors".to_string(), ElementValue::Dict(mapped_errors));
+			}
 			mapped_decrypted.insert("_finalIvs".to_string(), ElementValue::Dict(mapped_ivs));
 		}
 
@@ -382,8 +384,8 @@ impl EntityFacadeImpl {
 		if let AssociationType::Aggregation = association_model.association_type {
 			let aggregate_type_model = self
 				.type_model_provider
-				.resolve_client_type_ref(&dependency_typeref)
-				.unwrap_or_else(|| panic!("Undefined type_model {}", dependency_typeref));
+				.resolve_server_type_ref(&dependency_typeref)
+				.unwrap_or_else(|| panic!("Undefined aggregate type_model {}", dependency_typeref));
 
 			let mut aggregate_vec = Vec::with_capacity(association_data.assert_array_ref().len());
 			let ElementValue::Array(association_data) = association_data else {
@@ -398,7 +400,7 @@ impl EntityFacadeImpl {
 				match aggregate {
 					ElementValue::Dict(entity) => {
 						let mut decrypted_aggregate =
-							self.decrypt_and_map_inner(aggregate_type_model, entity, session_key)?;
+							self.decrypt_and_map_inner(&aggregate_type_model, entity, session_key)?;
 
 						// Errors should be grouped inside the top-most object, so they should be
 						// extracted and removed from aggregates
@@ -673,12 +675,12 @@ fn make_random_aggregate_id(random: &RandomizerFacade) -> ElementValue {
 
 #[cfg(test)]
 mod lz4_compressed_string_compatibility_tests {
-	use crate::crypto::compatibility_test_utils::{
-		get_compatibility_test_data, CompressionTestData,
-	};
 	use crate::entities::entity_facade::EntityFacadeImpl;
 	use base64::prelude::BASE64_STANDARD;
 	use base64::Engine;
+	use crypto_primitives::compatibility_test_utils::{
+		get_compatibility_test_data, CompressionTestData,
+	};
 
 	#[test]
 	#[ignore]
@@ -752,8 +754,6 @@ mod tests {
 	use crate::bindings::rest_client::MockRestClient;
 	use crate::crypto::crypto_facade::ResolvedSessionKey;
 	use crate::crypto::key::GenericAesKey;
-	use crate::crypto::randomizer_facade::test_util::DeterministicRng;
-	use crate::crypto::randomizer_facade::RandomizerFacade;
 	use crate::crypto::{aes::Iv, Aes256Key};
 	use crate::date::DateTime;
 	use crate::element_value::{ElementValue, ParsedEntity};
@@ -771,6 +771,8 @@ mod tests {
 	use crate::type_model_provider::TypeModelProvider;
 	use crate::util::entity_test_utils::generate_email_entity;
 	use crate::{collection, ApiCallError};
+	use crypto_primitives::randomizer_facade::test_util::DeterministicRng;
+	use crypto_primitives::randomizer_facade::RandomizerFacade;
 	use std::collections::{BTreeMap, HashMap};
 	use std::sync::Arc;
 	use std::time::SystemTime;
@@ -1465,11 +1467,6 @@ mod tests {
 				ElementValue::Null,
 			);
 
-			assert_eq!(
-				Some(ElementValue::Dict(HashMap::new())),
-				decrypted_mail.remove("_errors")
-			);
-
 			// comparison with sorted fields. only for easy for debugging
 			assert_eq!(
 				map_to_string(&original_mail),
@@ -1816,7 +1813,18 @@ mod tests {
 					),
 				],
 			)]),
-		"1465"=> JsonElement::Array(vec![]),}
+		"1465"=> JsonElement::Array(vec![]),
+		"1677"=> JsonElement::Null,
+		"1728"=> JsonElement::String(
+				"1".to_string(),
+			),
+		"1729"=> JsonElement::Array(
+				vec![],
+			),
+		"1769"=> JsonElement::String(
+				"0".to_string()
+			)
+		}
 	}
 
 	fn create_model_value(

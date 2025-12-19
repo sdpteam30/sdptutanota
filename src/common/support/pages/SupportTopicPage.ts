@@ -1,6 +1,6 @@
 import m, { Children, Component, Vnode } from "mithril"
 import { lang } from "../../misc/LanguageViewModel.js"
-import { htmlSanitizer } from "../../misc/HtmlSanitizer.js"
+import { getHtmlSanitizer, HtmlSanitizer } from "../../misc/HtmlSanitizer.js"
 import { convertTextToHtml } from "../../misc/Formatter.js"
 import { getContactSupportText, getTopicIssue, SupportDialogState } from "../SupportDialog.js"
 import { Dialog } from "../../gui/base/Dialog.js"
@@ -21,6 +21,8 @@ type Props = {
 }
 
 export class SupportTopicPage implements Component<Props> {
+	private readonly htmlSanitizer: HtmlSanitizer = getHtmlSanitizer()
+
 	view({ attrs: { data, goToContactSupportPage, goToSolutionWasHelpfulPage } }: Vnode<Props>): Children {
 		const topic = data.selectedTopic()
 		if (topic == null) {
@@ -29,7 +31,7 @@ export class SupportTopicPage implements Component<Props> {
 
 		const languageTag = lang.languageTag
 		const solution = languageTag.includes("de") ? topic.solutionHtmlDE : topic.solutionHtmlEN
-		const sanitisedSolution = htmlSanitizer.sanitizeHTML(convertTextToHtml(solution), {
+		const sanitisedSolution = this.htmlSanitizer.sanitizeHTML(convertTextToHtml(solution), {
 			blockExternalContent: true,
 			allowRelativeLinks: true,
 		}).html
@@ -38,7 +40,7 @@ export class SupportTopicPage implements Component<Props> {
 		const buttonText = getContactSupportText(topic, languageTag)
 
 		return m(
-			".flex.flex-column.pt.pb",
+			".flex.flex-column.pt-16.pb-16",
 			{
 				style: {
 					"overflow-x": "auto",
@@ -50,14 +52,14 @@ export class SupportTopicPage implements Component<Props> {
 					Card,
 					{
 						rootElementType: "div",
-						classes: ["scroll", "mb"],
+						classes: ["scroll", "mb-16"],
 					},
-					m(".h4.m-0.pb", issue),
+					m(".h4.m-0.pb-16", issue),
 					m.trust(sanitisedSolution),
 					buttonText &&
 						!locator.logins.getUserController().isFreeAccount() &&
 						m(
-							".flex.center-horizontally.mt",
+							".flex.center-horizontally.mt-16",
 							m(Button, {
 								label: lang.makeTranslation("", buttonText),
 								type: ButtonType.Primary,
@@ -80,8 +82,8 @@ interface WasThisHelpfulAttrs {
 class WasThisHelpful implements Component<WasThisHelpfulAttrs> {
 	view({ attrs: { goToContactSupportPage, goToSolutionWasHelpfulPage, topicName } }: Vnode<WasThisHelpfulAttrs>): Children {
 		return m(
-			".flex.flex-column.gap-vpad-s",
-			m("small.uppercase.b.text-ellipsis", { style: { color: theme.navigation_button } }, lang.get("wasThisHelpful_msg")),
+			".flex.flex-column.gap-8",
+			m("small.uppercase.b.text-ellipsis", { style: { color: theme.on_surface } }, lang.get("wasThisHelpful_msg")),
 			m(Card, { shouldDivide: true }, [
 				m(SectionButton, {
 					text: "yes_label",

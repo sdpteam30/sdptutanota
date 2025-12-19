@@ -13,6 +13,7 @@ import { TopLevelAttrs, TopLevelView } from "../../TopLevelView.js"
 import { LoginScreenHeader } from "../gui/LoginScreenHeader.js"
 import { LeavingUserSurveyData } from "../subscription/LeavingUserSurveyWizard.js"
 import { SURVEY_VERSION_NUMBER } from "../subscription/LeavingUserSurveyConstants.js"
+import { client } from "../misc/ClientDetector"
 
 assertMainOrNode()
 
@@ -53,14 +54,14 @@ export class TerminationView extends BaseTopLevelView implements TopLevelView<Te
 				m(
 					".flex-grow.flex-center.scroll",
 					m(
-						".flex-grow-shrink-auto.max-width-m.pb",
+						".flex-grow-shrink-auto.max-width-m.pb-16",
 						{
 							...landmarkAttrs(AriaLandmarks.Main, lang.get("terminationForm_title")),
 							oncreate: (vnode) => {
 								;(vnode.dom as HTMLElement).focus()
 							},
 						},
-						m(".flex.col.pt.plr-l.content-bg.border-radius-big", [
+						m(".flex.col.pt-16.plr-24.content-bg.border-radius-12", [
 							this.model.acceptedTerminationRequest
 								? this.renderTerminationInfo(this.model.mailAddress, this.model.acceptedTerminationRequest)
 								: this.renderTerminationForm(),
@@ -73,9 +74,9 @@ export class TerminationView extends BaseTopLevelView implements TopLevelView<Te
 
 	private renderTerminationInfo(mailAddress: string, acceptedTerminationRequest: CustomerAccountTerminationRequest): Children {
 		return m("", [
-			m(".h3.mt", "Termination successful"),
+			m(".h3.mt-16", "Termination successful"),
 			m(
-				"p.mt",
+				"p.mt-16",
 				lang.get("terminationSuccessful_msg", {
 					"{accountName}": mailAddress,
 					"{receivedDate}": formatDateTime(acceptedTerminationRequest.terminationRequestDate),
@@ -92,6 +93,8 @@ export class TerminationView extends BaseTopLevelView implements TopLevelView<Te
 				reason: surveyResult.reason,
 				details: surveyResult.details,
 				version: SURVEY_VERSION_NUMBER,
+				clientVersion: env.versionNumber,
+				clientPlatform: client.getClientPlatform().valueOf().toString(),
 			})
 			await showProgressDialog("pleaseWait_msg", this.model.createAccountTerminationRequest(data))
 		} else {

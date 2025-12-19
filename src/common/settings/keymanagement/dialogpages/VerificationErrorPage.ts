@@ -6,7 +6,7 @@ import { Icons } from "../../../gui/base/icons/Icons"
 import { LoginButton } from "../../../gui/base/buttons/LoginButton"
 import { theme } from "../../../gui/theme"
 import { QrCodePageErrorType } from "./VerificationByQrCodeInputPage"
-import { KeyVerificationMethodType } from "../../../api/common/TutanotaConstants"
+import { IdentityKeyVerificationMethod } from "../../../api/common/TutanotaConstants"
 
 type VerificationErrorPageAttrs = {
 	model: KeyVerificationModel
@@ -25,7 +25,7 @@ export class VerificationErrorPage implements Component<VerificationErrorPageAtt
 				break
 			}
 			case "camera_permission_denied": {
-				subTitle = lang.get("keyManagement.cameraPermissionDenied_msg")
+				subTitle = lang.get("keyManagement.cameraPermissionNeeded_msg")
 				break
 			}
 			case "email_not_found": {
@@ -34,10 +34,6 @@ export class VerificationErrorPage implements Component<VerificationErrorPageAtt
 			}
 			case "malformed_qr": {
 				subTitle = lang.get("keyManagement.qrCodeInvalid_msg")
-				break
-			}
-			case "qr_code_mismatch": {
-				subTitle = lang.get("keyManagement.qrFingerprintMismatch_msg")
 				break
 			}
 			case "video_source_error": {
@@ -49,19 +45,18 @@ export class VerificationErrorPage implements Component<VerificationErrorPageAtt
 			}
 		}
 
-		return m(".pt.pb.flex.col.gap-vpad", [
+		return m(".pt-16.pb-16.flex.col.gap-16", [
 			m(TitleSection, {
 				title,
 				subTitle,
-				icon: Icons.AlertCircle,
-				iconOptions: { color: theme.error_color },
+				icon: Icons.CloseCircleOutline,
+				iconOptions: { color: theme.error },
 			}),
 			m(LoginButton, {
 				label: "retry_action",
 				onclick: async () => {
 					// we're treating this like a fresh usage test invocation
-					await vnode.attrs.model.test.start(KeyVerificationMethodType.qr)
-
+					await vnode.attrs.model.handleMethodSwitch(IdentityKeyVerificationMethod.qr)
 					vnode.attrs.retryAction()
 				},
 			}),

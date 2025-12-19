@@ -32,6 +32,8 @@ import {
 	deepEqual,
 	KeyVersion,
 	Mapper,
+	noOp,
+	Nullable,
 	ofClass,
 	promiseMap,
 	TypeRef,
@@ -54,18 +56,16 @@ import { InstancePipeline } from "../../../../../src/common/api/worker/crypto/In
 import { type Entity, TypeModel } from "../../../../../src/common/api/common/EntityTypes"
 import { PersistenceResourcePostReturnTypeRef } from "../../../../../src/common/api/entities/base/TypeRefs"
 import { aes256RandomKey, AesKey, decryptKey } from "@tutao/tutanota-crypto"
-import { encryptKeyWithVersionedKey, VersionedKey } from "../../../../../src/common/api/worker/crypto/CryptoWrapper"
+import { _encryptKeyWithVersionedKey, VersionedKey } from "../../../../../src/common/api/worker/crypto/CryptoWrapper"
 import { EntityClient } from "../../../../../src/common/api/common/EntityClient"
 import { ServiceExecutor } from "../../../../../src/common/api/worker/rest/ServiceExecutor"
 import { OwnerEncSessionKeysUpdateQueue } from "../../../../../src/common/api/worker/crypto/OwnerEncSessionKeysUpdateQueue"
 import { DefaultEntityRestCache } from "../../../../../src/common/api/worker/rest/DefaultEntityRestCache"
 import { KeyLoaderFacade } from "../../../../../src/common/api/worker/facades/KeyLoaderFacade"
 import { AsymmetricCryptoFacade } from "../../../../../src/common/api/worker/crypto/AsymmetricCryptoFacade"
-import { PublicKeyProvider } from "../../../../../src/common/api/worker/facades/PublicKeyProvider"
+import { PublicEncryptionKeyProvider } from "../../../../../src/common/api/worker/facades/PublicEncryptionKeyProvider"
 import { KeyRotationFacade } from "../../../../../src/common/api/worker/facades/KeyRotationFacade"
-import { Nullable } from "@tutao/tutanota-utils/dist/Utils"
 import { AttributeModel } from "../../../../../src/common/api/common/AttributeModel"
-import { KeyVerificationFacade } from "../../../../../src/common/api/worker/facades/lazy/KeyVerificationFacade"
 
 const { anything, argThat, captor } = matchers
 
@@ -129,7 +129,7 @@ o.spec("EntityRestClient", function () {
 
 		sk = aes256RandomKey()
 		ownerGroupKey = { object: aes256RandomKey(), version: 0 }
-		encryptedSessionKey = encryptKeyWithVersionedKey(ownerGroupKey, sk)
+		encryptedSessionKey = _encryptKeyWithVersionedKey(ownerGroupKey, sk)
 		when(keyLoaderFacadeMock.loadSymGroupKey(ownerGroupId, 0)).thenResolve(ownerGroupKey.object)
 
 		fullyLoggedIn = true
@@ -143,10 +143,12 @@ o.spec("EntityRestClient", function () {
 			instance(DefaultEntityRestCache),
 			keyLoaderFacadeMock,
 			instance(AsymmetricCryptoFacade),
-			async () => instance(KeyVerificationFacade),
-			instance(PublicKeyProvider),
+			instance(PublicEncryptionKeyProvider),
 			() => instance(KeyRotationFacade),
 			typeModelResolver,
+			async () => {
+				noOp()
+			},
 		)
 		cryptoFacadePartialStub.resolveSessionKey = async (instance: Entity): Promise<Nullable<AesKey>> => {
 			return sk
@@ -298,7 +300,7 @@ o.spec("EntityRestClient", function () {
 			const id1 = "id1"
 			const ownerKeyProviderSk = aes256RandomKey()
 			const ownerGroupKey: VersionedKey = { object: aes256RandomKey(), version: 0 }
-			const ownerKeyProviderEncryptedSessionKey = encryptKeyWithVersionedKey(ownerGroupKey, ownerKeyProviderSk)
+			const ownerKeyProviderEncryptedSessionKey = _encryptKeyWithVersionedKey(ownerGroupKey, ownerKeyProviderSk)
 			const calendar = createTestEntity(CalendarEventTypeRef, {
 				_id: [calendarListId, id1],
 				_permissions: "some id",
@@ -1170,7 +1172,7 @@ o.spec("EntityRestClient", function () {
 			const version = typeModel.version
 			const ownerKeyProviderSk = aes256RandomKey()
 			const ownerGroupKey: VersionedKey = { object: aes256RandomKey(), version: 0 }
-			const ownerEncSessionKey = encryptKeyWithVersionedKey(ownerGroupKey, ownerKeyProviderSk)
+			const ownerEncSessionKey = _encryptKeyWithVersionedKey(ownerGroupKey, ownerKeyProviderSk)
 			const newAccountingInfo = createTestEntity(AccountingInfoTypeRef, {
 				_id: "id1",
 				_permissions: "permissionsId",

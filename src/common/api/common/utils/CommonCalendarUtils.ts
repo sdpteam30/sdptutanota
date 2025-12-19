@@ -182,11 +182,11 @@ export function serializeAlarmInterval(interval: AlarmInterval): string {
 }
 
 export enum CalendarViewType {
+	AGENDA = "agenda",
 	DAY = "day",
+	THREE_DAY = "three",
 	WEEK = "week",
 	MONTH = "month",
-	AGENDA = "agenda",
-	THREE_DAY = "three",
 }
 
 /**

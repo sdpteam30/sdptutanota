@@ -11,6 +11,7 @@ import {
 	makeSingleUse,
 	memoizedWithHiddenArgument,
 	ofClass,
+	settledThen,
 	TypeRef,
 } from "@tutao/tutanota-utils"
 import { EntityClient } from "../../../common/api/common/EntityClient.js"
@@ -18,7 +19,7 @@ import { LoadingStateTracker } from "../../../common/offline/LoadingState.js"
 import { EntityEventsListener, EventController } from "../../../common/api/main/EventController.js"
 import { ConversationType, MailSetKind, MailState, OperationType } from "../../../common/api/common/TutanotaConstants.js"
 import { NotAuthorizedError, NotFoundError } from "../../../common/api/common/error/RestError.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js"
+import { isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js"
 import { ListAutoSelectBehavior, MailListDisplayMode } from "../../../common/misc/DeviceConfig.js"
 
 import { MailModel } from "../model/MailModel.js"
@@ -83,12 +84,13 @@ export class ConversationViewModel {
 					// outside anyway
 					continue
 				}
+				const conversationEntryId: IdTuple = [update.instanceListId, update.instanceId]
 				switch (update.operation) {
 					case OperationType.CREATE:
-						await this.processCreateConversationEntry(update)
+						await this.processCreateConversationEntry(conversationEntryId)
 						break
 					case OperationType.UPDATE:
-						await this.processUpdateConversationEntry(update)
+						await this.processUpdateConversationEntry(conversationEntryId)
 						break
 					// don't process DELETE because the primary email (selected from the mail list) will be deleted first anyway
 					// and we should be closed when it happens
@@ -97,10 +99,9 @@ export class ConversationViewModel {
 		}
 	}
 
-	private async processCreateConversationEntry(update: EntityUpdateData) {
-		const id: IdTuple = [update.instanceListId, update.instanceId]
+	private async processCreateConversationEntry(ceId: IdTuple) {
 		try {
-			const entry = await this.entityClient.load(ConversationEntryTypeRef, id)
+			const entry = await this.entityClient.load(ConversationEntryTypeRef, ceId)
 			if (entry.mail) {
 				try {
 					// first wait that we load the conversation, otherwise we might already have the email
@@ -109,7 +110,7 @@ export class ConversationViewModel {
 					return
 				}
 				const conversation = assertNotNull(this.conversation)
-				if (conversation.some((item) => isSameTypeRef(item.type_ref, MailTypeRef) && isSameId(item.viewModel.mail.conversationEntry, id))) {
+				if (conversation.some((item) => isSameTypeRef(item.type_ref, MailTypeRef) && isSameId(item.viewModel.mail.conversationEntry, ceId))) {
 					// already loaded
 					return
 				}
@@ -141,7 +142,7 @@ export class ConversationViewModel {
 		}
 	}
 
-	private async processUpdateConversationEntry(update: EntityUpdateData) {
+	private async processUpdateConversationEntry(ceId: IdTuple) {
 		try {
 			// first wait that we load the conversation, otherwise we might already have the email
 			await this.loadingPromise
@@ -149,7 +150,6 @@ export class ConversationViewModel {
 			return
 		}
 		const conversation = assertNotNull(this.conversation)
-		const ceId: IdTuple = [update.instanceListId, update.instanceId]
 		let conversationEntry: ConversationEntry
 		let mail: Mail | null
 		try {
@@ -332,10 +332,10 @@ export class ConversationViewModel {
 	private async isInTrash(mail: Mail) {
 		const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(mail)
 		const mailFolder = this.mailModel.getMailFolderForMail(mail)
-		if (mailFolder == null || mailboxDetail == null || mailboxDetail.mailbox.folders == null) {
+		if (mailFolder == null || mailboxDetail == null) {
 			return
 		}
-		const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.folders._id)
+		const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 		return isOfTypeOrSubfolderOf(folders, mailFolder, MailSetKind.TRASH)
 	}
 
@@ -388,11 +388,15 @@ export class ConversationViewModel {
 		// hack: init has been called if loadingPromise is set
 		if (this.loadingPromise != null) {
 			this.eventController.removeEntityListener(this.onEntityEvent)
-			for (const item of this.conversationItems()) {
-				if (isSameTypeRef(item.type_ref, MailTypeRef)) {
-					item.viewModel.dispose()
+
+			// we may still be in the middle of loading, though, such as if the user is changing views quickly
+			settledThen(this.loadingPromise, () => {
+				for (const item of this.conversationItems()) {
+					if (isSameTypeRef(item.type_ref, MailTypeRef)) {
+						item.viewModel.dispose()
+					}
 				}
-			}
+			})
 		}
 	}
 

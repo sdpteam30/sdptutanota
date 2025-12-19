@@ -8,19 +8,19 @@ import { BannerButtonAttrs, BannerType, InfoBanner } from "../../../common/gui/b
 import { Icons } from "../../../common/gui/base/icons/Icons.js"
 import { RecipientButton } from "../../../common/gui/base/RecipientButton.js"
 import { createAsyncDropdown, createDropdown, DropdownButtonAttrs } from "../../../common/gui/base/Dropdown.js"
-import { EncryptionAuthStatus, InboxRuleType, Keys, MailAuthenticationStatus, TabIndex } from "../../../common/api/common/TutanotaConstants.js"
+import { InboxRuleType, Keys, MailAuthenticationStatus, TabIndex, TimeFormat } from "../../../common/api/common/TutanotaConstants.js"
 import { Icon, progressIcon } from "../../../common/gui/base/Icon.js"
 import { formatDateWithWeekday, formatDateWithWeekdayAndYear, formatStorageSize, formatTime } from "../../../common/misc/Formatter.js"
 import { isAndroidApp, isDesktop, isIOSApp } from "../../../common/api/common/Env.js"
 import { Button, ButtonType } from "../../../common/gui/base/Button.js"
 import Badge from "../../../common/gui/base/Badge.js"
-import { ContentBlockingStatus, MailViewerViewModel } from "./MailViewerViewModel.js"
+import { ContentBlockingStatus, FailureBannerType, MailViewerViewModel } from "./MailViewerViewModel.js"
 import { canSeeTutaLinks } from "../../../common/gui/base/GuiUtils.js"
 import { isEmpty, isNotNull, resolveMaybeLazy } from "@tutao/tutanota-utils"
 import { IconButton } from "../../../common/gui/base/IconButton.js"
-import { getConfidentialIcon, getFolderIconByType, isTutanotaTeamMail, showMoveMailsDropdown } from "./MailGuiUtils.js"
+import { getConfidentialIcon, getFolderIconByType, isTutanotaTeamMail } from "./MailGuiUtils.js"
 import { BootIcons } from "../../../common/gui/base/icons/BootIcons.js"
-import { editDraft, MailViewerMoreActions, singleMailViewerMoreActions } from "./MailViewerUtils.js"
+import { addToggleLightModeButtonAttrs, editDraft, MailViewerMoreActions, singleMailViewerMoreActions, unsubscribe } from "./MailViewerUtils.js"
 import { liveDataAttrs } from "../../../common/gui/AriaUtils.js"
 import { isKeyPressed } from "../../../common/misc/KeyManager.js"
 import { AttachmentBubble, getAttachmentType } from "../../../common/gui/AttachmentBubble.js"
@@ -31,10 +31,11 @@ import { MailAddressAndName } from "../../../common/api/common/CommonMailUtils.j
 import { LabelsPopup } from "./LabelsPopup.js"
 import { Label } from "../../../common/gui/base/Label.js"
 import { px, size } from "../../../common/gui/size.js"
-import { MoveMode } from "../model/MailModel"
 import { highlightTextInQueryAsChildren } from "../../../common/gui/TextHighlightViewUtils"
 import { EventBanner, EventBannerAttrs } from "./EventBanner"
 import { getGroupColors } from "../../../common/misc/GroupColors"
+
+import { getTimeFormatForUser } from "../../../common/api/common/utils/UserUtils"
 
 export type MailAddressDropdownCreator = (args: {
 	mailAddress: MailAddressAndName
@@ -45,6 +46,7 @@ export type MailAddressDropdownCreator = (args: {
 export interface MailHeaderActions {
 	trash: () => unknown
 	delete: (() => unknown) | null
+	move: (dom: HTMLElement) => unknown
 }
 
 export interface MailViewerHeaderAttrs {
@@ -97,9 +99,9 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			return null
 		}
 
-		const margin = px(size.vpad_xsm)
+		const margin = px(size.spacing_4)
 		return m(
-			".flex.mb-xs.flex-wrap",
+			".flex.mb-4.flex-wrap",
 			{
 				style: {
 					columnGap: margin,
@@ -115,17 +117,17 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 								icon,
 								container: "div",
 								style: {
-									fill: theme.content_button,
+									fill: theme.on_surface_variant,
 									marginLeft: margin,
 								},
 							}),
-							m(".span", folderInfo.name),
+							m(".span.pl-4", folderInfo.name),
 						])
 					: null,
 				labels.map((label) =>
 					m(Label, {
 						text: label.name,
-						color: label.color ?? theme.content_accent,
+						color: label.color ?? theme.primary,
 					}),
 				),
 			],
@@ -138,7 +140,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 		const displayedSender = viewModel.getDisplayedSender()
 		return m(
-			".flex.mt-xs.click.col",
+			".flex.mt-4.click.col",
 			{
 				class: responsiveCardHMargin(),
 				role: "button",
@@ -164,18 +166,18 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 				m(".flex", [
 					this.getRecipientEmailAddress(attrs),
 					m(".flex-grow"),
-					m(".flex.items-center.white-space-pre.ml-s.ml-between-s", {
+					m(".flex.items-center.white-space-pre.ml-8.ml-between-4", {
 						// Orca refuses to read ut unless it's not focusable
 						tabindex: TabIndex.Default,
 						"aria-label": lang.get(viewModel.isConfidential() ? "confidential_action" : "nonConfidential_action") + ", " + dateTime,
 					}),
-					m(".flex.ml-between-s.items-center", [
+					m(".flex.ml-between-4.items-center", [
 						viewModel.isConfidential()
 							? m(Icon, {
 									icon: getConfidentialIcon(viewModel.mail),
 									container: "div",
 									style: {
-										fill: theme.content_button,
+										fill: theme.on_surface_variant,
 									},
 									hoverText: lang.get("confidential_label"),
 								})
@@ -185,11 +187,11 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 							icon: getFolderIconByType(folderInfo.folderType),
 							container: "div",
 							style: {
-								fill: theme.content_button,
+								fill: theme.on_surface_variant,
 							},
 							hoverText: folderInfo.name,
 						}),
-						m(".small.font-weight-600.selectable.no-wrap", { style: { color: theme.content_button } }, [
+						m(".small.font-weight-600.selectable.no-wrap", { style: { color: theme.on_surface } }, [
 							m(".noprint", dateTime), // show the short date when viewing
 							m(".noscreen", dateTimeFull), // show the date with year when printing
 						]),
@@ -214,7 +216,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			m(
 				".flex.flex-grow.align-self-start.items-start.overflow-hidden",
 				{
-					class: styles.isSingleColumnLayout() ? "mt-m" : "mt",
+					class: styles.isSingleColumnLayout() ? "mt-12" : "mt-16",
 					role: "button",
 					"mail-expander": "true",
 					// "aria-expanded" is always true because this component is only used in expanded view
@@ -235,12 +237,12 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					viewModel.isUnread() ? this.renderUnreadDot() : null,
 					viewModel.isDraftMail()
 						? m(
-								".mr-xs.align-self-center",
+								".mr-4.align-self-center",
 								m(Icon, {
 									icon: Icons.Edit,
 									container: "div",
 									style: {
-										fill: theme.content_button,
+										fill: theme.on_surface_variant,
 									},
 									hoverText: lang.get("draft_label"),
 								}),
@@ -254,9 +256,9 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 				],
 			),
 			m(
-				".flex-end.items-start.ml-between-s",
+				".flex-end.items-start.ml-between-4",
 				{
-					class: styles.isSingleColumnLayout() ? "" : "mt-xs",
+					class: styles.isSingleColumnLayout() ? "" : "mt-4",
 					style: {
 						// align "more" button with the datetime text
 						marginRight: styles.isSingleColumnLayout() ? "-3px" : "6px",
@@ -270,7 +272,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 	private renderUnreadDot(): Children {
 		return m(
-			".flex.flex-no-grow.no-shrink.pr-s",
+			".flex.flex-no-grow.no-shrink.pr-4",
 			{
 				"data-testid": "unread-indicator",
 				style: {
@@ -284,9 +286,9 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	private makeSubjectActionsLineClasses() {
 		let classes = ".flex.click"
 		if (styles.isSingleColumnLayout()) {
-			classes += ".ml"
+			classes += ".ml-12"
 		} else {
-			classes += ".pl-l"
+			classes += ".pl-24"
 		}
 
 		return classes
@@ -296,25 +298,40 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		const { viewModel } = attrs
 		if (viewModel.isCollapsed()) return null
 
-		const phishingBanner = this.renderPhishingWarning(viewModel)
+		const failureBanner = this.renderFailureBanner(viewModel)
 		const externalContentBanner = this.renderExternalContentBanner(attrs)
-
+		const newsletterBanner = this.renderNewsletterBanner(viewModel)
 		const banners: ChildArray = []
 		// we don't wrap it in a single element because our container might depend on us being separate children for margins
-		if (phishingBanner) {
-			banners.push(m("." + responsiveCardHMargin(), phishingBanner))
-		}
-		if (!!phishingBanner && !viewModel.isWarningDismissed()) {
-			banners.push(
-				m("." + responsiveCardHMargin(), this.renderHardAuthenticationFailWarning(viewModel) ?? this.renderSoftAuthenticationFailWarning(viewModel)),
-			)
+		if (failureBanner) {
+			banners.push(m("." + responsiveCardHMargin(), failureBanner))
 		}
 		if (externalContentBanner) {
 			banners.push(m("." + responsiveCardHMargin(), externalContentBanner))
 		}
+		if (newsletterBanner) {
+			banners.push(m("." + responsiveCardHMargin(), newsletterBanner))
+		}
 
 		const hasEventInvitation = viewModel.getCalendarEventAttachment()
-		return isEmpty(banners) && !hasEventInvitation ? [m("hr.hr.mt-xs." + responsiveCardHMargin())] : [...banners]
+		return isEmpty(banners) && !hasEventInvitation ? [m("hr.hr.mt-4." + responsiveCardHMargin())] : [...banners]
+	}
+
+	private renderFailureBanner(viewModel: MailViewerViewModel): Children | null {
+		switch (viewModel.mustRenderFailureBanner()) {
+			case FailureBannerType.Phishing:
+				// default-antiphishing-header: Don't show phishing warning, use external content banner instead
+				return null
+			case FailureBannerType.MailAuthenticationHardFail:
+				return this.renderHardAuthenticationFailWarning(viewModel)
+			case FailureBannerType.MailAuthenticationSoftFail:
+				return this.renderSoftAuthenticationFailWarning(viewModel)
+			case FailureBannerType.DeprecatedPublicKey:
+				return this.renderDeprecatedPublicKeyBanner(viewModel)
+			case FailureBannerType.None:
+			default:
+				return null
+		}
 	}
 
 	private renderConnectionLostBanner(viewModel: MailViewerViewModel): Children {
@@ -341,7 +358,10 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 	private renderEventBanner(viewModel: MailViewerViewModel): Children {
 		const eventAttachment = viewModel.getCalendarEventAttachment()
-		const groupColors: Map<Id, string> = getGroupColors(viewModel.logins.getUserController().userSettingsGroupRoot)
+		const groupColors: Map<Id, string> = getGroupColors(
+			viewModel.logins.getUserController().user._id,
+			viewModel.logins.getUserController().userSettingsGroupRoot,
+		)
 
 		return eventAttachment
 			? m(
@@ -352,6 +372,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 						mail: viewModel.mail,
 						eventsRepository: viewModel.eventsRepository,
 						groupColors,
+						usesAmPmTimeFormat: getTimeFormatForUser(viewModel.logins.getUserController().userSettingsGroupRoot) === TimeFormat.TWELVE_HOURS,
 					} satisfies EventBannerAttrs),
 				)
 			: null
@@ -364,7 +385,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 		return m("." + responsiveCardHPadding(), liveDataAttrs(), [
 			m(
-				".mt-s",
+				".mt-8",
 				displayedSender == null
 					? null
 					: [
@@ -417,12 +438,12 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					: null,
 			),
 			m(
-				".mt-s",
+				".mt-8",
 				viewModel.getToRecipients().length
 					? [
 							m(".small.b", lang.get("to_label")),
 							m(
-								".flex.col.mt-between-s",
+								".flex.col.mt-between-4",
 								viewModel.getToRecipients().map((recipient) =>
 									m(
 										".flex",
@@ -448,7 +469,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					: null,
 			),
 			m(
-				".mt-s",
+				".mt-8",
 				viewModel.getCcRecipients().length
 					? [
 							m(".small.b", lang.get("cc_label")),
@@ -475,7 +496,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					: null,
 			),
 			m(
-				".mt-s",
+				".mt-8",
 				viewModel.getBccRecipients().length
 					? [
 							m(".small.b", lang.get("bcc_label")),
@@ -502,7 +523,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					: null,
 			),
 			m(
-				".mt-s",
+				".mt-8",
 				viewModel.getReplyTos().length
 					? [
 							m(".small.b", lang.get("replyTo_label")),
@@ -535,8 +556,8 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		// Show a loading symbol if we are loading attachments
 		if (viewModel.isLoadingAttachments() && !viewModel.isConnectionLost()) {
 			return m(".flex." + responsiveCardHMargin(), [
-				m(".flex-v-center.pl-button", progressIcon()),
-				m(".small.flex-v-center.plr.button-height", lang.get("loading_msg")),
+				m(".flex-v-center.pl-8", progressIcon()),
+				m(".small.flex-v-center.plr-12.button-height", lang.get("loading_msg")),
 			])
 		} else {
 			const attachments = viewModel.getNonInlineAttachments()
@@ -554,7 +575,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			}
 
 			return [
-				m(".flex.mt-s.mb-s" + "." + responsiveCardHMargin(), liveDataAttrs(), [
+				m(".flex.mt-8.mb-8" + "." + responsiveCardHMargin(), liveDataAttrs(), [
 					attachmentCount === 1
 						? // If we have exactly one attachment, just show the attachment
 							this.renderAttachmentContainer(viewModel, attachments, importFile)
@@ -572,7 +593,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 									"font-weight": "normal",
 								},
 								expanded: this.filesExpanded,
-								color: theme.content_fg,
+								color: theme.on_surface,
 								isBig: true,
 								isUnformattedLabel: true,
 								onExpandedChange: (change) => {
@@ -589,7 +610,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 								expanded: this.filesExpanded,
 							},
 							m(".flex.col." + responsiveCardHMargin(), [
-								m(".flex.flex-wrap.gap-hpad", this.renderAttachmentContainer(viewModel, attachments, importFile)),
+								m(".flex.flex-wrap.gap-12", this.renderAttachmentContainer(viewModel, attachments, importFile)),
 								isIOSApp()
 									? null
 									: m(
@@ -629,60 +650,82 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 			? m(
 					Badge,
 					{
-						classes: ".mr-s",
+						classes: ".mr-8",
 					},
 					companyTeamLabel,
 				)
 			: null
 	}
 
-	private renderPhishingWarning(viewModel: MailViewerViewModel): Children | null {
-		// Always disabled - never show phishing warning
-		return null
-		// if (viewModel.isMailSuspicious()) {
-		// 	return m(InfoBanner, {
-		// 		message: "phishingMessageBody_msg",
-		// 		icon: Icons.Warning,
-		// 		type: BannerType.Warning,
-		// 		helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.Phishing : null,
-		// 		buttons: [
-		// 			{
-		// 				label: "markAsNotPhishing_action",
-		// 				click: () => viewModel.markAsNotPhishing().then(() => m.redraw()),
-		// 			},
-		// 		],
-		// 	})
-		// }
+	private renderPhishingWarning(viewModel: MailViewerViewModel): Children {
+		return m(InfoBanner, {
+			message: "phishingMessageBody_msg",
+			icon: Icons.Warning,
+			type: BannerType.Warning,
+			helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.Phishing : null,
+			buttons: [
+				{
+					label: "markAsNotPhishing_action",
+					click: () => viewModel.markAsNotPhishing().then(() => m.redraw()),
+				},
+			],
+		})
 	}
 
-	private renderHardAuthenticationFailWarning(viewModel: MailViewerViewModel): Children | null {
-		const authFailedHard =
-			// the banner should not be shown if mailDetails are not yet loaded
-			(viewModel.isMailAuthenticationStatusLoaded() &&
-				!viewModel.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED) &&
-				!viewModel.checkMailAuthenticationStatus(MailAuthenticationStatus.SOFT_FAIL)) ||
-			viewModel.mail.encryptionAuthStatus === EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED
-
-		if (authFailedHard) {
+	private renderNewsletterBanner(viewModel: MailViewerViewModel): Children | null {
+		if (viewModel.hasListUnsubscribeHeader()) {
 			return m(InfoBanner, {
-				message: "mailAuthFailed_msg",
-				icon: Icons.Warning,
-				helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.MailAuth : null,
-				type: BannerType.Warning,
-				buttons: [
-					{
-						label: "close_alt",
-						click: () => {
-							viewModel.setWarningDismissed(true)
-							viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
-						},
-					},
-				],
+				message: viewModel.isListUnsubscribe() ? "newsletterBanner_msg" : "newsletterBannerUnsubscribed_msg",
+				icon: Icons.PricingMail,
+				type: BannerType.Info,
+				buttons: viewModel.isListUnsubscribe()
+					? [
+							{
+								label: "unsubscribe_action",
+								click: () => unsubscribe(viewModel).then(() => m.redraw()),
+							},
+						]
+					: [],
 			})
 		}
 	}
 
-	private renderSoftAuthenticationFailWarning(viewModel: MailViewerViewModel): Children | null {
+	private renderHardAuthenticationFailWarning(viewModel: MailViewerViewModel): Children {
+		return m(InfoBanner, {
+			message: "mailAuthFailed_msg",
+			icon: Icons.Warning,
+			helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.MailAuth : null,
+			type: BannerType.Warning,
+			buttons: [
+				{
+					label: "close_alt",
+					click: () => viewModel.setWarningDismissed(true),
+				},
+			],
+		})
+	}
+
+	private renderSoftAuthenticationFailWarning(viewModel: MailViewerViewModel): Children {
+		const buttons: ReadonlyArray<BannerButtonAttrs | null> = [
+			{
+				label: "close_alt",
+				click: () => viewModel.setWarningDismissed(true),
+			},
+		]
+		return m(InfoBanner, {
+			message: () =>
+				viewModel.mail.differentEnvelopeSender
+					? lang.get("mailAuthMissingWithTechnicalSender_msg", {
+							"{sender}": viewModel.mail.differentEnvelopeSender,
+						})
+					: lang.get("mailAuthMissing_label"),
+			icon: Icons.Warning,
+			helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.MailAuth : null,
+			buttons: buttons,
+		})
+	}
+
+	private renderDeprecatedPublicKeyBanner(viewModel: MailViewerViewModel): Children {
 		const buttons: ReadonlyArray<BannerButtonAttrs | null> = [
 			{
 				label: "close_alt",
@@ -692,42 +735,32 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 				},
 			},
 		]
-		if (viewModel.mail.encryptionAuthStatus === EncryptionAuthStatus.RSA_DESPITE_TUTACRYPT) {
-			return m(InfoBanner, {
-				message: () => lang.get("deprecatedKeyWarning_msg"),
-				icon: Icons.Warning,
-				helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.DeprecatedKey : null,
-				buttons: buttons,
-			})
-		} else if (viewModel.checkMailAuthenticationStatus(MailAuthenticationStatus.SOFT_FAIL)) {
-			return m(InfoBanner, {
-				message: () =>
-					viewModel.mail.differentEnvelopeSender
-						? lang.get("mailAuthMissingWithTechnicalSender_msg", {
-								"{sender}": viewModel.mail.differentEnvelopeSender,
-							})
-						: lang.get("mailAuthMissing_label"),
-				icon: Icons.Warning,
-				helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.MailAuth : null,
-				buttons: buttons,
-			})
-		} else {
-			return null
-		}
+		return m(InfoBanner, {
+			message: () => lang.get("deprecatedKeyWarning_msg"),
+			icon: Icons.Warning,
+			helpLink: canSeeTutaLinks(viewModel.logins) ? InfoLink.DeprecatedKey : null,
+			buttons: buttons,
+		})
 	}
 
 	private renderExternalContentBanner(attrs: MailViewerHeaderAttrs): Children | null {
-		// Show the banner initially (when status is Block), hide it after user interaction
-		// Also show if status is AlwaysBlock (user explicitly blocked, but banner should still show initially)
+		// default-antiphishing-header: Always show the external content banner for unknown senders
+		// Only hide when user has made a PERMANENT decision (AlwaysShow or AlwaysBlock)
 		const status = attrs.viewModel.getContentBlockingStatus()
-		if (status !== ContentBlockingStatus.Block && status !== ContentBlockingStatus.AlwaysBlock) {
+		if (status === ContentBlockingStatus.AlwaysShow || status === ContentBlockingStatus.AlwaysBlock) {
 			return null
 		}
 
-		const showButton: BannerButtonAttrs = {
-			label: "showBlockedContent_action",
-			click: () => attrs.viewModel.setContentBlockingStatus(ContentBlockingStatus.Show),
-		}
+		const isShowingContent = status === ContentBlockingStatus.Show
+
+		// If already showing content, don't show the "Show" button again
+		const showButton: BannerButtonAttrs | null = isShowingContent
+			? null
+			: {
+					label: "showBlockedContent_action",
+					click: () => attrs.viewModel.setContentBlockingStatus(ContentBlockingStatus.Show),
+				}
+
 		const alwaysOrNeverAllowButtons = attrs.viewModel.canPersistBlockingStatus()
 			? [
 					attrs.viewModel.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED)
@@ -755,11 +788,15 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 						},
 					]
 				: alwaysOrNeverAllowButtons
+
+		// Build buttons array - only include showButton if not already showing
+		const buttons: BannerButtonAttrs[] = showButton ? [showButton, ...maybeDropdownButtons] : [...maybeDropdownButtons]
+
 		return m(InfoBanner, {
 			message: "contentBlocked_msg",
 			icon: Icons.Picture,
 			helpLink: canSeeTutaLinks(attrs.viewModel.logins) ? InfoLink.LoadImages : null,
-			buttons: [showButton, ...maybeDropdownButtons],
+			buttons,
 		})
 	}
 
@@ -796,18 +833,11 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 					})
 					actionButtons.push({
 						label: "move_action",
-						click: (_: MouseEvent, dom: HTMLElement) =>
-							showMoveMailsDropdown(
-								viewModel.mailboxModel,
-								viewModel.mailModel,
-								viewModel.mailViewModel,
-								dom.getBoundingClientRect(),
-								[viewModel.mail],
-								MoveMode.Mails,
-							),
+						click: (_: MouseEvent, dom: HTMLElement) => actions.move(dom),
 						icon: Icons.Folder,
 					})
 					actionButtons.push(deleteOrTrashAction)
+					addToggleLightModeButtonAttrs(viewModel, actionButtons)
 				} else {
 					if (viewModel.canReply()) {
 						actionButtons.push({
@@ -834,15 +864,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 					actionButtons.push({
 						label: "move_action",
-						click: (_: MouseEvent, dom: HTMLElement) =>
-							showMoveMailsDropdown(
-								viewModel.mailboxModel,
-								viewModel.mailModel,
-								viewModel.mailViewModel,
-								dom.getBoundingClientRect(),
-								[viewModel.mail],
-								MoveMode.Mails,
-							),
+						click: (_: MouseEvent, dom: HTMLElement) => actions.move(dom),
 						icon: Icons.Folder,
 					})
 
@@ -884,7 +906,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		if (relevantRecipient) {
 			const numberOfAllRecipients = viewModel.getNumberOfRecipients()
 			return m(
-				".flex.click.small.ml-between-s.items-center",
+				".flex.click.small.ml-between-4.items-center",
 				{
 					style: {
 						// use this to allow the container to shrink, otherwise it doesn't want to cut the recipient address
@@ -900,7 +922,7 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 							icon: BootIcons.Expand,
 							container: "div",
 							style: {
-								fill: theme.content_fg,
+								fill: theme.on_surface,
 								transform: this.detailsExpanded ? "rotate(180deg)" : "",
 							},
 						}),

@@ -7,7 +7,7 @@ import { Button, ButtonType } from "../../../common/gui/base/Button.js"
 import { elementIdPart, isSameId } from "../../../common/api/common/utils/EntityUtils.js"
 import { CollapsedMailView } from "./CollapsedMailView.js"
 import { MailViewerViewModel } from "./MailViewerViewModel.js"
-import { px, size } from "../../../common/gui/size.js"
+import { component_size, px, size } from "../../../common/gui/size.js"
 import { Keys } from "../../../common/api/common/TutanotaConstants.js"
 import { keyManager, Shortcut } from "../../../common/misc/KeyManager.js"
 import { styles } from "../../../common/gui/styles.js"
@@ -30,7 +30,7 @@ export interface ConversationViewerAttrs {
 
 const SCROLL_FACTOR = 4 / 5
 
-export const conversationCardMargin = size.hpad_large
+export const conversationCardMargin = size.spacing_24
 
 /**
  * Displays mails in a conversation
@@ -49,6 +49,11 @@ export class ConversationViewer implements Component<ConversationViewerAttrs> {
 
 	private setupShortcuts(viewModel: () => MailViewerViewModel | undefined): Array<Shortcut> {
 		const userController = locator.logins.getUserController()
+		const isReplyAndForwardEnabled = () => {
+			const mailViewerViewModel = viewModel()
+			return mailViewerViewModel != null && !mailViewerViewModel.isDraftMail()
+		}
+
 		const shortcuts: Shortcut[] = [
 			{
 				key: Keys.PAGE_UP,
@@ -75,7 +80,7 @@ export class ConversationViewer implements Component<ConversationViewerAttrs> {
 				exec: () => {
 					assertNotNull(viewModel()).reply(false)
 				},
-				enabled: () => !viewModel()?.isDraftMail(),
+				enabled: isReplyAndForwardEnabled,
 				help: "reply_action",
 			},
 			{
@@ -84,7 +89,7 @@ export class ConversationViewer implements Component<ConversationViewerAttrs> {
 				exec: () => {
 					assertNotNull(viewModel()).reply(true)
 				},
-				enabled: () => !viewModel()?.isDraftMail(),
+				enabled: isReplyAndForwardEnabled,
 				help: "replyAll_action",
 			},
 		]
@@ -92,7 +97,7 @@ export class ConversationViewer implements Component<ConversationViewerAttrs> {
 			shortcuts.push({
 				key: Keys.F,
 				shift: true,
-				enabled: () => !viewModel()?.isDraftMail(),
+				enabled: isReplyAndForwardEnabled,
 				exec: () => {
 					assertNotNull(viewModel()).forward().catch(ofClass(UserError, showUserError))
 				},
@@ -141,8 +146,10 @@ export class ConversationViewer implements Component<ConversationViewerAttrs> {
 		// Having more room at the bottom allows the last email so it is (almost) always in the same place on the screen.
 		// We reduce space by 100 for the header of the viewer and a bit more
 		const height =
-			document.body.offsetHeight - (styles.isUsingBottomNavigation() ? size.navbar_height_mobile + size.bottom_nav_bar : size.navbar_height) - 300
-		return m(".mt-l.noprint", {
+			document.body.offsetHeight -
+			(styles.isUsingBottomNavigation() ? component_size.navbar_height_mobile + component_size.bottom_nav_bar : component_size.navbar_height) -
+			300
+		return m(".mt-32.noprint", {
 			style: {
 				height: px(height),
 			},
@@ -158,14 +165,14 @@ export class ConversationViewer implements Component<ConversationViewerAttrs> {
 		return entries.map((entry, position) => {
 			switch (entry.type_ref.typeId) {
 				case MailTypeRef.typeId: {
-					const mailViewModel = entry.viewModel
-					const isPrimary = mailViewModel === viewModel.primaryViewModel()
+					const mailViewerViewModel = entry.viewModel
+					const isPrimary = mailViewerViewModel === viewModel.primaryViewModel()
 					// only pass in position if we do have an actual conversation position
 					return this.renderViewer(
-						mailViewModel,
+						mailViewerViewModel,
 						isPrimary,
-						actions(mailViewModel),
-						moreActions(mailViewModel),
+						actions(mailViewerViewModel),
+						moreActions(mailViewerViewModel),
 						viewModel.isFinished() ? position : null,
 					)
 				}
@@ -185,10 +192,10 @@ export class ConversationViewer implements Component<ConversationViewerAttrs> {
 				)
 			: !viewModel.isFinished()
 				? m(
-						".font-weight-600.center.mt-l" + "." + responsiveCardHMargin(),
+						".font-weight-600.center.mt-32" + "." + responsiveCardHMargin(),
 						{
 							style: {
-								color: theme.content_button,
+								color: theme.on_surface,
 							},
 						},
 						lang.get("loading_msg"),
@@ -203,16 +210,22 @@ export class ConversationViewer implements Component<ConversationViewerAttrs> {
 		moreActions: MailViewerMoreActions,
 		position: number | null,
 	): Children {
+		const verificationBanner = null
+
 		return m(
 			".mlr-safe-inset",
+			{
+				key: elementIdPart(mailViewerViewModel.mail.conversationEntry),
+			},
 			m(
-				".border-radius-big.rel",
+				".border-radius-12.rel",
 				{
 					class: responsiveCardHMargin(),
-					key: elementIdPart(mailViewerViewModel.mail.conversationEntry),
 					style: {
-						backgroundColor: theme.content_bg,
+						backgroundColor: theme.surface,
 						marginTop: px(position == null || position === 0 ? 0 : conversationCardMargin),
+						// column resize element takes some space, reduce margin to make the gap smaller
+						marginLeft: styles.isSingleColumnLayout() ? undefined : px(size.spacing_16),
 					},
 				},
 				mailViewerViewModel.isCollapsed()
@@ -220,12 +233,12 @@ export class ConversationViewer implements Component<ConversationViewerAttrs> {
 							viewModel: mailViewerViewModel,
 						})
 					: m(MailViewer, {
-							mailViewerViewModel: mailViewerViewModel,
-							isPrimary: isPrimary,
+							mailViewerViewModel,
+							isPrimary,
 							// we want to expand for the first email like when it's a forwarded email
 							defaultQuoteBehavior: position === 0 ? "expand" : "collapse",
-							moreActions: moreActions,
-							actions: actions,
+							moreActions,
+							actions,
 						}),
 			),
 		)

@@ -4,8 +4,6 @@
 // update the instance in the offline db
 
 import {
-	type ClientModelParsedInstance,
-	type ClientTypeModel,
 	EncryptedParsedAssociation,
 	EncryptedParsedValue,
 	Entity,
@@ -19,10 +17,9 @@ import {
 	ServerTypeModel,
 } from "../../common/EntityTypes"
 import { Patch } from "../../entities/sys/TypeRefs"
-import { assertNotNull, Base64, deepEqual, getTypeString, isEmpty, isSameTypeRef, lazy, promiseMap, TypeRef } from "@tutao/tutanota-utils"
+import { assertNotNull, Base64, deepEqual, isEmpty, lazy, Nullable, promiseMap, TypeRef } from "@tutao/tutanota-utils"
 import { AttributeModel } from "../../common/AttributeModel"
 import { CacheStorage } from "../rest/DefaultEntityRestCache"
-import { Nullable } from "@tutao/tutanota-utils/dist/Utils"
 import { PatchOperationError } from "../../common/error/PatchOperationError"
 import { AssociationType } from "../../common/EntityConstants"
 import { PatchOperationType, TypeModelResolver } from "../../common/EntityFunctions"
@@ -30,15 +27,10 @@ import { InstancePipeline } from "../crypto/InstancePipeline"
 import { isSameId, removeTechnicalFields } from "../../common/utils/EntityUtils"
 import { convertDbToJsType } from "../crypto/ModelMapper"
 import { decryptValue } from "../crypto/CryptoMapper"
-import { VersionedEncryptedKey } from "../crypto/CryptoWrapper"
-import { AesKey, BitArray, extractIvFromCipherText } from "@tutao/tutanota-crypto"
+import { AesKey, extractIvFromCipherText } from "@tutao/tutanota-crypto"
 import { CryptoFacade } from "../crypto/CryptoFacade"
-import { parseKeyVersion } from "../facades/KeyLoaderFacade"
-import { ProgrammingError } from "../../common/error/ProgrammingError"
-import { EntityUpdateData, getLogStringForPatches } from "../../common/utils/EntityUpdateUtils"
+import { EntityUpdateData } from "../../common/utils/EntityUpdateUtils"
 import { hasError } from "../../common/utils/ErrorUtils"
-import { computePatches } from "../../common/utils/PatchGenerator"
-import { FileTypeRef, MailTypeRef } from "../../entities/tutanota/TypeRefs"
 
 export class PatchMerger {
 	constructor(
@@ -58,9 +50,15 @@ export class PatchMerger {
 		const parsedInstance = await this.cacheStorage.getParsed(instanceType, listId, elementId)
 		if (parsedInstance != null) {
 			const typeModel = await this.typeModelResolver.resolveServerTypeReference(instanceType)
+
+			const instance = await this.instancePipeline.modelMapper.mapToInstance(instanceType, parsedInstance)
+			const sk = await this.cryptoFacade().resolveSessionKey(instance)
 			// We need to preserve the order of patches, so no promiseMap here
 			for (const patch of patches) {
-				await this.applySinglePatch(parsedInstance, typeModel, patch)
+				const appliedSuccessfully = await this.applySinglePatch(parsedInstance, typeModel, patch, sk)
+				if (!appliedSuccessfully) {
+					return null
+				}
 			}
 			return parsedInstance
 		}
@@ -68,74 +66,53 @@ export class PatchMerger {
 	}
 
 	public async patchAndStoreInstance(entityUpdate: EntityUpdateData): Promise<Nullable<ServerModelParsedInstance>> {
-		const { typeRef, instanceListId, instanceId, patches, instance } = entityUpdate
+		const { typeRef, instanceListId, instanceId, patches } = entityUpdate
 
-		const patchAppliedInstance = await this.getPatchedInstanceParsed(typeRef, instanceListId, instanceId, assertNotNull(patches))
-		if (patchAppliedInstance == null) {
+		try {
+			const patchAppliedInstance = await this.getPatchedInstanceParsed(typeRef, instanceListId, instanceId, assertNotNull(patches))
+			if (patchAppliedInstance == null || hasError(patchAppliedInstance)) {
+				return null
+			}
+			await this.cacheStorage.put(typeRef, patchAppliedInstance)
+			return patchAppliedInstance
+		} catch (e) {
+			// returning null leads to reloading from the server, this fixes the broken entity in the offline storage
 			return null
 		}
-
-		if (entityUpdate !== null && instance !== null) {
-			const isPatchAndAppliedInstanceMatch = await this.isInstanceOnUpdateIsSameAsPatched(entityUpdate, patchAppliedInstance)
-			if (!isPatchAndAppliedInstanceMatch) {
-				if (!hasError(instance)) {
-					// we do not want to put the instance in the offline storage if there are _errors (when decrypting)
-					await this.cacheStorage.put(typeRef, instance)
-				}
-				// There are concurrency issues with the File and Mail types due to bucketKey and UpdateSessionKeyService
-				if (!isSameTypeRef(FileTypeRef, entityUpdate.typeRef) && !isSameTypeRef(MailTypeRef, entityUpdate.typeRef)) {
-					throw new ProgrammingError(
-						"instance with id [" + instanceListId + ", " + instanceId + `] has not been successfully patched. Type: ${getTypeString(typeRef)}`,
-					)
-				}
-			} else {
-				await this.cacheStorage.put(typeRef, patchAppliedInstance)
-			}
-		} else {
-			await this.cacheStorage.put(typeRef, patchAppliedInstance)
-		}
-		return patchAppliedInstance
 	}
 
-	private async applySinglePatch(parsedInstance: ServerModelParsedInstance, typeModel: ServerTypeModel, patch: Patch) {
+	private async applySinglePatch(
+		parsedInstance: ServerModelParsedInstance,
+		typeModel: ServerTypeModel,
+		patch: Patch,
+		sk: Nullable<AesKey>,
+	): Promise<boolean> {
 		try {
-			const pathList: Array<string> = patch.attributePath.split("/") //== /$mailId/$attrIdRecipient/${aggregateIdRecipient}/${attrIdName}
-			const pathResult: PathResult = await this.traversePath(parsedInstance, typeModel, pathList)
+			const pathList: Array<string> = patch.attributePath.split("/")
+			const pathResult: PathResult | null = await this.traversePath(parsedInstance, typeModel, pathList)
+			if (pathResult == null) {
+				return false
+			}
 			const attributeId = pathResult.attributeId
 
 			const pathResultTypeModel = pathResult.typeModel
 			// We need to map and decrypt for REPLACE and ADDITEM as the payloads are encrypted, REMOVEITEM only has either aggregate ids, generated ids, or id tuples
 			if (patch.patchOperation !== PatchOperationType.REMOVE_ITEM) {
 				const encryptedParsedValue: Nullable<EncryptedParsedValue | EncryptedParsedAssociation> = await this.parseValueOnPatch(pathResult, patch.value)
-				const isAggregation = pathResultTypeModel.associations[attributeId]?.type === AssociationType.Aggregation
 
+				const isAggregation = pathResultTypeModel.associations[attributeId]?.type === AssociationType.Aggregation
 				const isEncryptedValue = pathResultTypeModel.values[attributeId]?.encrypted
-				let value: Nullable<ParsedValue | ParsedAssociation>
-				if ((isAggregation && typeModel.encrypted) || isEncryptedValue) {
-					const sk = await this.getSessionKey(parsedInstance, typeModel)
-					value = await this.decryptValueOnPatchIfNeeded(pathResult, encryptedParsedValue, sk)
-				} else {
-					value = await this.decryptValueOnPatchIfNeeded(pathResult, encryptedParsedValue, null)
-				}
+				const needsDecryption = ((isAggregation && typeModel.encrypted) || isEncryptedValue) && sk != null
+				const value = needsDecryption ? await this.decryptValueOnPatch(pathResult, encryptedParsedValue, sk) : encryptedParsedValue
 				await this.applyPatchOperation(patch.patchOperation, pathResult, value)
 			} else {
 				let idArray = JSON.parse(patch.value!) as Array<any>
 				await this.applyPatchOperation(patch.patchOperation, pathResult, idArray)
 			}
+			return true
 		} catch (e) {
 			throw new PatchOperationError(e)
 		}
-	}
-
-	public async getSessionKey(parsedInstance: ServerModelParsedInstance, typeModel: ServerTypeModel) {
-		const _ownerEncSessionKey = AttributeModel.getAttribute<Uint8Array>(parsedInstance, "_ownerEncSessionKey", typeModel)
-		const _ownerKeyVersion = parseKeyVersion(AttributeModel.getAttribute<string>(parsedInstance, "_ownerKeyVersion", typeModel))
-		const _ownerGroup = AttributeModel.getAttribute<Id>(parsedInstance, "_ownerGroup", typeModel)
-		const versionedEncryptedKey = {
-			encryptingKeyVersion: _ownerKeyVersion,
-			key: _ownerEncSessionKey,
-		} as VersionedEncryptedKey
-		return await this.cryptoFacade().decryptSessionKey(_ownerGroup, versionedEncryptedKey)
 	}
 
 	private async applyPatchOperation(
@@ -268,60 +245,60 @@ export class PatchMerger {
 		return null
 	}
 
-	private async decryptValueOnPatchIfNeeded(
+	private async decryptValueOnPatch(
 		pathResult: PathResult,
 		value: Nullable<EncryptedParsedValue | EncryptedParsedAssociation>,
-		sk: Nullable<AesKey>,
+		sk: AesKey,
 	): Promise<Nullable<ParsedValue> | Nullable<ParsedAssociation>> {
 		const { typeModel, attributeId } = pathResult
 		const isValue = typeModel.values[attributeId] !== undefined
 		const isAggregation = typeModel.associations[attributeId] !== undefined && typeModel.associations[attributeId].type === AssociationType.Aggregation
 		if (isValue) {
-			if (sk !== null) {
-				const encryptedValueInfo = typeModel.values[attributeId] as ModelValue & { encrypted: true }
-				const encryptedValue = value
-				if (encryptedValue == null) {
-					delete pathResult.instanceToChange._finalIvs[attributeId]
-				} else if (encryptedValue === "") {
-					// the encrypted value is "" if the decrypted value is the default value
-					// storing this marker lets us restore that empty string when we re-encrypt the instance.
-					// check out encrypt in CryptoMapper to see the other side of this.
-					pathResult.instanceToChange._finalIvs[attributeId] = null
-				} else if (encryptedValueInfo.final && encryptedValue) {
-					// the server needs to be able to check if an encrypted final field changed.
-					// that's only possible if we re-encrypt using a deterministic IV, because the ciphertext changes if
-					// the IV or the value changes.
-					// storing the IV we used for the initial encryption lets us reuse it later.
-					pathResult.instanceToChange._finalIvs[attributeId] = extractIvFromCipherText(encryptedValue as Base64)
-				}
-				return decryptValue(encryptedValueInfo, encryptedValue as Base64, sk)
+			const encryptedValueInfo = typeModel.values[attributeId] as ModelValue & { encrypted: true }
+			const encryptedValue = value
+			if (encryptedValue == null) {
+				delete pathResult.instanceToChange._finalIvs[attributeId]
+			} else if (encryptedValue === "") {
+				// the encrypted value is "" if the decrypted value is the default value
+				// storing this marker lets us restore that empty string when we re-encrypt the instance.
+				// check out encrypt in CryptoMapper to see the other side of this.
+				pathResult.instanceToChange._finalIvs[attributeId] = null
+			} else if (encryptedValueInfo.final && encryptedValue) {
+				// the server needs to be able to check if an encrypted final field changed.
+				// that's only possible if we re-encrypt using a deterministic IV, because the ciphertext changes if
+				// the IV or the value changes.
+				// storing the IV we used for the initial encryption lets us reuse it later.
+				pathResult.instanceToChange._finalIvs[attributeId] = extractIvFromCipherText(encryptedValue as Base64)
 			}
-			return value
+			return decryptValue(encryptedValueInfo, encryptedValue as Base64, sk)
 		} else if (isAggregation) {
 			const encryptedAggregatedEntities = value as Array<ServerModelEncryptedParsedInstance>
 			const modelAssociation = typeModel.associations[attributeId]
 			const appName = modelAssociation.dependency ?? typeModel.app
 			const aggregationTypeModel = await this.typeModelResolver.resolveServerTypeReference(new TypeRef(appName, modelAssociation.refTypeId))
 			return await this.instancePipeline.cryptoMapper.decryptAggregateAssociation(aggregationTypeModel, encryptedAggregatedEntities, sk)
+		} else {
+			return value
 		}
-
-		return value // id and idTuple associations are never encrypted
 	}
 
-	private async traversePath(parsedInstance: ServerModelParsedInstance, serverTypeModel: ServerTypeModel, path: Array<string>): Promise<PathResult> {
+	private async traversePath(parsedInstance: ServerModelParsedInstance, serverTypeModel: ServerTypeModel, path: Array<string>): Promise<PathResult | null> {
 		if (path.length === 0) {
 			throw new PatchOperationError("Invalid attributePath, expected non-empty attributePath")
 		}
 		const pathItem = path.shift()!
 		try {
 			let attributeId: number
+			const attributeIdsInServerTypeModel = Object.keys(serverTypeModel.values).concat(Object.keys(serverTypeModel.associations))
 			if (env.networkDebugging) {
 				attributeId = parseInt(pathItem.split(":")[0])
 			} else {
 				attributeId = parseInt(pathItem)
 			}
-			if (!Object.keys(parsedInstance).some((attribute) => attribute === attributeId.toString())) {
-				throw new PatchOperationError("attribute id " + attributeId + " not found on the parsed instance. Type: " + serverTypeModel.name)
+			if (!attributeIdsInServerTypeModel.some((attribute) => attribute === attributeId.toString())) {
+				// this would mean server sent an attribute id not in the current activated server schema
+				// this should not happen, and returning null would trigger a reload from the server
+				return null
 			}
 
 			if (path.length === 0) {
@@ -354,49 +331,6 @@ export class PatchMerger {
 			throw new PatchOperationError("An error occurred while traversing path " + path + e.message)
 		}
 	}
-
-	private async isInstanceOnUpdateIsSameAsPatched(entityUpdate: EntityUpdateData, patchAppliedInstance: Nullable<ServerModelParsedInstance>) {
-		if (!deepEqual(entityUpdate.instance, patchAppliedInstance)) {
-			const instancePipeline = this.instancePipeline
-			const typeModel = await this.typeModelResolver.resolveServerTypeReference(entityUpdate.typeRef)
-			const typeReferenceResolver = this.typeModelResolver.resolveClientTypeReference.bind(this.typeModelResolver)
-			let sk: Nullable<BitArray> = null
-			if (typeModel.encrypted) {
-				sk = await this.getSessionKey(assertNotNull(patchAppliedInstance), typeModel)
-			}
-			const patchedEncryptedParsedInstance = await instancePipeline.cryptoMapper.encryptParsedInstance(
-				typeModel as unknown as ClientTypeModel,
-				assertNotNull(patchAppliedInstance) as unknown as ClientModelParsedInstance,
-				sk,
-			)
-			const patchedUntypedInstance = await instancePipeline.typeMapper.applyDbTypes(
-				typeModel as unknown as ClientTypeModel,
-				patchedEncryptedParsedInstance,
-			)
-			const patchDiff = await computePatches(
-				entityUpdate.instance as unknown as ClientModelParsedInstance,
-				assertNotNull(patchAppliedInstance) as unknown as ClientModelParsedInstance,
-				patchedUntypedInstance,
-				typeModel,
-				typeReferenceResolver,
-				true,
-			)
-			const isPatchAndFullInstanceMatch = isEmpty(patchDiff)
-			if (!isPatchAndFullInstanceMatch) {
-				console.log("patches on the entityUpdate: ", getLogStringForPatches(assertNotNull(entityUpdate.patches)))
-				console.error(
-					"instance with id [" +
-						entityUpdate.instanceListId +
-						", " +
-						entityUpdate.instanceId +
-						"]" +
-						`has not been successfully patched. Type: ${getTypeString(entityUpdate.typeRef)}, computePatches: ${getLogStringForPatches(patchDiff)}`,
-				)
-			}
-			return isPatchAndFullInstanceMatch
-		}
-		return true
-	}
 }
 
 export function distinctAssociations(associationArray: ParsedAssociation) {
@@ -411,7 +345,9 @@ export function distinctAssociations(associationArray: ParsedAssociation) {
 				return deepEqual(item, current)
 			})
 		) {
-			acc.push(current)
+			if (current != null) {
+				acc.push(current)
+			}
 		}
 		return acc
 	}, [])

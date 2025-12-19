@@ -1,6 +1,6 @@
 import m, { Children, Component, Vnode } from "mithril"
 import { CounterBadge } from "../../../common/gui/base/CounterBadge"
-import { getNavButtonIconBackground, theme } from "../../../common/gui/theme"
+import { theme } from "../../../common/gui/theme"
 import { lang } from "../../../common/misc/LanguageViewModel"
 import type { MinimizedEditor, MinimizedMailEditorViewModel } from "../model/MinimizedMailEditorViewModel"
 import { SaveErrorReason, SaveStatus, SaveStatusEnum } from "../model/MinimizedMailEditorViewModel"
@@ -54,17 +54,17 @@ export class MinimizedEditorOverlay implements Component<MinimizedEditorOverlayA
 	view(vnode: Vnode<MinimizedEditorOverlayAttrs>): Children {
 		const { minimizedEditor, viewModel, eventController } = vnode.attrs
 		const subject = minimizedEditor.sendMailModel.getSubject()
-		return m(".elevated-bg.pl.border-radius", [
+		return m(".elevated-bg.pl-12.border-radius", [
 			m(CounterBadge, {
 				count: viewModel.getMinimizedEditors().indexOf(minimizedEditor) + 1,
 				position: {
 					top: COUNTER_POS_OFFSET,
 					right: COUNTER_POS_OFFSET,
 				},
-				color: theme.navigation_button_icon,
-				background: getNavButtonIconBackground(),
+				color: theme.surface_container,
+				background: theme.on_surface_variant,
 			}),
-			m(".flex.justify-between.pb-xs.pt-xs", [
+			m(".flex.justify-between.pb-4.pt-4", [
 				m(
 					".flex.col.justify-center.min-width-0.flex-grow",
 					{
@@ -107,7 +107,7 @@ export class MinimizedEditorOverlay implements Component<MinimizedEditorOverlayA
 				const draft = model.draft
 
 				if (draft) {
-					await trashMails(mailLocator.mailModel, [draft._id])
+					await trashMails(mailLocator.mailboxModel, mailLocator.mailModel, await mailLocator.undoModel(), [draft])
 				}
 			}
 		})

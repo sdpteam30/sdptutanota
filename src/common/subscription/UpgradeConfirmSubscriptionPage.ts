@@ -1,13 +1,13 @@
 import m, { Children, Vnode, VnodeDOM } from "mithril"
 import { Dialog } from "../gui/base/Dialog"
 import { lang, MaybeTranslation, type TranslationKey } from "../misc/LanguageViewModel"
-import { formatPrice, formatPriceWithInfo, getPaymentMethodName, PaymentInterval } from "./PriceUtils"
+import { formatPrice, formatPriceWithInfo, getPaymentMethodName, PaymentInterval } from "./utils/PriceUtils"
 import { createSwitchAccountTypePostIn } from "../api/entities/sys/TypeRefs.js"
 import { AccountType, Const, PaymentMethodType } from "../api/common/TutanotaConstants"
 import { showProgressDialog } from "../gui/dialogs/ProgressDialog"
 import type { UpgradeSubscriptionData } from "./UpgradeSubscriptionWizard"
 import { BadGatewayError, PreconditionFailedError } from "../api/common/error/RestError"
-import { appStorePlanName, getPreconditionFailedPaymentMsg, SubscriptionApp, UpgradeType } from "./SubscriptionUtils"
+import { appStorePlanName, getPreconditionFailedPaymentMsg, SubscriptionApp, UpgradeType } from "./utils/SubscriptionUtils"
 import type { WizardPageAttrs, WizardPageN } from "../gui/base/WizardDialog.js"
 import { emitWizardEvent, WizardEventType } from "../gui/base/WizardDialog.js"
 import { TextField } from "../gui/base/TextField.js"
@@ -23,7 +23,8 @@ import { MobilePaymentError } from "../api/common/error/MobilePaymentError.js"
 import { client } from "../misc/ClientDetector.js"
 import { DateTime } from "luxon"
 import { formatDate } from "../misc/Formatter.js"
-import { SignupFlowStage, SignupFlowUsageTestController } from "./usagetest/UpgradeSubscriptionWizardUsageTestUtils.js"
+import { ReferralType, SignupFlowStage, SignupFlowUsageTestController } from "./usagetest/UpgradeSubscriptionWizardUsageTestUtils.js"
+import { completeUpgradeStage } from "../ratings/UserSatisfactionUtils"
 
 export class UpgradeConfirmSubscriptionPage implements WizardPageN<UpgradeSubscriptionData> {
 	private dom!: HTMLElement
@@ -48,9 +49,9 @@ export class UpgradeConfirmSubscriptionPage implements WizardPageN<UpgradeSubscr
 		const serviceData = createSwitchAccountTypePostIn({
 			accountType: AccountType.PAID,
 			customer: null,
-			plan: data.type,
+			plan: data.targetPlanType,
 			date: Const.CURRENT_DATE,
-			referralCode: data.referralCode,
+			referralCode: data.referralData?.code ?? null,
 			specialPriceUserSingle: null,
 			surveyData: null,
 			app: client.isCalendarApp() ? SubscriptionApp.Calendar : SubscriptionApp.Mail,
@@ -58,6 +59,7 @@ export class UpgradeConfirmSubscriptionPage implements WizardPageN<UpgradeSubscr
 		showProgressDialog("pleaseWait_msg", locator.serviceExecutor.post(SwitchAccountTypeService, serviceData))
 			.then(() => {
 				// Order confirmation (click on Buy), send selected payment method as an enum
+
 				return this.close(data, this.dom)
 			})
 			.catch(
@@ -96,7 +98,7 @@ export class UpgradeConfirmSubscriptionPage implements WizardPageN<UpgradeSubscr
 		try {
 			const result = await showProgressDialog(
 				"pleaseWait_msg",
-				locator.mobilePaymentsFacade.requestSubscriptionToPlan(appStorePlanName(data.type), data.options.paymentInterval(), customerIdBytes),
+				locator.mobilePaymentsFacade.requestSubscriptionToPlan(appStorePlanName(data.targetPlanType), data.options.paymentInterval(), customerIdBytes),
 			)
 			if (result.result !== MobilePaymentResultType.Success) {
 				return false
@@ -130,11 +132,11 @@ export class UpgradeConfirmSubscriptionPage implements WizardPageN<UpgradeSubscr
 		const isAppStorePayment = attrs.data.paymentData.paymentMethod === PaymentMethodType.AppStore
 
 		return [
-			m(".center.h4.pt", lang.get("upgradeConfirm_msg")),
-			m(".pt.pb.plr-l", [
+			m(".center.h4.pt-16", lang.get("upgradeConfirm_msg")),
+			m(".pt-16.pb-16.plr-24", [
 				m(TextField, {
 					label: "subscription_label",
-					value: getDisplayNameOfPlanType(attrs.data.type),
+					value: getDisplayNameOfPlanType(attrs.data.targetPlanType),
 					isReadOnly: true,
 				}),
 				m(TextField, {
@@ -167,13 +169,13 @@ export class UpgradeConfirmSubscriptionPage implements WizardPageN<UpgradeSubscr
 				}),
 			]),
 			m(
-				".smaller.center.pt-l",
+				".smaller.center.pt-32",
 				attrs.data.options.businessUse()
 					? lang.get("pricing.subscriptionPeriodInfoBusiness_msg")
 					: lang.get("pricing.subscriptionPeriodInfoPrivate_msg"),
 			),
 			m(
-				".flex-center.full-width.pt-l",
+				".flex-center.full-width.pt-32",
 				m(LoginButton, {
 					label: isAppStorePayment ? "checkoutWithAppStore_action" : "buy_action",
 					class: "small-login-button",
@@ -195,7 +197,16 @@ export class UpgradeConfirmSubscriptionPage implements WizardPageN<UpgradeSubscr
 
 	private buildPriceLabel(isYearly: boolean, { data: { nextYearPrice, planPrices } }: WizardPageAttrs<UpgradeSubscriptionData>): MaybeTranslation {
 		if (planPrices.getRawPricingData().firstMonthForFreeForYearlyPlan && isYearly) {
-			return lang.getTranslation("priceFrom_label", { "{date}": formatDate(DateTime.now().plus({ month: 1, day: 1 }).toJSDate()) })
+			return lang.getTranslation("priceFrom_label", {
+				"{date}": formatDate(
+					DateTime.now()
+						.plus({
+							month: 1,
+							day: 1,
+						})
+						.toJSDate(),
+				),
+			})
 		}
 
 		if (isYearly && nextYearPrice) {
@@ -219,12 +230,21 @@ export class UpgradeConfirmSubscriptionPageAttrs implements WizardPageAttrs<Upgr
 	}
 
 	nextAction(showErrorDialog: boolean): Promise<boolean> {
+		let referralConversion: ReferralType = "not_referred"
+		if (this.data.referralData && this.data.referralData.isCalledBySatisfactionDialog) referralConversion = "satisfactiondialog_referral"
+		else if (this.data.referralData && !this.data.referralData.isCalledBySatisfactionDialog) referralConversion = "organic_referral"
 		SignupFlowUsageTestController.completeStage(
 			SignupFlowStage.CONFIRM_PAYMENT,
-			this.data.type,
+			this.data.targetPlanType,
 			this.data.options.paymentInterval(),
 			this.data.paymentData.paymentMethod,
+			referralConversion,
 		)
+
+		if (this.data.isCalledBySatisfactionDialog) {
+			completeUpgradeStage(this.data.currentPlan!, this.data.targetPlanType)
+		}
+
 		return Promise.resolve(true)
 	}
 

@@ -11,12 +11,15 @@ import {
 	assertNotNull,
 	clamp,
 	clone,
+	DAY_IN_MILLIS,
 	getFromMap,
 	getStartOfDay,
 	incrementDate,
 	isNotEmpty,
 	isSameDay,
 	isSameDayOfDate,
+	isToday,
+	newPromise,
 	numberRange,
 	typedValues,
 } from "@tutao/tutanota-utils"
@@ -53,11 +56,10 @@ import {
 import {
 	AccountType,
 	CalendarAttendeeStatus,
-	CLIENT_ONLY_CALENDARS,
-	DEFAULT_CLIENT_ONLY_CALENDAR_COLORS,
-	defaultCalendarColor,
+	DEFAULT_CALENDAR_COLOR,
 	EndType,
 	EventTextTimeOption,
+	Keys,
 	RepeatPeriod,
 	ShareCapability,
 	Weekday,
@@ -69,26 +71,26 @@ import { DateTime, Duration } from "luxon"
 import { CalendarEventTimes, CalendarViewType, cleanMailAddress, isAllDayEvent } from "../../../common/api/common/utils/CommonCalendarUtils.js"
 import { AdvancedRepeatRule, CalendarEvent } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { ProgrammingError } from "../../../common/api/common/error/ProgrammingError.js"
-import { size } from "../../../common/gui/size.js"
-import { hslToHex, isColorLight, MAX_HUE_ANGLE } from "../../../common/gui/base/Color.js"
+import { layout_size } from "../../../common/gui/size.js"
+import { hslToHex, MAX_HUE_ANGLE } from "../../../common/gui/base/Color.js"
 import { GroupColors } from "../view/CalendarView.js"
 import { CalendarInfo } from "../model/CalendarModel.js"
 import { EventType } from "./eventeditor-model/CalendarEventModel.js"
 import { hasCapabilityOnGroup } from "../../../common/sharing/GroupUtils.js"
-import { EventsOnDays } from "../view/CalendarViewModel.js"
+import { EventsOnDays, EventWrapper } from "../view/CalendarViewModel.js"
 import { CalendarEventPreviewViewModel } from "./eventpopup/CalendarEventPreviewViewModel.js"
 import { createAsyncDropdown } from "../../../common/gui/base/Dropdown.js"
 import { UserController } from "../../../common/api/main/UserController.js"
-import { ClientOnlyCalendarsInfo } from "../../../common/misc/DeviceConfig.js"
 import { SelectOption } from "../../../common/gui/base/Select.js"
 import { RadioGroupOption } from "../../../common/gui/base/RadioGroup.js"
 import { ColorPickerModel } from "../../../common/gui/base/colorPicker/ColorPickerModel.js"
-import { theme } from "../../../common/gui/theme.js"
+import { isDarkTheme, isLightTheme } from "../../../common/gui/theme.js"
 import { WeekdayToTranslation } from "./eventeditor-view/WeekdaySelector.js"
 import { ByDayRule } from "./eventeditor-view/RepeatRuleEditor.js"
 import { getStartOfTheWeekOffset } from "../../../common/misc/weekOffset"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
+import { EventInviteEmailType } from "../view/CalendarNotificationSender.js"
+import { Key } from "../../../common/misc/KeyManager.js"
+import { isAppleDevice } from "../../../common/api/common/Env.js"
 
 export interface IntervalOption {
 	value: number
@@ -154,7 +156,7 @@ export function getNextFourteenDays(startOfToday: Date): Array<Date> {
 
 export type CalendarNavConfiguration = { back: Child; title: string; forward: Child }
 
-export function calendarWeek(date: Date, weekStart: WeekStart) {
+export function calendarWeek(date: Date, weekStart: WeekStart, numberOnly: boolean) {
 	// According to ISO 8601, weeks always start on Monday. Week numbering systems for
 	// weeks that do not start on Monday are not strictly defined, so we only display
 	// a week number if the user's client is configured to start weeks on Monday
@@ -162,9 +164,11 @@ export function calendarWeek(date: Date, weekStart: WeekStart) {
 		return null
 	}
 
-	return lang.get("weekNumber_label", {
-		"{week}": String(getWeekNumber(date)),
-	})
+	return numberOnly
+		? String(getWeekNumber(date))
+		: lang.getTranslation("weekNumber_label", {
+				"{week}": String(getWeekNumber(date)),
+			}).text
 }
 
 export function calendarNavConfiguration(
@@ -272,6 +276,22 @@ export function getTimeFromMousePos({ y, targetHeight }: MousePosAndBounds, hour
 	const minutesInc = 60 / hourDivision
 	const minute = Math.floor((hour - hourRounded) * hourDivision) * minutesInc
 	return new Time(hourRounded, minute)
+}
+
+/**
+ * Map the horizontal position of a mouse click on an element to a day
+ * @param mouseEvent A mouse event
+ * @param dayCount How many days are being rendered
+ * @param startOfPeriod First day of the displayed period
+ */
+export function getRowDateFromMousePos(mouseEvent: MouseEvent, dayCount: number, startOfPeriod: Date): Date {
+	const targetElement = mouseEvent.currentTarget as HTMLElement
+	const daysDivisionsWidth = targetElement.clientWidth / dayCount
+	const diffFromOrigin = targetElement.getBoundingClientRect().x
+	const xPosition = mouseEvent.pageX - diffFromOrigin
+	const daysToAdd = Math.floor(xPosition / daysDivisionsWidth)
+
+	return new Date(startOfPeriod.getTime() + DAY_IN_MILLIS * daysToAdd)
 }
 
 export const SELECTED_DATE_INDICATOR_THICKNESS = 4
@@ -694,7 +714,7 @@ export const createCustomRepeatRuleUnitValues = (): SelectorItemList<AlarmInterv
 		},
 	]
 }
-export const CALENDAR_EVENT_HEIGHT: number = size.calendar_line_height + 2
+export const CALENDAR_EVENT_HEIGHT: number = layout_size.calendar_line_height + 2
 export const TEMPORARY_EVENT_OPACITY = 0.7
 
 export const enum EventLayoutMode {
@@ -710,30 +730,30 @@ export const enum EventLayoutMode {
  * in one column on a single day (it will "stretch" events from the day start until the next day).
  */
 export function layOutEvents(
-	events: Array<CalendarEvent>,
+	events: Array<EventWrapper>,
 	zone: string,
-	renderer: (columns: Array<Array<CalendarEvent>>) => ChildArray,
+	renderer: (columns: Array<Array<EventWrapper>>) => ChildArray,
 	layoutMode: EventLayoutMode,
 ): ChildArray {
 	events.sort((e1, e2) => {
-		const e1Start = getEventStart(e1, zone)
-		const e2Start = getEventStart(e2, zone)
+		const e1Start = getEventStart(e1.event, zone)
+		const e2Start = getEventStart(e2.event, zone)
 		if (e1Start < e2Start) return -1
 		if (e1Start > e2Start) return 1
-		const e1End = getEventEnd(e1, zone)
-		const e2End = getEventEnd(e2, zone)
+		const e1End = getEventEnd(e1.event, zone)
+		const e2End = getEventEnd(e2.event, zone)
 		if (e1End < e2End) return -1
 		if (e1End > e2End) return 1
 		return 0
 	})
 	let lastEventEnding: Date | null = null
 	let lastEventStart: Date | null = null
-	let columns: Array<Array<CalendarEvent>> = []
+	let columns: Array<Array<EventWrapper>> = []
 	const children: Array<Children> = []
 	// Cache for calculation events
 	const calcEvents = new Map()
 	for (const e of events) {
-		const calcEvent = getFromMap(calcEvents, e, () => getCalculationEvent(e, zone, layoutMode))
+		const calcEvent = getFromMap(calcEvents, e, () => getCalculationEvent(e.event, zone, layoutMode))
 		// Check if a new event group needs to be started
 		if (
 			lastEventEnding != null &&
@@ -757,7 +777,7 @@ export function layOutEvents(
 		for (let i = 0; i < columns.length; i++) {
 			const col = columns[i]
 			const lastEvent = col[col.length - 1]
-			const lastCalcEvent = getFromMap(calcEvents, lastEvent, () => getCalculationEvent(lastEvent, zone, layoutMode))
+			const lastCalcEvent = getFromMap(calcEvents, lastEvent, () => getCalculationEvent(lastEvent.event, zone, layoutMode))
 
 			if (
 				!collidesWith(lastCalcEvent, calcEvent) &&
@@ -845,11 +865,11 @@ function visuallyOverlaps(firstEventStart: Date, firstEventEnd: Date, secondEven
 	const firstEventStartOnSameDay = isSameDay(firstEventStart, firstEventEnd) ? firstEventStart.getTime() : getStartOfDay(firstEventEnd).getTime()
 	const eventDurationMs = firstEventEnd.getTime() - firstEventStartOnSameDay
 	const eventDurationHours = eventDurationMs / (1000 * 60 * 60)
-	const height = eventDurationHours * size.calendar_hour_height - size.calendar_event_border
-	return firstEventEnd.getTime() === secondEventStart.getTime() && height < size.calendar_line_height
+	const height = eventDurationHours * layout_size.calendar_hour_height - layout_size.calendar_event_border
+	return firstEventEnd.getTime() === secondEventStart.getTime() && height < layout_size.calendar_line_height
 }
 
-export function expandEvent(ev: CalendarEvent, columnIndex: number, columns: Array<Array<CalendarEvent>>): number {
+export function expandEvent(ev: CalendarEvent, columnIndex: number, columns: Array<Array<EventWrapper>>): number {
 	let colSpan = 1
 
 	for (let i = columnIndex + 1; i < columns.length; i++) {
@@ -858,7 +878,7 @@ export function expandEvent(ev: CalendarEvent, columnIndex: number, columns: Arr
 		for (let j = 0; j < col.length; j++) {
 			let ev1 = col[j]
 
-			if (collidesWith(ev, ev1) || visuallyOverlaps(ev.startTime, ev.endTime, ev1.startTime)) {
+			if (collidesWith(ev, ev1.event) || visuallyOverlaps(ev.startTime, ev.endTime, ev1.event.startTime)) {
 				return colSpan
 			}
 		}
@@ -869,8 +889,10 @@ export function expandEvent(ev: CalendarEvent, columnIndex: number, columns: Arr
 	return colSpan
 }
 
-export function getEventColor(event: CalendarEvent, groupColors: GroupColors): string {
-	return (event._ownerGroup && groupColors.get(event._ownerGroup)) ?? defaultCalendarColor
+export function getEventColor(event: CalendarEvent, groupColors: GroupColors, isGhost: boolean = false): string {
+	const color = (event._ownerGroup && groupColors.get(event._ownerGroup)) ?? DEFAULT_CALENDAR_COLOR
+	const alpha = isGhost ? (isLightTheme() ? "AA" : "7F") : "FF"
+	return `${color}${alpha}`
 }
 
 export function calendarAttendeeStatusSymbol(status: CalendarAttendeeStatus): string {
@@ -878,20 +900,38 @@ export function calendarAttendeeStatusSymbol(status: CalendarAttendeeStatus): st
 		case CalendarAttendeeStatus.ADDED:
 		case CalendarAttendeeStatus.NEEDS_ACTION:
 			return ""
-
 		case CalendarAttendeeStatus.TENTATIVE:
-			return "?"
-
+			return "⯑"
 		case CalendarAttendeeStatus.ACCEPTED:
 			return "✓"
-
 		case CalendarAttendeeStatus.DECLINED:
-			return "❌"
-
+			return "✕"
 		default:
 			throw new Error("Unknown calendar attendee status: " + status)
 	}
 }
+
+export function calendarAttendeeStatusText(status: CalendarAttendeeStatus): string {
+	switch (status) {
+		case CalendarAttendeeStatus.ADDED:
+		case CalendarAttendeeStatus.NEEDS_ACTION:
+			return ""
+		case CalendarAttendeeStatus.TENTATIVE:
+			return lang.get("maybe_label")
+		case CalendarAttendeeStatus.ACCEPTED:
+			return lang.get("accepted_label")
+		case CalendarAttendeeStatus.DECLINED:
+			return lang.get("declined_label")
+		default:
+			throw new Error("Unknown calendar attendee status: " + status)
+	}
+}
+
+export const eventInviteEmailTypeToCalendarAttendeeStatus = Object.freeze({
+	[EventInviteEmailType.REPLY_ACCEPT]: CalendarAttendeeStatus.ACCEPTED,
+	[EventInviteEmailType.REPLY_TENTATIVE]: CalendarAttendeeStatus.TENTATIVE,
+	[EventInviteEmailType.REPLY_DECLINE]: CalendarAttendeeStatus.DECLINED,
+})
 
 export const iconForAttendeeStatus: Record<CalendarAttendeeStatus, AllIcons> = Object.freeze({
 	[CalendarAttendeeStatus.ACCEPTED]: Icons.CircleCheckmark,
@@ -900,39 +940,6 @@ export const iconForAttendeeStatus: Record<CalendarAttendeeStatus, AllIcons> = O
 	[CalendarAttendeeStatus.NEEDS_ACTION]: Icons.CircleHelp,
 	[CalendarAttendeeStatus.ADDED]: Icons.CircleHelp,
 })
-
-export const getClientOnlyColors = (userId: Id, clientOnlyCalendarsInfo: Map<Id, ClientOnlyCalendarsInfo>) => {
-	const colors: Map<Id, string> = new Map()
-	for (const [id, _] of CLIENT_ONLY_CALENDARS) {
-		const calendarId = `${userId}#${id}`
-		colors.set(calendarId, clientOnlyCalendarsInfo.get(calendarId)?.color ?? DEFAULT_CLIENT_ONLY_CALENDAR_COLORS.get(id)!)
-	}
-	return colors
-}
-
-export const getClientOnlyCalendars = (
-	userId: Id,
-	clientOnlyCalendarInfo: Map<Id, ClientOnlyCalendarsInfo>,
-): (ClientOnlyCalendarsInfo & {
-	id: string
-	name: string
-})[] => {
-	const userCalendars: (ClientOnlyCalendarsInfo & { id: string; name: string })[] = []
-
-	for (const [id, key] of CLIENT_ONLY_CALENDARS) {
-		const calendarId = `${userId}#${id}`
-		const calendar = clientOnlyCalendarInfo.get(calendarId)
-		if (calendar) {
-			userCalendars.push({
-				...calendar,
-				id: calendarId,
-				name: calendar.name ? calendar.name : lang.get(key),
-			})
-		}
-	}
-
-	return userCalendars
-}
 
 /**
  *  find out how we ended up with this event, which determines the capabilities we have with it.
@@ -983,7 +990,7 @@ export function getEventType(
 		return EventType.OWN
 	}
 
-	if (calendarInfoForEvent.shared) {
+	if (calendarInfoForEvent.hasMultipleMembers) {
 		const canWrite = hasCapabilityOnGroup(user, calendarInfoForEvent.group, ShareCapability.Write)
 		if (canWrite) {
 			const organizerAddress = cleanMailAddress(existingOrganizer?.address ?? "")
@@ -1042,6 +1049,10 @@ export async function showDeletePopup(model: CalendarEventPreviewViewModel, ev: 
 						},
 					},
 					{
+						label: "deleteThisAndFutureOccurrences_action",
+						click: () => confirmDeleteThisAndFutureClose(model, onClose),
+					},
+					{
 						label: "deleteAllEventRecurrence_action",
 						click: () => confirmDeleteClose(model, onClose),
 					},
@@ -1052,6 +1063,12 @@ export async function showDeletePopup(model: CalendarEventPreviewViewModel, ev: 
 		// noinspection JSIgnoredPromiseFromCall
 		confirmDeleteClose(model, onClose)
 	}
+}
+
+async function confirmDeleteThisAndFutureClose(model: CalendarEventPreviewViewModel, onClose?: () => unknown): Promise<void> {
+	if (!(await Dialog.confirm("deleteThisAndFutureOccurrencesConfirmation_msg"))) return
+	await model.deleteThisAndFutureOccurrences()
+	onClose?.()
 }
 
 async function confirmDeleteClose(model: CalendarEventPreviewViewModel, onClose?: () => unknown): Promise<void> {
@@ -1067,17 +1084,56 @@ export function getDisplayEventTitle(title: string): string {
 export type ColorString = string
 
 export function generateRandomColor(): ColorString {
-	const model = new ColorPickerModel(!isColorLight(theme.content_bg))
+	const model = new ColorPickerModel(isDarkTheme())
 	return hslToHex(model.getColor(Math.floor(Math.random() * MAX_HUE_ANGLE), 2))
 }
 
 export function renderCalendarColor(selectedCalendar: CalendarInfo | null, groupColors: Map<Id, string>) {
-	const color = selectedCalendar ? (groupColors.get(selectedCalendar.groupInfo.group) ?? defaultCalendarColor) : null
-	return m(".mt-xs", {
+	const color = selectedCalendar ? (groupColors.get(selectedCalendar.groupInfo.group) ?? DEFAULT_CALENDAR_COLOR) : null
+	return m(".mt-4", {
 		style: {
 			width: "100px",
 			height: "10px",
 			background: color ? "#" + color : "transparent",
 		},
 	})
+}
+
+/**
+ * Extracts the platform-specific modifier key (Command ⌘ on Apple devices, or Control on others) from a mouse or keyboard event.
+ *
+ * @template T - A type that extends either `MouseEvent` or `KeyboardEvent`.
+ * @param {T & { redraw?: boolean }} event - The event object, optionally extended with a `redraw` property.
+ * @returns {Key | undefined} - Returns the appropriate modifier key if it's active during the event; otherwise, `undefined`.
+ *
+ * @example
+ * const modifier = extractCalendarEventModifierKey(event);
+ * if (modifier === Keys.META) {
+ *   // Handle macOS modifier logic
+ * }
+ */
+export function extractCalendarEventModifierKey<T extends MouseEvent | KeyboardEvent>(
+	event: T & {
+		redraw?: boolean
+	},
+): Key | undefined {
+	let key
+	if (event.metaKey && isAppleDevice()) {
+		key = Keys.META
+	} else if (event.ctrlKey) {
+		key = Keys.CTRL
+	}
+	return key
+}
+
+export function getDayCircleClass(date: Date, selectedDate: Date | null) {
+	if (selectedDate == null) {
+		return { circle: "", text: "" }
+	} else if (!isToday(selectedDate) && isSameDay(date, selectedDate)) {
+		return { circle: "calendar-selected-day-circle", text: "calendar-selected-day-text" }
+	} else if (isToday(date)) {
+		return { circle: "calendar-current-day-circle", text: "calendar-current-day-text" }
+	}
+
+	return { circle: "", text: "" }
 }

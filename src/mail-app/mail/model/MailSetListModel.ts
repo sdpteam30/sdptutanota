@@ -1,4 +1,4 @@
-import { Mail, MailFolder, MailSetEntry } from "../../../common/api/entities/tutanota/TypeRefs"
+import { Mail, MailSet, MailSetEntry } from "../../../common/api/entities/tutanota/TypeRefs"
 import { ListFilter } from "../../../common/misc/ListModel"
 import { ListLoadingState, ListState } from "../../../common/gui/base/List"
 import { EntityUpdateData } from "../../../common/api/common/utils/EntityUpdateUtils"
@@ -6,8 +6,8 @@ import Stream from "mithril/stream"
 import { MailModel } from "./MailModel"
 import { elementIdPart, getElementId, listIdPart } from "../../../common/api/common/utils/EntityUtils"
 import { MailSetKind } from "../../../common/api/common/TutanotaConstants"
-import { groupByAndMap, promiseFilter } from "@tutao/tutanota-utils"
-import { InboxRuleHandler } from "./InboxRuleHandler"
+import { groupByAndMap, isEmpty, promiseFilter } from "@tutao/tutanota-utils"
+import { ProcessInboxHandler } from "./ProcessInboxHandler"
 
 /**
  * Interface for retrieving and listing mails
@@ -183,7 +183,7 @@ export interface MailSetListModel {
 	 * Get all labels for the mail.
 	 * @param mail
 	 */
-	getLabelsForMail(mail: Mail): ReadonlyArray<MailFolder>
+	getLabelsForMail(mail: Mail): ReadonlyArray<MailSet>
 
 	/**
 	 * Load the entire list.
@@ -215,7 +215,7 @@ export interface MailSetListModel {
 export interface LoadedMail {
 	readonly mail: Mail
 	readonly mailSetEntryId: IdTuple
-	readonly labels: ReadonlyArray<MailFolder>
+	readonly labels: ReadonlyArray<MailSet>
 }
 
 /**
@@ -247,7 +247,7 @@ export async function resolveMailSetEntries(
 		}
 
 		// Resolve labels
-		const labels: MailFolder[] = mailModel.getLabelsForMail(mail)
+		const labels: MailSet[] = mailModel.getLabelsForMail(mail)
 		loadedMails.push({ mailSetEntryId: mailSetEntry._id, mail, labels })
 	}
 
@@ -274,23 +274,31 @@ export async function provideAllMails(ids: IdTuple[], mailProvider: (listId: Id,
 }
 
 /**
- * Apply inbox rules to an array of mails, returning all mails that were not moved
+ * Apply inbox rules and run spam prediction on an array of mails, returning all mails that were not moved
  */
-export async function applyInboxRulesToEntries(
+export async function applyInboxRulesAndSpamPrediction(
 	entries: LoadedMail[],
-	mailSet: MailFolder,
+	sourceFolder: MailSet,
 	mailModel: MailModel,
-	inboxRuleHandler: InboxRuleHandler,
+	processInboxHandler: ProcessInboxHandler,
+	sendServerRequest: boolean,
 ): Promise<LoadedMail[]> {
-	if (mailSet.folderType !== MailSetKind.INBOX || entries.length === 0) {
+	if (isEmpty(entries)) {
 		return entries
 	}
-	const mailboxDetail = await mailModel.getMailboxDetailsForMailFolder(mailSet)
+	if (!(sourceFolder.folderType === MailSetKind.SPAM || sourceFolder.folderType === MailSetKind.INBOX)) {
+		return entries
+	}
+	const mailboxDetail = await mailModel.getMailboxDetailsForMailFolder(sourceFolder)
 	if (!mailboxDetail) {
 		return entries
 	}
+	const folderSystem = mailModel.getFolderSystemByGroupId(mailboxDetail.mailGroup._id)
+	if (!folderSystem) {
+		return entries
+	}
 	return await promiseFilter(entries, async (entry) => {
-		const ruleApplied = await inboxRuleHandler.findAndApplyMatchingRule(mailboxDetail, entry.mail, true, false)
-		return ruleApplied == null
+		const targetFolder = await processInboxHandler.handleIncomingMail(entry.mail, sourceFolder, mailboxDetail, folderSystem, sendServerRequest)
+		return sourceFolder.folderType === targetFolder.folderType
 	})
 }

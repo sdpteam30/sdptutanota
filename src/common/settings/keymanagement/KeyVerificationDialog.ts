@@ -1,5 +1,5 @@
 import { Dialog } from "../../gui/base/Dialog"
-import { Keys } from "../../api/common/TutanotaConstants"
+import { IdentityKeyQrVerificationResult, IdentityKeySourceOfTrust, IdentityKeyVerificationMethod, Keys } from "../../api/common/TutanotaConstants"
 import { KeyVerificationFacade } from "../../api/worker/facades/lazy/KeyVerificationFacade"
 import { MobileSystemFacade } from "../../native/common/generatedipc/MobileSystemFacade"
 import { UsageTestController } from "@tutao/tutanota-usagetests"
@@ -14,6 +14,11 @@ import { VerificationResultPage } from "./dialogpages/VerificationResultPage"
 import { QrCodePageErrorType, VerificationByQrCodeInputPage } from "./dialogpages/VerificationByQrCodeInputPage"
 import { VerificationErrorPage } from "./dialogpages/VerificationErrorPage"
 import { KeyVerificationUsageTestUtils } from "./KeyVerificationUsageTestUtils"
+import { PublicIdentityKeyProvider } from "../../api/worker/facades/PublicIdentityKeyProvider"
+import { FingerprintMismatchInfoPage } from "./dialogpages/FingerprintMismatchInfoPage"
+import { FingerprintMismatchKeepPage } from "./dialogpages/FingerprintMismatchKeepPage"
+import { assertNotNull } from "@tutao/tutanota-utils"
+import { DesktopSystemFacade } from "../../native/common/generatedipc/DesktopSystemFacade"
 
 enum KeyVerificationDialogPages {
 	CHOOSE_METHOD = "CHOOSE_METHOD",
@@ -21,6 +26,8 @@ enum KeyVerificationDialogPages {
 	QR_CODE_INPUT_METHOD = "QR_CODE_INPUT_METHOD",
 	SUCCESS = "SUCCESS",
 	ERROR = "ERROR",
+	FINGERPRINT_MISMATCH_INFO = "FINGERPRINT_MISMATCH_INFO",
+	FINGERPRINT_MISMATCH_KEEP_CONFIRM = "FINGERPRINT_MISMATCH_KEEP_CONFIRM",
 }
 
 /**
@@ -28,8 +35,10 @@ enum KeyVerificationDialogPages {
  */
 export async function showKeyVerificationDialog(
 	keyVerificationFacade: KeyVerificationFacade,
+	desktopSystemFacade: DesktopSystemFacade,
 	mobileSystemFacade: MobileSystemFacade,
 	usageTestController: UsageTestController,
+	publicIdentityKeyProvider: PublicIdentityKeyProvider,
 	reloadParent: () => Promise<void>,
 ): Promise<void> {
 	const textUsageTest = usageTestController.getTest("crypto.keyVerification.text")
@@ -37,8 +46,15 @@ export async function showKeyVerificationDialog(
 	const regretUsageTest = usageTestController.getTest("crypto.keyVerification.regret")
 	const keyVerificationUsageTestUtils = new KeyVerificationUsageTestUtils(textUsageTest, qrUsageTest, regretUsageTest)
 
-	const model = new KeyVerificationModel(keyVerificationFacade, mobileSystemFacade, keyVerificationUsageTestUtils)
+	const model = new KeyVerificationModel(
+		keyVerificationFacade,
+		desktopSystemFacade,
+		mobileSystemFacade,
+		keyVerificationUsageTestUtils,
+		publicIdentityKeyProvider,
+	)
 	let lastError: QrCodePageErrorType | null = null
+
 	const multiPageDialog: Dialog = new MultiPageDialog<KeyVerificationDialogPages>(
 		KeyVerificationDialogPages.CHOOSE_METHOD,
 		(dialog, navigateToPage, goBack) => ({
@@ -71,6 +87,7 @@ export async function showKeyVerificationDialog(
 						await reloadParent()
 						navigateToPage(KeyVerificationDialogPages.SUCCESS)
 					},
+					gotToMismatchPage: () => navigateToPage(KeyVerificationDialogPages.FINGERPRINT_MISMATCH_INFO),
 				}),
 				title: lang.get("keyManagement.keyVerification_label"),
 				leftAction: {
@@ -81,7 +98,10 @@ export async function showKeyVerificationDialog(
 				},
 				rightAction: {
 					type: ButtonType.Secondary,
-					click: () => dialog.close(),
+					click: () => {
+						dialog.close()
+						reloadParent()
+					},
 					label: "close_alt",
 					title: "close_alt",
 				},
@@ -95,8 +115,9 @@ export async function showKeyVerificationDialog(
 					},
 					goToErrorPage: (err: QrCodePageErrorType) => {
 						lastError = err
-						navigateToPage(KeyVerificationDialogPages.ERROR)
+						navigateToPage(KeyVerificationDialogPages.ERROR, true)
 					},
+					goToMismatchPage: () => navigateToPage(KeyVerificationDialogPages.FINGERPRINT_MISMATCH_INFO),
 				}),
 				title: lang.get("keyManagement.keyVerification_label"),
 				leftAction: {
@@ -139,6 +160,61 @@ export async function showKeyVerificationDialog(
 					click: () => dialog.close(),
 					label: "close_alt",
 					title: "close_alt",
+				},
+			},
+			[KeyVerificationDialogPages.FINGERPRINT_MISMATCH_INFO]: {
+				content: m(FingerprintMismatchInfoPage, {
+					model,
+					goToDeletePage: async () => {
+						if (model.getChosenMethod() === IdentityKeyVerificationMethod.text) {
+							navigateToPage(KeyVerificationDialogPages.MANUAL_INPUT_METHOD)
+						} else {
+							await model.deleteAndReloadTrustedKey()
+							model.compareFingerprint()
+							if (model.getKeyVerificationResult() === IdentityKeyQrVerificationResult.QR_OK) {
+								await model.trust(IdentityKeyVerificationMethod.qr)
+								await reloadParent()
+								navigateToPage(KeyVerificationDialogPages.SUCCESS)
+							} else if (model.getKeyVerificationResult() === IdentityKeyQrVerificationResult.QR_FINGERPRINT_MISMATCH) {
+								// this is the state we are expected to be on after deleting, so do nothing elso here
+							} else {
+								navigateToPage(KeyVerificationDialogPages.ERROR)
+							}
+							navigateToPage(KeyVerificationDialogPages.QR_CODE_INPUT_METHOD)
+						}
+					},
+				}),
+				rightAction: {
+					type: ButtonType.Secondary,
+					click: () => {
+						const sourceOfTrust = assertNotNull(model.getPublicIdentity()).trustDbEntry.sourceOfTrust
+						if (sourceOfTrust === IdentityKeySourceOfTrust.TOFU) {
+							navigateToPage(KeyVerificationDialogPages.FINGERPRINT_MISMATCH_KEEP_CONFIRM)
+						} else {
+							dialog.close()
+						}
+					},
+					label: "close_alt",
+					title: "close_alt",
+				},
+			},
+			[KeyVerificationDialogPages.FINGERPRINT_MISMATCH_KEEP_CONFIRM]: {
+				content: m(FingerprintMismatchKeepPage, {
+					model,
+				}),
+				rightAction: {
+					type: ButtonType.Secondary,
+					click: () => {
+						dialog.close()
+					},
+					label: "close_alt",
+					title: "close_alt",
+				},
+				leftAction: {
+					type: ButtonType.Secondary,
+					click: () => goBack(KeyVerificationDialogPages.FINGERPRINT_MISMATCH_INFO),
+					label: "back_action",
+					title: "back_action",
 				},
 			},
 		}),

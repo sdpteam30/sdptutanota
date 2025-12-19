@@ -14,9 +14,9 @@ import { Icons } from "../../../../common/gui/base/icons/Icons.js"
 import {
 	areAllAdvancedRepeatRulesValid,
 	ByRule,
+	CALENDAR_TYPE_TRANSLATION_MAP,
 	getRepeatEndTimeForDisplay,
 	getTimeZone,
-	RENDER_TYPE_TRANSLATION_MAP,
 } from "../../../../common/calendar/date/CalendarUtils.js"
 import { CalendarAttendeeStatus, EndType, getAttendeeStatus, RepeatPeriod } from "../../../../common/api/common/TutanotaConstants.js"
 import { downcast, memoized } from "@tutao/tutanota-utils"
@@ -30,11 +30,12 @@ import { CalendarEventPreviewViewModel } from "./CalendarEventPreviewViewModel.j
 import { UpgradeRequiredError } from "../../../../common/api/main/UpgradeRequiredError.js"
 import { showPlanUpgradeRequiredDialog } from "../../../../common/misc/SubscriptionDialogs.js"
 import { ExternalLink } from "../../../../common/gui/base/ExternalLink.js"
-import { formatEventDuration, getDisplayEventTitle, iconForAttendeeStatus, repeatRuleOptions } from "../CalendarGuiUtils.js"
+import { calendarAttendeeStatusSymbol, formatEventDuration, getDisplayEventTitle, repeatRuleOptions } from "../CalendarGuiUtils.js"
 import { hasError } from "../../../../common/api/common/utils/ErrorUtils.js"
-import { px, size } from "../../../../common/gui/size.js"
+import { font_size, px, size } from "../../../../common/gui/size.js"
 import { SearchToken } from "../../../../common/api/common/utils/QueryTokenUtils"
 import { highlightTextInQueryAsChildren } from "../../../../common/gui/TextHighlightViewUtils"
+import { ExpandableTextArea, ExpandableTextAreaAttrs } from "../../../../common/gui/base/ExpandableTextArea.js"
 
 export type EventPreviewViewAttrs = {
 	calendarEventPreviewModel: CalendarEventPreviewViewModel
@@ -48,20 +49,20 @@ export type EventPreviewViewAttrs = {
  * a mail to the organizer. */
 export const ReplyButtons = pureComponent((participation: NonNullable<EventPreviewViewAttrs["participation"]>) => {
 	const colors = {
-		borderColor: theme.content_button,
-		color: theme.content_fg,
+		borderColor: theme.on_surface_variant,
+		color: theme.on_surface,
 	}
 
 	const highlightColors = {
-		borderColor: theme.content_accent,
-		color: theme.content_accent,
+		borderColor: theme.primary,
+		color: theme.primary,
 	}
 
 	const makeStatusButtonAttrs = (status: CalendarAttendeeStatus, text: TranslationKey): BannerButtonAttrs =>
 		Object.assign(
 			{
 				text,
-				class: "width-min-content",
+				class: "width-min-content w-auto",
 				click: async () => {
 					try {
 						await participation.setParticipation(status)
@@ -79,7 +80,7 @@ export const ReplyButtons = pureComponent((participation: NonNullable<EventPrevi
 			participation.ownAttendee.status === status ? highlightColors : colors,
 		)
 
-	return m(".flex.items-center.mt-s.gap-vpad-s", [
+	return m(".flex.items-center.mt-8.gap-8.fit-content", [
 		m(BannerButton, makeStatusButtonAttrs(CalendarAttendeeStatus.ACCEPTED, "yes_label")),
 		m(BannerButton, makeStatusButtonAttrs(CalendarAttendeeStatus.TENTATIVE, "maybe_label")),
 		m(BannerButton, makeStatusButtonAttrs(CalendarAttendeeStatus.DECLINED, "no_label")),
@@ -99,17 +100,17 @@ export class EventPreviewView implements Component<EventPreviewViewAttrs> {
 		const attendees = prepareAttendees(event.attendees, event.organizer)
 		const eventTitle = getDisplayEventTitle(event.summary)
 
-		const renderInfo = calendarEventPreviewModel.getCalendarRenderInfo()
+		const calendarInfo = calendarEventPreviewModel.getCalendarInfoBase()
 
-		return m(".flex.col.smaller.scroll.visible-scrollbar", [
+		return m(".flex.col.smaller", [
 			this.renderRow(
 				BootIcons.Calendar,
 				[m("span.h3", highlightedStrings ? highlightTextInQueryAsChildren(eventTitle, highlightedStrings) : eventTitle)],
 				true,
 				true,
 			),
-			renderInfo
-				? this.renderCalendar(renderInfo.name, renderInfo.color, RENDER_TYPE_TRANSLATION_MAP.get(renderInfo.renderType) ?? "yourCalendars_label")
+			calendarInfo
+				? this.renderCalendar(calendarInfo.name, calendarInfo.color, CALENDAR_TYPE_TRANSLATION_MAP.get(calendarInfo.type) ?? "yourCalendars_label")
 				: null,
 			this.renderRow(
 				Icons.Time,
@@ -118,26 +119,25 @@ export class EventPreviewView implements Component<EventPreviewViewAttrs> {
 			),
 			this.renderLocation(event.location),
 			this.renderAttendeesSection(attendees, participation),
-			this.renderAttendanceSection(event, attendees, participation),
+			this.renderAttendanceSection(event, attendees, participation, calendarEventPreviewModel),
 			this.renderDescription(sanitizedDescription, highlightedStrings),
 		])
 	}
 
 	private renderRow(headerIcon: AllIcons, children: Children, isAlignedLeft: boolean = false, isEventTitle: boolean = false): Children {
-		return m(".flex.pb-s", [
+		return m(".flex.gap-12.mb-8", [
 			this.renderSectionIndicator(headerIcon, isAlignedLeft ? { marginTop: isEventTitle ? "6px" : "2px" } : undefined),
-			m(".selectable.text-break.full-width.align-self-center", children),
+			m(".selectable.full-width.align-self-center.text-break", children),
 		])
 	}
 
 	private renderSectionIndicator(icon: AllIcons, style: Record<string, any> = {}): Children {
 		return m(Icon, {
 			icon,
-			class: "pr",
-			size: IconSize.Medium,
+			size: IconSize.PX24,
 			style: Object.assign(
 				{
-					fill: theme.content_button,
+					fill: theme.on_surface_variant,
 					display: "block",
 				},
 				style,
@@ -191,18 +191,53 @@ export class EventPreviewView implements Component<EventPreviewViewAttrs> {
 	 * @param event if the event is not in a calendar, we don't want to set our attendance from here.
 	 * @param attendees list of attendees (including the organizer)
 	 * @param participation
+	 * @param model CalendarEventPreviewViewModel to set user's comment before replying
 	 * @private
 	 */
 	private renderAttendanceSection(
 		event: EventPreviewViewAttrs["event"],
 		attendees: Array<CalendarEventAttendee>,
 		participation: EventPreviewViewAttrs["participation"],
+		model: CalendarEventPreviewViewModel,
 	): Children {
 		if (attendees.length === 0 || participation == null || event._ownerGroup == null) return null
-		return m(".flex.pb-s", [
-			this.renderSectionIndicator(BootIcons.Contacts),
-			m(".flex.flex-column", [m(".small", lang.get("invitedToEvent_msg")), m(ReplyButtons, participation)]),
+		return m("", [
+			m(".flex.pb-8", [
+				this.renderSectionIndicator(BootIcons.Contacts),
+				m(".flex.flex-column", [
+					m(".small", lang.get("invitedToEvent_msg")),
+					m(".fit-content", { style: { "min-height": px(font_size.line_height_input * 7) } }, [
+						m(ReplyButtons, participation),
+						this.renderCommentSection(model),
+					]),
+				]),
+			]),
 		])
+	}
+
+	private renderCommentSection(model: CalendarEventPreviewViewModel): Children {
+		return m(ExpandableTextArea, {
+			classes: ["mt-8"],
+			variant: "outlined",
+			value: model.comment,
+			maxLines: 3,
+			maxLength: 250,
+			oninput: (newValue: string) => {
+				model.comment = newValue
+			},
+			oncreate: (node) => {
+				node.dom.addEventListener("keydown", (e) => {
+					// disable shortcuts
+					e.stopPropagation()
+					return true
+				})
+			},
+			ariaLabel: lang.get("addComment_label"),
+			placeholder: lang.get("addComment_label"),
+			style: {
+				borderColor: theme.outline,
+			},
+		} satisfies ExpandableTextAreaAttrs)
 	}
 
 	private renderAttendee(attendee: CalendarEventAttendee, participation: EventPreviewViewAttrs["participation"]): Children {
@@ -213,16 +248,7 @@ export class EventPreviewView implements Component<EventPreviewViewAttrs> {
 				? getAttendeeStatus(participation.ownAttendee)
 				: getAttendeeStatus(attendee)
 
-		return m(".flex.items-center", [
-			m(Icon, {
-				icon: iconForAttendeeStatus[status],
-				style: {
-					fill: theme.content_fg,
-				},
-				class: "mr-s",
-			}),
-			m(".span.line-break-anywhere.selectable", attendeeField),
-		])
+		return m(".flex.items-center", [m(".span.line-break-anywhere.selectable", attendeeField), m(".span.pl-4", calendarAttendeeStatusSymbol(status))])
 	}
 
 	private renderDescription(sanitizedDescription: string | null, highlightedStrings?: readonly SearchToken[]) {
@@ -230,10 +256,10 @@ export class EventPreviewView implements Component<EventPreviewViewAttrs> {
 		return this.renderRow(Icons.AlignLeft, [m.trust(sanitizedDescription)], true)
 	}
 
-	private renderCalendar(calendarName: string, calendarColor: string, calendarRenderType: TranslationKey) {
-		return m(".flex.pb-s", [
+	private renderCalendar(calendarName: string, calendarColor: string, calendarType: TranslationKey) {
+		return m(".flex.gap-12.mb-8", [
 			m(
-				".flex.items-center.justify-center.mr",
+				".flex.items-center.justify-center",
 				{
 					style: {
 						width: "24px",
@@ -243,13 +269,13 @@ export class EventPreviewView implements Component<EventPreviewViewAttrs> {
 				m("", {
 					style: {
 						borderRadius: "50%",
-						width: px(size.hpad_large),
-						height: px(size.hpad_large),
-						backgroundColor: calendarColor,
+						width: px(size.spacing_24),
+						height: px(size.spacing_24),
+						backgroundColor: `#${calendarColor}`,
 					},
 				}),
 			),
-			m(".flex.col", [calendarName, m("small.text-fade", lang.get(calendarRenderType!))]),
+			m(".flex.col", [calendarName, m("small.text-fade", lang.getTranslationText(calendarType))]),
 		])
 	}
 }

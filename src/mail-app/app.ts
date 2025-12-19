@@ -3,7 +3,7 @@ import m from "mithril"
 import Mithril, { Children, ClassComponent, Component, RouteDefs, RouteResolver, Vnode, VnodeDOM } from "mithril"
 import { lang, languageCodeToTag, languages } from "../common/misc/LanguageViewModel.js"
 import { root } from "../RootView.js"
-import { assertNotNull, neverNull } from "@tutao/tutanota-utils"
+import { assertNotNull, isSessionStorageAvailable, neverNull } from "@tutao/tutanota-utils"
 import { windowFacade } from "../common/misc/WindowFacade.js"
 import { styles } from "../common/gui/styles.js"
 import { deviceConfig } from "../common/misc/DeviceConfig.js"
@@ -31,18 +31,43 @@ import type { MailViewModel } from "./mail/view/MailViewModel.js"
 import { SearchViewModel } from "./search/view/SearchViewModel.js"
 import { ContactViewModel } from "./contacts/view/ContactViewModel.js"
 import { ContactListViewModel } from "./contacts/view/ContactListViewModel.js"
-import { assertMainOrNodeBoot, bootFinished, isApp, isDesktop, isIOSApp, isOfflineStorageAvailable } from "../common/api/common/Env.js"
+import { assertMainOrNodeBoot, bootFinished, isApp, isBrowser, isDesktop, isIOSApp, isOfflineStorageAvailable } from "../common/api/common/Env.js"
 import { SettingsViewAttrs } from "../common/settings/Interfaces.js"
 import { disableErrorHandlingDuringLogout, handleUncaughtError } from "../common/misc/ErrorHandler.js"
 import { AppType } from "../common/misc/ClientConstants.js"
 import { ContactModel } from "../common/contactsFunctionality/ContactModel.js"
 import { CacheMode } from "../common/api/worker/rest/EntityRestClient"
 import { SessionType } from "../common/api/common/SessionType.js"
+import { UndoModel } from "./UndoModel"
+import { CommonLocator } from "../common/api/main/CommonLocator"
+import { FeatureType } from "../common/api/common/TutanotaConstants"
 
 assertMainOrNodeBoot()
 bootFinished()
 
-const urlQueryParams = m.parseQueryString(location.search)
+// Since it is not easy to migrate app.tutanota.com to app.tuta.com because 2FA data is stored in each domain,
+// we dynamically insert a noindex tag that can still be read by Google's crawler.
+if (window.location.hostname.includes("tutanota")) {
+	const metaRobotsEl = document.createElement("meta")
+	metaRobotsEl.name = "robots"
+	metaRobotsEl.content = "noindex"
+	document.head.appendChild(metaRobotsEl)
+}
+
+const urlQueryParams = m.parseQueryString(location.search) as Record<string, string>
+
+if (isSessionStorageAvailable()) {
+	const reloadArgs = sessionStorage.getItem("reloadArgs")
+	if (reloadArgs) {
+		const args = JSON.parse(reloadArgs) as Record<string, string>
+		sessionStorage.removeItem("reloadArgs")
+		for (const [k, v] of Object.entries(args)) {
+			if (v != null && urlQueryParams[k] == null) {
+				urlQueryParams[k] = v
+			}
+		}
+	}
+}
 
 assignEnvPlatformId(urlQueryParams)
 replaceNativeLogger(window, new Logger())
@@ -58,6 +83,12 @@ window.tutao = {
 }
 
 client.init(navigator.userAgent, navigator.platform, AppType.Mail)
+
+if (isBrowser() && !client.webassembly()) {
+	const webAssemblyError = new Error()
+	webAssemblyError.name = "NoWASMSupport"
+	throw webAssemblyError
+}
 
 if (!client.isSupported()) {
 	throw new Error("Unsupported")
@@ -91,7 +122,7 @@ import("./translations/en.js")
 		initCommonLocator(mailLocator)
 
 		const { setupNavShortcuts } = await import("../common/misc/NavShortcuts.js")
-		setupNavShortcuts()
+		setupNavShortcuts({ quickActionsModel: () => mailLocator.quickActionsModel(), logins: mailLocator.logins })
 
 		const { BottomNav } = await import("./gui/BottomNav.js")
 
@@ -118,7 +149,10 @@ import("./translations/en.js")
 		mailLocator.logins.addPostLoginAction(() => mailLocator.postLoginActions())
 		mailLocator.logins.addPostLoginAction(async () => {
 			return {
-				async onPartialLoginSuccess() {
+				async onPartialLoginSuccess({ sessionType }) {
+					if (sessionType === SessionType.Temporary) {
+						return
+					}
 					if (isApp()) {
 						mailLocator.fileApp.clearFileData().catch((e) => console.log("Failed to clean file data", e))
 						const syncManager = mailLocator.nativeContactsSyncManager()
@@ -126,7 +160,6 @@ import("./translations/en.js")
 							const canSync = await syncManager.canSync()
 							if (!canSync) {
 								await syncManager.disableSync()
-								return
 							}
 						}
 						syncManager.syncContacts()
@@ -134,7 +167,10 @@ import("./translations/en.js")
 					await mailLocator.mailboxModel.init()
 					await mailLocator.mailModel.init()
 				},
-				async onFullLoginSuccess() {
+				async onFullLoginSuccess({ sessionType }) {
+					if (sessionType === SessionType.Temporary) {
+						return
+					}
 					// We might have outdated Customer features, force reload the customer to make sure the customizations are up-to-date
 					if (isOfflineStorageAvailable()) {
 						await mailLocator.logins.loadCustomizations(CacheMode.WriteOnly)
@@ -166,6 +202,40 @@ import("./translations/en.js")
 				},
 			}
 		})
+		mailLocator.logins.addPostLoginAction(async () => {
+			return {
+				async onFullLoginSuccess() {},
+				async onPartialLoginSuccess() {
+					if (mailLocator.logins.isInternalUserLoggedIn() && mailLocator.logins.isEnabled(FeatureType.QuickActions)) {
+						mailLocator.quickActionsModel().then((model) => {
+							model.register(async () => {
+								const { quickMailActions } = await import("./mail/model/MailQuickActions.js")
+								return quickMailActions(mailLocator.mailboxModel, mailLocator.mailModel, mailLocator.logins, mailLocator.throttledRouter())
+							})
+							model.register(async () => {
+								const { quickCalendarActions } = await import("../calendar-app/calendar/view/CalendarQuickActions.js")
+								const factory: CommonLocator["calendarEventModel"] = mailLocator.calendarEventModel.bind(mailLocator)
+								return quickCalendarActions(
+									mailLocator.throttledRouter(),
+									mailLocator.mailboxModel,
+									await mailLocator.calendarModel(),
+									mailLocator.logins,
+									factory,
+								)
+							})
+							model.register(async () => {
+								const { quickContactsActions } = await import("./contacts/ContactsQuickActions.js")
+								return quickContactsActions(mailLocator.contactModel, mailLocator.throttledRouter(), mailLocator.entityClient)
+							})
+							model.register(async () => {
+								const { quickSettingsActions } = await import("../common/settings/SettingsQuickActions.js")
+								return quickSettingsActions(mailLocator.throttledRouter(), mailLocator.logins)
+							})
+						})
+					}
+				},
+			}
+		})
 
 		if (isOfflineStorageAvailable()) {
 			const { CachePostLoginAction } = await import("../common/offline/CachePostLoginAction.js")
@@ -178,14 +248,31 @@ import("./translations/en.js")
 						mailLocator.cacheStorage,
 						mailLocator.logins,
 						assertNotNull(await mailLocator.offlineStorageSettingsModel()),
+						mailLocator.syncTracker,
 					),
 			)
 			mailLocator.logins.addPostLoginAction(async () => {
-				const { SearchOfflineRangePostLoginAction } = await import("./search/model/SearchOfflineRangePostLoginAction")
+				const { MailIndexerPostLoginAction } = await import("./search/model/MailIndexerPostLoginAction")
 				const offlineStorageSettings = await mailLocator.offlineStorageSettingsModel()
-				return new SearchOfflineRangePostLoginAction(assertNotNull(offlineStorageSettings), mailLocator.indexerFacade)
+				return new MailIndexerPostLoginAction(assertNotNull(offlineStorageSettings), mailLocator.indexerFacade)
 			})
 		}
+
+		mailLocator.logins.addPostLoginAction(async () => {
+			const { SpamClassificationPostLoginAction } = await import("./mail/model/SpamClassificationPostLoginAction")
+			return new SpamClassificationPostLoginAction(mailLocator.spamClassifier, mailLocator.customerFacade, mailLocator.syncTracker)
+		})
+
+		mailLocator.logins.addPostLoginAction(async () => {
+			const { OpenLocallySavedDraftAction } = await import("./mail/editor/OpenLocallySavedDraftAction.js")
+			const { newMailEditorFromLocalDraftData } = await import("./mail/editor/MailEditor.js")
+			const { createEditDraftDialog } = await import("./mail/view/MailViewerUtils")
+			return new OpenLocallySavedDraftAction(mailLocator.autosaveFacade, mailLocator.mailboxModel, mailLocator.entityClient, {
+				newMailEditorFromLocalDraftData,
+				createEditDraftDialog,
+				mailViewerViewModelFactory: () => mailLocator.mailViewerViewModelFactory(),
+			})
+		})
 
 		if (isDesktop()) {
 			mailLocator.logins.addPostLoginAction(async () => {
@@ -322,6 +409,7 @@ import("./translations/en.js")
 					cache: MailViewCache
 					header: AppHeaderAttrs
 					mailViewModel: MailViewModel
+					undoModel: UndoModel
 				}
 			>(
 				{
@@ -339,15 +427,17 @@ import("./translations/en.js")
 								},
 								header: await mailLocator.appHeaderAttrs(),
 								mailViewModel: await mailLocator.mailViewModel(),
+								undoModel: await mailLocator.undoModel(),
 							},
 						}
 					},
-					prepareAttrs: ({ drawerAttrsFactory, cache, header, mailViewModel }) => ({
+					prepareAttrs: ({ drawerAttrsFactory, cache, header, mailViewModel, undoModel }) => ({
 						drawerAttrs: drawerAttrsFactory(),
 						cache,
 						header,
 						desktopSystemFacade: mailLocator.desktopSystemFacade,
 						mailViewModel,
+						undoModel,
 					}),
 				},
 				mailLocator.logins,
@@ -388,6 +478,7 @@ import("./translations/en.js")
 					header: AppHeaderAttrs
 					searchViewModelFactory: () => SearchViewModel
 					contactModel: ContactModel
+					undoModel: UndoModel
 				}
 			>(
 				{
@@ -401,6 +492,7 @@ import("./translations/en.js")
 								header: await mailLocator.appHeaderAttrs(),
 								searchViewModelFactory: await mailLocator.searchViewModelFactory(),
 								contactModel: mailLocator.contactModel,
+								undoModel: await mailLocator.undoModel(),
 							},
 						}
 					},
@@ -409,7 +501,7 @@ import("./translations/en.js")
 						header: cache.header,
 						makeViewModel: cache.searchViewModelFactory,
 						contactModel: cache.contactModel,
-						mailViewModel: mailLocator.mailViewModel,
+						undoModel: cache.undoModel,
 					}),
 				},
 				mailLocator.logins,
@@ -481,11 +573,9 @@ import("./translations/en.js")
 					// onmatch of the login view is called after the popstate handler, but before any asynchronous operations went ahead.
 					// duplicating the history entry allows us to keep the arguments for a single back button press and run our own code to handle it
 					m.route.set("/login", {
-						noAutoLogin: true,
 						keepSession: true,
 					})
 					m.route.set("/login", {
-						noAutoLogin: true,
 						keepSession: true,
 					})
 					return null
@@ -496,7 +586,6 @@ import("./translations/en.js")
 					const { showGiftCardDialog } = await import("../common/misc/LoginUtils.js")
 					showGiftCardDialog(location.hash)
 					m.route.set("/login", {
-						noAutoLogin: true,
 						keepSession: true,
 					})
 					return null

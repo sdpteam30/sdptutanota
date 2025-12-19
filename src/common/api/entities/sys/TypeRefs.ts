@@ -1022,12 +1022,14 @@ export type DeleteCustomerData = {
 
 	_format: NumberString;
 	undelete: boolean;
-	reason: null | string;
+	formattedReason: null | string;
 	takeoverMailAddress: null | string;
 	authVerifier: null | Uint8Array;
+	reason: null | NumberString;
 
 	customer: Id;
 	surveyData: null | SurveyData;
+	abuseDeactivationInfos: AbuseInfo[];
 }
 export const CustomerPropertiesTypeRef: TypeRef<CustomerProperties> = new TypeRef("sys", 656)
 
@@ -1046,6 +1048,7 @@ export type CustomerProperties = {
 	lastUpgradeReminder: null | Date;
 	_ownerGroup: null | Id;
 	usageDataOptedOut: boolean;
+	requireTwoFactor: boolean;
 
 	smallLogo: null | File;
 	bigLogo: null | File;
@@ -2230,6 +2233,7 @@ export type RegistrationCaptchaServiceGetData = {
 	businessUseSelected: boolean;
 	timelockChallengeSolution: null | string;
 	language: string;
+	isAutomatedBrowser: boolean;
 }
 export const WebsocketEntityDataTypeRef: TypeRef<WebsocketEntityData> = new TypeRef("sys", 1483)
 
@@ -3137,6 +3141,7 @@ export type InstanceSessionKey = {
 	symEncSessionKey: Uint8Array;
 	encryptionAuthStatus: null | Uint8Array;
 	symKeyVersion: NumberString;
+	keyVerificationState: null | Uint8Array;
 
 	typeInfo: TypeInfo;
 }
@@ -3456,6 +3461,8 @@ export type SurveyData = {
 	reason: NumberString;
 	details: null | string;
 	version: NumberString;
+	clientVersion: string;
+	clientPlatform: NumberString;
 }
 export const IdTupleWrapperTypeRef: TypeRef<IdTupleWrapper> = new TypeRef("sys", 2315)
 
@@ -4086,6 +4093,9 @@ export type TimelockCaptchaGetIn = {
 
 	_format: NumberString;
 	signupToken: string;
+	timeToSolveCalibrationChallenge: null | NumberString;
+
+	deviceInfo: null | ClientPerformanceInfo;
 }
 export const TimelockCaptchaGetOutTypeRef: TypeRef<TimelockCaptchaGetOut> = new TypeRef("sys", 2632)
 
@@ -4101,4 +4111,31 @@ export type TimelockCaptchaGetOut = {
 	difficulty: string;
 	modulus: string;
 	base: string;
+}
+export const ClientPerformanceInfoTypeRef: TypeRef<ClientPerformanceInfo> = new TypeRef("sys", 2641)
+
+export function createClientPerformanceInfo(values: StrippedEntity<ClientPerformanceInfo>): ClientPerformanceInfo {
+    return Object.assign(create(typeModels[ClientPerformanceInfoTypeRef.typeId], ClientPerformanceInfoTypeRef), values)
+}
+
+export type ClientPerformanceInfo = {
+	_type: TypeRef<ClientPerformanceInfo>;
+	_original?: ClientPerformanceInfo
+
+	_id: Id;
+	isAutomatedBrowser: boolean;
+}
+export const AbuseInfoTypeRef: TypeRef<AbuseInfo> = new TypeRef("sys", 2650)
+
+export function createAbuseInfo(values: StrippedEntity<AbuseInfo>): AbuseInfo {
+    return Object.assign(create(typeModels[AbuseInfoTypeRef.typeId], AbuseInfoTypeRef), values)
+}
+
+export type AbuseInfo = {
+	_type: TypeRef<AbuseInfo>;
+	_original?: AbuseInfo
+
+	_id: Id;
+	criterion: string;
+	value: string;
 }

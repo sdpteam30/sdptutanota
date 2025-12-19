@@ -6,7 +6,7 @@ import { Button, ButtonColor, ButtonType } from "../../../common/gui/base/Button
 import { ContactEditor } from "../ContactEditor"
 import { Contact, ContactTypeRef } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { ContactListView } from "./ContactListView"
-import { lang, TranslationKey } from "../../../common/misc/LanguageViewModel"
+import { lang, Translation, TranslationKey } from "../../../common/misc/LanguageViewModel"
 import { assertNotNull, clear, getFirstOrThrow, isEmpty, isNotEmpty, noOp, ofClass } from "@tutao/tutanota-utils"
 import { ContactMergeAction, Keys } from "../../../common/api/common/TutanotaConstants"
 import { assertMainOrNode, isApp } from "../../../common/api/common/Env"
@@ -22,9 +22,8 @@ import { locator } from "../../../common/api/main/CommonLocator"
 import { ContactMergeView } from "./ContactMergeView"
 import { getMergeableContacts, mergeContacts } from "../ContactMergeUtils"
 import { exportContacts } from "../VCardExporter"
-import { NavButtonAttrs } from "../../../common/gui/base/NavButton.js"
 import { styles } from "../../../common/gui/styles"
-import { size } from "../../../common/gui/size"
+import { layout_size, size } from "../../../common/gui/size"
 import { FolderColumnView } from "../../../common/gui/FolderColumnView.js"
 import { getGroupInfoDisplayName } from "../../../common/api/common/utils/GroupUtils"
 import { SidebarSection, SidebarSectionAttrs } from "../../../common/gui/SidebarSection"
@@ -67,6 +66,7 @@ import { BottomNav } from "../../gui/BottomNav.js"
 import { SidebarSectionRow, SidebarSectionRowAttrs } from "../../../common/gui/base/SidebarSectionRow"
 import { client } from "../../../common/misc/ClientDetector"
 import type { ReceivedGroupInvitation } from "../../../common/api/entities/sys/TypeRefs"
+import { GroupNameData } from "../../../common/sharing/model/GroupSettingsModel"
 
 assertMainOrNode()
 
@@ -121,8 +121,8 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 			},
 			ColumnType.Foreground,
 			{
-				minWidth: size.first_col_min_width,
-				maxWidth: size.first_col_max_width,
+				minWidth: layout_size.first_col_min_width,
+				maxWidth: layout_size.first_col_max_width,
 				headerCenter: "folderTitle_label",
 			},
 		)
@@ -134,8 +134,8 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 			},
 			ColumnType.Background,
 			{
-				minWidth: size.second_col_min_width,
-				maxWidth: size.second_col_max_width,
+				minWidth: layout_size.second_col_min_width,
+				maxWidth: layout_size.second_col_max_width,
 				headerCenter: this.getHeaderLabel(),
 			},
 		)
@@ -144,7 +144,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 			{
 				view: () =>
 					m(BackgroundColumnLayout, {
-						backgroundColor: theme.navigation_bg,
+						backgroundColor: theme.surface_container,
 						desktopToolbar: () => m(DesktopViewerToolbar, this.detailsViewerActions()),
 						mobileHeader: () =>
 							m(MobileHeader, {
@@ -153,7 +153,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 								actions: null,
 								multicolumnActions: () => this.detailsViewerActions(),
 								primaryAction: () => {
-									return this.inContactListView() ? null : this.renderHeaderRightView()
+									return this.inContactListView() ? this.renderContactListHeaderRightView() : this.renderHeaderRightView()
 								},
 								title: this.getHeaderLabel(),
 								columnType: "other",
@@ -165,9 +165,9 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 			},
 			ColumnType.Background,
 			{
-				minWidth: size.third_col_min_width,
-				maxWidth: size.third_col_max_width,
-				ariaLabel: () => this.getHeaderLabel(),
+				minWidth: layout_size.third_col_min_width,
+				maxWidth: layout_size.third_col_max_width,
+				ariaLabel: () => lang.get("contacts_label"),
 			},
 		)
 
@@ -185,7 +185,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 
 	private renderContactListColumn(header: AppHeaderAttrs) {
 		return m(BackgroundColumnLayout, {
-			backgroundColor: theme.navigation_bg,
+			backgroundColor: theme.surface_container,
 			columnLayout: m(ContactListView, {
 				contactViewModel: this.contactViewModel,
 				onSingleSelection: () => {
@@ -203,7 +203,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 							...header,
 							backAction: () => this.viewSlider.focusPreviousColumn(),
 							columnType: "first",
-							title: this.listColumn.getTitle(),
+							title: this.getHeaderLabel(),
 							actions: m(".flex", [
 								this.renderSortByButton(),
 								m(EnterMultiselectIconButton, {
@@ -219,7 +219,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 
 	private renderContactListRecipientColumn(header: AppHeaderAttrs) {
 		return m(BackgroundColumnLayout, {
-			backgroundColor: theme.navigation_bg,
+			backgroundColor: theme.surface_container,
 			columnLayout: m(ContactListRecipientView, {
 				viewModel: this.contactListViewModel,
 				focusDetailsViewer: () => {
@@ -237,7 +237,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 							...header,
 							backAction: () => this.viewSlider.focusPreviousColumn(),
 							columnType: "first",
-							title: this.listColumn.getTitle(),
+							title: this.getHeaderLabel(),
 							actions: m(".flex", [
 								m(EnterMultiselectIconButton, {
 									clickAction: () => {
@@ -245,17 +245,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 									},
 								}),
 							]),
-							primaryAction: () => {
-								if (this.canEditSelectedContactList()) {
-									return m(IconButton, {
-										title: "addEntries_action",
-										click: () => this.addAddressesToContactList(),
-										icon: Icons.Add,
-									})
-								} else {
-									return null
-								}
-							},
+							primaryAction: () => this.renderContactListHeaderRightView(),
 						}),
 		})
 	}
@@ -357,9 +347,10 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 		)
 	}
 
-	private getHeaderLabel(): TranslationKey {
+	private getHeaderLabel(): TranslationKey | Translation {
 		if (this.inContactListView()) {
-			return "contactLists_label"
+			const contactListName = this.contactListViewModel.getSelectedContactListInfo()?.name
+			return contactListName ? lang.makeTranslation("contactList_name", contactListName) : "emptyString_msg"
 		} else {
 			return "contacts_label"
 		}
@@ -402,6 +393,18 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 		})
 	}
 
+	private renderContactListHeaderRightView(): Children {
+		if (this.canEditSelectedContactList()) {
+			return m(IconButton, {
+				title: "addEntries_action",
+				click: () => this.addAddressesToContactList(),
+				icon: Icons.Add,
+			})
+		} else {
+			return null
+		}
+	}
+
 	private renderDetailsViewer(): Children {
 		if (this.inContactListView()) {
 			const entries = this.contactListViewModel.getSelectedContactListEntries() ?? []
@@ -409,7 +412,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 				? m(ColumnEmptyMessageBox, {
 						message: getContactListEntriesSelectionMessage(entries),
 						icon: Icons.People,
-						color: theme.content_message_bg,
+						color: theme.on_surface_variant,
 						bottomContent:
 							entries.length > 0
 								? m(Button, {
@@ -418,7 +421,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 										click: () => this.contactListViewModel.listModel?.selectNone(),
 									})
 								: null,
-						backgroundColor: theme.navigation_bg,
+						backgroundColor: theme.surface_container,
 					})
 				: m(ContactListEntryViewer, {
 						entry: getFirstOrThrow(entries),
@@ -514,7 +517,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 				},
 				[
 					this.contactListViewModel.getOwnContactListInfos().map((cl) => {
-						return this.renderContactListRow(cl, false)
+						return this.renderContactListRow(cl)
 					}),
 				],
 			),
@@ -527,7 +530,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 								name: "sharedContactLists_label",
 							},
 							this.contactListViewModel.getSharedContactListInfos().map((cl) => {
-								return this.renderContactListRow(cl, true)
+								return this.renderContactListRow(cl)
 							}),
 						),
 					)
@@ -604,19 +607,8 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 		})
 	}
 
-	private renderContactListRow(contactListInfo: ContactListInfo, shared: boolean) {
-		const contactListButton: NavButtonAttrs = {
-			label: lang.makeTranslation("contactListName_label", contactListInfo.name),
-			icon: () => Icons.People,
-			href: () => `${CONTACTLIST_PREFIX}/${contactListInfo.groupRoot.entries}`,
-			disableHoverBackground: true,
-			click: () => {
-				this.contactListViewModel.updateSelectedContactList(contactListInfo.groupRoot.entries)
-				this.viewSlider.focus(this.listColumn)
-			},
-		}
-
-		const moreButton = this.createContactListMoreButton(contactListInfo, shared)
+	private renderContactListRow(contactListInfo: ContactListInfo) {
+		const moreButton = this.createContactListMoreButton(contactListInfo)
 
 		return m(SidebarSectionRow, {
 			icon: Icons.People,
@@ -631,7 +623,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 		} satisfies SidebarSectionRowAttrs)
 	}
 
-	createContactListMoreButton(contactListInfo: ContactListInfo, shared: boolean): IconButtonAttrs {
+	createContactListMoreButton(contactListInfo: ContactListInfo): IconButtonAttrs {
 		return attachDropdown({
 			mainButtonAttrs: {
 				title: "more_label",
@@ -644,14 +636,13 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 					{
 						label: "edit_action",
 						icon: Icons.Edit,
-						click: () => {
-							showContactListNameEditor(contactListInfo.name, (newName) => {
-								if (shared) {
-									this.editSharedContactList(contactListInfo, newName)
-								} else {
-									this.contactListViewModel.updateContactList(contactListInfo, newName, [])
-								}
-							})
+						click: async () => {
+							showContactListNameEditor(
+								await this.contactListViewModel.getContactListNewNameData(contactListInfo.groupInfo),
+								(newData: GroupNameData) => {
+									this.contactListViewModel.updateContactList(contactListInfo.groupInfo, newData)
+								},
+							)
 						},
 					},
 					{
@@ -691,19 +682,6 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 				]
 			},
 		})
-	}
-
-	private editSharedContactList(contactListInfo: ContactListInfo, newName: string) {
-		const { userSettingsGroupRoot } = locator.logins.getUserController()
-		const existingGroupSettings = userSettingsGroupRoot.groupSettings.find((gc) => gc.group === contactListInfo.groupInfo.group) ?? null
-
-		if (existingGroupSettings) {
-			existingGroupSettings.name = newName
-		}
-
-		locator.entityClient.update(userSettingsGroupRoot).catch(ofClass(LockedError, noOp))
-		// Updating the contactListInfo.name directly, so it updates for the user right away
-		contactListInfo.name = newName
 	}
 
 	_mergeAction(): Promise<void> {
@@ -929,7 +907,7 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 			})
 		} else {
 			if (locator.logins.getUserController().isGlobalAdmin()) {
-				const { getAvailablePlansWithContactList } = await import("../../../common/subscription/SubscriptionUtils.js")
+				const { getAvailablePlansWithContactList } = await import("../../../common/subscription/utils/SubscriptionUtils.js")
 				const plans = await getAvailablePlansWithContactList()
 				await showPlanUpgradeRequiredDialog(plans)
 			} else {
@@ -939,17 +917,17 @@ export class ContactView extends BaseTopLevelView implements TopLevelView<Contac
 	}
 }
 
-export function writeMail(to: PartialRecipient, subject: string = ""): Promise<Dialog> {
-	return locator.mailboxModel.getUserMailboxDetails().then((mailboxDetails) => {
-		return newMailEditorFromTemplate(
-			mailboxDetails,
-			{
-				to: [to],
-			},
-			subject,
-			appendEmailSignature("", locator.logins.getUserController().props),
-		).then((editor) => editor.show())
-	})
+export async function writeMail(to: PartialRecipient, subject: string = ""): Promise<void> {
+	const mailboxDetails = await locator.mailboxModel.getUserMailboxDetails()
+	const editor = await newMailEditorFromTemplate(
+		mailboxDetails,
+		{
+			to: [to],
+		},
+		subject,
+		appendEmailSignature("", locator.logins.getUserController().props),
+	)
+	editor?.show()
 }
 
 export function deleteContacts(contactList: Contact[], onConfirm: () => void = noOp): Promise<void> {

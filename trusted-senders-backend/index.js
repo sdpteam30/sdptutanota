@@ -14,12 +14,11 @@ const supabaseUrl = process.env.SUPABASE_URL
 const supabaseKey = process.env.SUPABASE_ANON_KEY
 const supabase = createClient(supabaseUrl, supabaseKey)
 
-// Table name prefix to avoid conflicts with other branches
-const TABLE_PREFIX = process.env.TABLE_PREFIX || "dev_"
+// Table names - using production tables (no prefix)
 const TABLES = {
-	TRUSTED_SENDERS: `${TABLE_PREFIX}trusted_senders`,
-	EMAIL_SENDER_STATUS: `${TABLE_PREFIX}email_sender_status`,
-	PHISHING_REPORTS: `${TABLE_PREFIX}phishing_reports`,
+	TRUSTED_SENDERS: "trusted_senders",
+	EMAIL_SENDER_STATUS: "email_sender_status",
+	PHISHING_REPORTS: "phishing_reports",
 }
 
 // --- CORS Setup ---
@@ -56,7 +55,7 @@ app.post("/add-trusted", async (req, res) => {
 	}
 
 	try {
-		// Add to the prefixed table (e.g., dev_trusted_senders based on TABLE_PREFIX)
+		// Add to trusted_senders table
 		const { data, error } = await supabase
 			.from(TABLES.TRUSTED_SENDERS)
 			.upsert(
@@ -74,26 +73,6 @@ app.post("/add-trusted", async (req, res) => {
 		if (error) {
 			console.error("Supabase Error adding/updating trusted sender:", error.message)
 			return res.status(500).json({ error: "Failed to add trusted sender." })
-		}
-
-		// Also explicitly add to dev_trusted_senders table (regardless of prefix)
-		// This ensures the sender is always in dev_trusted_senders in addition to the prefixed table
-		const { error: devError } = await supabase.from("dev_trusted_senders").upsert(
-			{
-				user_email,
-				trusted_email,
-				trusted_name,
-			},
-			{
-				onConflict: "user_email,trusted_email",
-			},
-		)
-
-		if (devError) {
-			console.error("Supabase Error adding to dev_trusted_senders:", devError.message)
-			// Don't fail the request if dev_trusted_senders update fails, but log it
-		} else {
-			console.log(`✅ Also added ${trusted_email} to dev_trusted_senders for ${user_email}`)
 		}
 
 		res.status(201).json({
@@ -278,7 +257,7 @@ app.delete("/reset-single-email-status", async (req, res) => {
 })
 
 app.post("/report-spam", async (req, res) => {
-	const { user_email, sender_email, sender_name = "", report_type, email_id } = req.body
+	const { user_email, sender_email, report_type, email_id } = req.body
 
 	if (!user_email || !sender_email || !report_type) {
 		return res.status(400).json({ error: "Missing required fields: user_email, sender_email, or report_type" })
@@ -290,38 +269,22 @@ app.post("/report-spam", async (req, res) => {
 	}
 
 	try {
-		// Add to the prefixed phishing_reports table (e.g., dev_phishing_reports based on TABLE_PREFIX)
+		// Add to phishing_reports table
+		// Table schema: id, user_email, sender_email, mail_id, report_type, interaction_type, reported_at
 		const { data: reportData, error: reportError } = await supabase
 			.from(TABLES.PHISHING_REPORTS)
 			.insert({
 				user_email,
 				sender_email,
-				sender_name,
+				mail_id: email_id,
 				report_type,
-				email_id,
+				interaction_type: "interacted",
 			})
 			.select()
 
 		if (reportError) {
 			console.error("Supabase Error adding phishing report:", reportError.message)
 			return res.status(500).json({ error: "Failed to add phishing report." })
-		}
-
-		// Also explicitly add to dev_phishing_reports table (regardless of prefix)
-		// This ensures the report is always in dev_phishing_reports in addition to the prefixed table
-		const { error: devReportError } = await supabase.from("dev_phishing_reports").insert({
-			user_email,
-			sender_email,
-			sender_name,
-			report_type,
-			email_id,
-		})
-
-		if (devReportError) {
-			console.error("Supabase Error adding to dev_phishing_reports:", devReportError.message)
-			// Don't fail the request if dev_phishing_reports insert fails, but log it
-		} else {
-			console.log(`✅ Also added ${report_type} report to dev_phishing_reports for ${user_email}`)
 		}
 
 		// Also update email_sender_status with appropriate status
@@ -348,28 +311,6 @@ app.post("/report-spam", async (req, res) => {
 			if (statusError) {
 				console.error("Supabase Error updating email status:", statusError.message)
 				// Don't fail the request, report was still recorded
-			}
-
-			// Also explicitly update dev_email_sender_status table (regardless of prefix)
-			// This ensures the status is always in dev_email_sender_status with the more specific phishing form
-			const { error: devStatusError } = await supabase.from("dev_email_sender_status").upsert(
-				{
-					user_email,
-					email_id,
-					sender_email,
-					status,
-					interaction_type: "interacted",
-				},
-				{
-					onConflict: "user_email,email_id",
-				},
-			)
-
-			if (devStatusError) {
-				console.error("Supabase Error updating dev_email_sender_status:", devStatusError.message)
-				// Don't fail the request if dev_email_sender_status update fails, but log it
-			} else {
-				console.log(`✅ Also updated dev_email_sender_status with ${status} for ${user_email}`)
 			}
 		}
 

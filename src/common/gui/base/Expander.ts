@@ -34,7 +34,7 @@ export class ExpanderButton implements Component<ExpanderAttrs> {
 		return m(
 			".limit-width",
 			m(
-				"button.expander.bg-transparent.pt-s.hover-ul.limit-width.flex.items-center.b.text-ellipsis.flash",
+				"button.expander.bg-transparent.pt-8.hover-ul.limit-width.flex.items-center.b.text-ellipsis.flash",
 				{
 					style: a.style,
 					onclick: (event: MouseEvent) => {
@@ -54,7 +54,7 @@ export class ExpanderButton implements Component<ExpanderAttrs> {
 						? m(Icon, {
 								icon: Icons.Warning,
 								style: {
-									fill: a.color ? a.color : theme.content_button,
+									fill: a.color ? a.color : theme.on_surface_variant,
 								},
 							})
 						: null,
@@ -62,7 +62,7 @@ export class ExpanderButton implements Component<ExpanderAttrs> {
 						`${a.isBig ? "span" : "small"}`,
 						{
 							style: {
-								color: a.color || theme.content_button,
+								color: a.color || theme.on_surface,
 							},
 						},
 						a.isUnformattedLabel ? label : label.toUpperCase(),
@@ -70,9 +70,9 @@ export class ExpanderButton implements Component<ExpanderAttrs> {
 					m(Icon, {
 						icon: BootIcons.Expand,
 						class: "flex-center items-center",
-						size: a.isBig ? IconSize.Medium : IconSize.Normal,
+						size: a.isBig ? IconSize.PX24 : undefined,
 						style: {
-							fill: a.color ? a.color : theme.content_button,
+							fill: a.color ? a.color : theme.on_surface_variant,
 							"margin-right": px(-4),
 							// icon is has 4px whitespace to the right,
 							transform: `rotateZ(${a.expanded ? 180 : 0}deg)`,

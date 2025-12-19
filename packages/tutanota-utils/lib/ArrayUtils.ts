@@ -78,16 +78,19 @@ export function arrayEqualsWithPredicate<T>(a1: ReadonlyArray<T>, a2: ReadonlyAr
 	return false
 }
 
-export function arrayHash(array: Uint8Array): number {
+export function arrayHashSigned(array: Uint8Array): number {
 	let hash = 0
 	hash |= 0
 
 	for (let i = 0; i < array.length; i++) {
 		hash = (hash << 5) - hash + array[i]
-		hash |= 0 // Convert to 32bit integer
+		hash |= 0 // Convert to 32bit signed integer
 	}
-
 	return hash
+}
+
+export function arrayHashUnsigned(array: Uint8Array): number {
+	return arrayHashSigned(array) >>> 0
 }
 
 /**
@@ -531,6 +534,8 @@ export function symmetricDifference<T>(set1: ReadonlySet<T>, set2: ReadonlySet<T
  *
  * Please note that tsc cannot infer that a function is a type predicate/type guard. Declaring function as a type predicate is also unsafe.
  * see: https://github.com/microsoft/TypeScript/issues/16069
+ *
+ * @return a tuple of partitioned elements. The first array has all the matching elements and the second one has the rest.
  */
 export function partition<Generic, Specific extends Generic>(
 	array: ReadonlyArray<Generic>,
@@ -609,4 +614,25 @@ export function compare(first: Uint8Array, second: Uint8Array): number {
 	}
 
 	return 0
+}
+
+/**
+ * Split the array at the given index, returning the left and right side.
+ *
+ * The element at the given index will be included in the right side if it exists. For example, splitting at index 3 for
+ * `[0,1,2,3,4,5]` returns `[[0,1,2], [3,4,5]]`
+ *
+ * If `index >= array.length` then the right side will be an empty array, and the left side will be a shallow copy of
+ * {@link array}.
+ *
+ * @param {Array} array array to split
+ * @param {number} index index to split at (exclusive for left side, inclusive for right side)
+ * @returns An array containing two arrays: all elements from 0 to {@link index} (exclusive), and all elements from
+ *          {@link index} to the end.
+ */
+export function splitArrayAt<T>(array: readonly T[], index: number): [T[], T[]] {
+	const left = array.slice(0, index)
+	const right = array.slice(index)
+
+	return [left, right]
 }

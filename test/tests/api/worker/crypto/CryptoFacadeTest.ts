@@ -1,14 +1,16 @@
 import o from "@tutao/otest"
-import { arrayEquals, assertNotNull, hexToUint8Array, KeyVersion, neverNull, utf8Uint8ArrayToString, Versioned } from "@tutao/tutanota-utils"
+import { arrayEquals, assertNotNull, hexToUint8Array, KeyVersion, neverNull, noOp, utf8Uint8ArrayToString, Versioned } from "@tutao/tutanota-utils"
 import { CryptoFacade } from "../../../../../src/common/api/worker/crypto/CryptoFacade.js"
 import {
 	asCryptoProtoocolVersion,
 	BucketPermissionType,
 	CryptoProtocolVersion,
 	EncryptionAuthStatus,
+	EncryptionKeyVerificationState,
 	GroupType,
-	KeyVerificationState,
 	PermissionType,
+	PresentableKeyVerificationState,
+	ProcessingState,
 	PublicKeyIdentifierType,
 } from "../../../../../src/common/api/common/TutanotaConstants.js"
 import {
@@ -36,6 +38,7 @@ import {
 	createTypeInfo,
 	CustomerAccountTerminationRequestTypeRef,
 	Group,
+	GroupKeysRefTypeRef,
 	GroupMembershipTypeRef,
 	GroupTypeRef,
 	InstanceSessionKey,
@@ -67,7 +70,6 @@ import {
 	kyberPublicKeyToBytes,
 	pqKeyPairsToPublicKeys,
 	PQPublicKeys,
-	RsaKeyPair,
 	RsaPublicKey,
 	rsaPublicKeyToHex,
 	X25519KeyPair,
@@ -90,20 +92,20 @@ import { RSA_TEST_KEYPAIR } from "../facades/RsaPqPerformanceTest.js"
 import { DefaultEntityRestCache } from "../../../../../src/common/api/worker/rest/DefaultEntityRestCache.js"
 import { loadLibOQSWASM } from "../WASMTestUtils.js"
 import { AsymmetricCryptoFacade } from "../../../../../src/common/api/worker/crypto/AsymmetricCryptoFacade.js"
-import { KeyVerificationFacade } from "../../../../../src/common/api/worker/facades/lazy/KeyVerificationFacade"
+import { VerifiedPublicEncryptionKey } from "../../../../../src/common/api/worker/facades/lazy/KeyVerificationFacade"
 import { KeyLoaderFacade, parseKeyVersion } from "../../../../../src/common/api/worker/facades/KeyLoaderFacade.js"
-import { PublicKeyProvider } from "../../../../../src/common/api/worker/facades/PublicKeyProvider.js"
+import { PublicEncryptionKeyProvider } from "../../../../../src/common/api/worker/facades/PublicEncryptionKeyProvider.js"
 import { KeyRotationFacade } from "../../../../../src/common/api/worker/facades/KeyRotationFacade.js"
 import { NotFoundError } from "../../../../../src/common/api/common/error/RestError"
 import { AttributeModel } from "../../../../../src/common/api/common/AttributeModel"
 import { EntityAdapter } from "../../../../../src/common/api/worker/crypto/EntityAdapter"
+import { KeyVerificationMismatchError } from "../../../../../src/common/api/common/error/KeyVerificationMismatchError"
 
 const { captor, anything, argThat } = matchers
 
 const kyberFacade = new WASMKyberFacade(await loadLibOQSWASM())
 const pqFacade: PQFacade = new PQFacade(kyberFacade)
-let asymmetricCryptoFacade: AsymmetricCryptoFacade
-let publicKeyProvider: PublicKeyProvider
+let publicEncryptionKeyProvider: PublicEncryptionKeyProvider
 
 /**
  * Helper to have all the mocked items available in the test case.
@@ -130,7 +132,6 @@ o.spec("CryptoFacadeTest", function () {
 	let crypto: CryptoFacade
 	let userFacade: UserFacade
 	let keyLoaderFacade: KeyLoaderFacade
-	let keyVerificationFacade: KeyVerificationFacade
 	let cache: DefaultEntityRestCache
 	let asymmetricCryptoFacade: AsymmetricCryptoFacade
 	let keyRotationFacade: KeyRotationFacade
@@ -207,8 +208,7 @@ o.spec("CryptoFacadeTest", function () {
 		entityClient = object()
 		asymmetricCryptoFacade = object()
 		ownerEncSessionKeysUpdateQueue = object()
-		keyVerificationFacade = object()
-		publicKeyProvider = object()
+		publicEncryptionKeyProvider = object()
 		keyLoaderFacade = object()
 		keyRotationFacade = object()
 		typeModelResolver = clientInitializedTypeModelResolver()
@@ -224,10 +224,12 @@ o.spec("CryptoFacadeTest", function () {
 			cache,
 			keyLoaderFacade,
 			asymmetricCryptoFacade,
-			async () => keyVerificationFacade,
-			publicKeyProvider,
+			publicEncryptionKeyProvider,
 			() => keyRotationFacade,
 			typeModelResolver,
+			async () => {
+				noOp()
+			},
 		)
 	})
 
@@ -576,7 +578,10 @@ o.spec("CryptoFacadeTest", function () {
 				senderIdentityKeyPair.publicKey,
 				senderKeyVersion,
 			),
-		).thenResolve(EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED)
+		).thenResolve({
+			authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
+			verificationState: PresentableKeyVerificationState.SECURE,
+		})
 
 		const sessionKey = neverNull(await crypto.resolveSessionKey(mail))
 
@@ -602,6 +607,20 @@ o.spec("CryptoFacadeTest", function () {
 
 		const testData = await preparePqPubEncBucketKeyResolveSessionKeyTest()
 		const bucketKey = assertNotNull(testData.mail.bucketKey)
+
+		when(
+			asymmetricCryptoFacade.authenticateSender(
+				{
+					identifier: senderAddress,
+					identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+				},
+				testData.senderIdentityKeyPair.publicKey,
+				anything(),
+			),
+		).thenResolve({
+			authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
+			verificationState: PresentableKeyVerificationState.SECURE,
+		})
 
 		await crypto.enforceSessionKeyUpdateIfNeeded(testData.mail, files)
 		verify(ownerEncSessionKeysUpdateQueue.postUpdateSessionKeysService(anything()), { times: 1 })
@@ -659,11 +678,10 @@ o.spec("CryptoFacadeTest", function () {
 			_id: "userGroupId",
 			currentKeys: senderKeyPair,
 			groupKeyVersion: "0",
-			formerGroupKeys: object(),
+			formerGroupKeys: createTestEntity(GroupKeysRefTypeRef),
 			pubAdminGroupEncGKey: null,
 			identityKeyPair: null,
 		})
-		when(keyLoaderFacade.loadCurrentKeyPair(senderUserGroup._id)).thenResolve({ version: 0, object: senderKeyPairs })
 
 		const notFoundRecipients = []
 		const keyVerificationMismatchRecipients = []
@@ -688,33 +706,11 @@ o.spec("CryptoFacadeTest", function () {
 				},
 			},
 		}
-		when(
-			publicKeyProvider.loadCurrentPubKey({
-				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
-				identifier: recipientMailAddress,
-			}),
-		).thenResolve(recipientPublicKeys)
-		when(
-			publicKeyProvider.loadPubKey(
-				{
-					identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
-					identifier: recipientMailAddress,
-				},
-				0,
-			),
-		).thenResolve({
-			version: 0,
-			object: {
-				keyPairType: KeyPairType.TUTA_CRYPT,
-				x25519PublicKey: senderKeyPair.pubEccKey!,
-				kyberPublicKey: { raw: senderKeyPair.pubKyberKey! },
-			},
-		})
-		when(entityClient.load(GroupTypeRef, senderUserGroup._id)).thenResolve(senderUserGroup)
-		when(keyLoaderFacade.getCurrentSymGroupKey(senderUserGroup._id)).thenResolve({
-			object: senderGroupKey,
-			version: 0,
-		})
+		const loadedPublicKey: VerifiedPublicEncryptionKey = {
+			publicEncryptionKey: recipientPublicKeys,
+			verificationState: EncryptionKeyVerificationState.NO_ENTRY,
+		}
+		when(publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey(anything())).thenResolve(loadedPublicKey)
 		when(asymmetricCryptoFacade.asymEncryptSymKey(bk, recipientPublicKeys, senderUserGroup._id)).thenResolve({
 			recipientKeyVersion: recipientPublicKeys.version,
 			senderKeyVersion: parseKeyVersion(senderUserGroup.groupKeyVersion),
@@ -734,20 +730,22 @@ o.spec("CryptoFacadeTest", function () {
 		o(internalRecipientKeyData.protocolVersion).equals(CryptoProtocolVersion.TUTA_CRYPT)
 		o(internalRecipientKeyData!.mailAddress).equals(recipientMailAddress)
 		o(internalRecipientKeyData!.pubEncBucketKey).deepEquals(encodedPqMessage)
-		verify(publicKeyProvider, { times: 0 })
+		verify(
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
+				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+				identifier: recipientMailAddress,
+			}),
+			{ times: 1 },
+		)
 	})
 
 	o("encryptBucketKeyForInternalRecipient with existing PQKeys for sender", async () => {
 		let recipientMailAddress = "bob@tutanota.com"
-		let senderGroupKey = aes256RandomKey()
 		let bk = aes256RandomKey()
 
 		let senderMailAddress = "alice@tutanota.com"
 
 		const senderKeyPair: KeyPair = object()
-
-		const senderAsymmetricKeyPair: Versioned<RsaKeyPair> = object()
-		const senderPublicKey: Versioned<RsaPublicKey> = object()
 
 		const senderUserGroup = createGroup({
 			_id: "userGroupId",
@@ -767,12 +765,10 @@ o.spec("CryptoFacadeTest", function () {
 			storageCounter: null,
 			type: "",
 			user: null,
-			formerGroupKeys: object(),
+			formerGroupKeys: createTestEntity(GroupKeysRefTypeRef),
 			pubAdminGroupEncGKey: null,
 			identityKeyPair: null,
 		})
-
-		when(keyLoaderFacade.loadCurrentKeyPair(senderUserGroup._id)).thenResolve(senderAsymmetricKeyPair)
 
 		const notFoundRecipients = []
 		const keyVerificationMismatchRecipients = []
@@ -781,30 +777,28 @@ o.spec("CryptoFacadeTest", function () {
 			version: 0,
 			object: object(),
 		}
-		when(
-			publicKeyProvider.loadCurrentPubKey({
-				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
-				identifier: recipientMailAddress,
-			}),
-		).thenResolve(recipientPublicKeys)
+		const loadedRecipientPublicKey: VerifiedPublicEncryptionKey = {
+			publicEncryptionKey: recipientPublicKeys,
+			verificationState: EncryptionKeyVerificationState.NO_ENTRY,
+		}
+		when(publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey(anything())).thenResolve(loadedRecipientPublicKey)
 
 		const senderPublicKeys: Versioned<PQPublicKeys> = {
 			version: 0,
 			object: object(),
 		}
+		const loadedSenderPublicKey: VerifiedPublicEncryptionKey = {
+			publicEncryptionKey: senderPublicKeys,
+			verificationState: EncryptionKeyVerificationState.NO_ENTRY,
+		}
 
 		when(
-			publicKeyProvider.loadCurrentPubKey({
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
 				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
 				identifier: senderMailAddress,
 			}),
-		).thenResolve(senderPublicKeys)
+		).thenResolve(loadedSenderPublicKey)
 
-		when(entityClient.load(GroupTypeRef, senderUserGroup._id)).thenResolve(senderUserGroup)
-		when(keyLoaderFacade.getCurrentSymGroupKey(senderUserGroup._id)).thenResolve({
-			object: senderGroupKey,
-			version: 0,
-		})
 		const pubEncBucketKey = object<Uint8Array>()
 		when(asymmetricCryptoFacade.asymEncryptSymKey(bk, recipientPublicKeys, senderUserGroup._id)).thenResolve({
 			recipientKeyVersion: recipientPublicKeys.version,
@@ -825,7 +819,13 @@ o.spec("CryptoFacadeTest", function () {
 		o(internalRecipientKeyData!.mailAddress).equals(recipientMailAddress)
 		o(internalRecipientKeyData.protocolVersion).equals(CryptoProtocolVersion.RSA)
 		o(internalRecipientKeyData.pubEncBucketKey).deepEquals(pubEncBucketKey)
-		verify(publicKeyProvider, { times: 0 })
+		verify(
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
+				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+				identifier: recipientMailAddress,
+			}),
+			{ times: 1 },
+		)
 	})
 
 	o("encryptBucketKeyForInternalRecipient for non-existing recipients", async function () {
@@ -835,13 +835,8 @@ o.spec("CryptoFacadeTest", function () {
 		const notFoundRecipients: string[] = []
 		const keyVerificationMismatchRecipients: string[] = []
 
-		const recipientPublicKeys: Versioned<RsaPublicKey> = {
-			version: 0,
-			object: object(),
-		}
-
 		when(
-			publicKeyProvider.loadCurrentPubKey({
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
 				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
 				identifier: notFoundRecipientMailAddress,
 			}),
@@ -860,36 +855,102 @@ o.spec("CryptoFacadeTest", function () {
 		verify(userFacade.getUser(), { times: 0 })
 	})
 
-	o("encryptBucketKeyForInternalRecipient for verification-failing recipients", async function () {
-		let verificationFailureRecipientMailAddress = "bob@tutanota.com"
+	o("encryptBucketKeyForInternalRecipient with non-existing recipients", async function () {
+		let notFoundRecipient1MailAddress = "notfound1@tutanota.com"
+		let notFoundRecipient2MailAddress = "notfound2@tutanota.com"
+		const validRecipientMailAddress = "alice@tuta.com"
+
 		let bk = aes256RandomKey()
 
 		const notFoundRecipients: string[] = []
-		const keyVerificationMismatchRecipients: string[] = []
+		const mismatchRecipients: string[] = []
 
-		const recipientPublicKeys: Versioned<RsaPublicKey> = {
+		const recipientPublicKey: Versioned<PQPublicKeys> = {
 			version: 0,
 			object: object(),
 		}
+		recipientPublicKey.object.keyPairType = KeyPairType.TUTA_CRYPT
+		const loadedRecipientPublicKey: VerifiedPublicEncryptionKey = {
+			publicEncryptionKey: recipientPublicKey,
+			verificationState: EncryptionKeyVerificationState.NO_ENTRY,
+		}
 		when(
-			publicKeyProvider.loadCurrentPubKey({
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
 				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
-				identifier: verificationFailureRecipientMailAddress,
+				identifier: validRecipientMailAddress,
 			}),
-		).thenResolve(recipientPublicKeys)
+		).thenResolve(loadedRecipientPublicKey)
 
-		when(keyVerificationFacade.resolveVerificationState(anything(), anything())).thenResolve(KeyVerificationState.MISMATCH)
+		when(
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
+				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+				identifier: notFoundRecipient1MailAddress,
+			}),
+		).thenReject(new NotFoundError(""))
+		when(
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
+				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+				identifier: notFoundRecipient2MailAddress,
+			}),
+		).thenReject(new NotFoundError(""))
 
-		await crypto.encryptBucketKeyForInternalRecipient(
-			"senderGroupId",
-			bk,
-			verificationFailureRecipientMailAddress,
-			notFoundRecipients,
-			keyVerificationMismatchRecipients,
-		)
+		await crypto.encryptBucketKeyForInternalRecipient("senderGroupId", bk, notFoundRecipient1MailAddress, notFoundRecipients, mismatchRecipients)
+
+		await crypto.encryptBucketKeyForInternalRecipient("senderGroupId", bk, validRecipientMailAddress, notFoundRecipients, mismatchRecipients)
+
+		await crypto.encryptBucketKeyForInternalRecipient("senderGroupId", bk, notFoundRecipient2MailAddress, notFoundRecipients, mismatchRecipients)
+
+		o(notFoundRecipients).deepEquals([notFoundRecipient1MailAddress, notFoundRecipient2MailAddress])
+		o(mismatchRecipients).deepEquals([])
+
+		verify(userFacade.getUser(), { times: 0 })
+	})
+
+	o("encryptBucketKeyForInternalRecipient for verification-failing recipients", async function () {
+		let mismatchRecipient1MailAddress = "mismatch1@tutanota.com"
+		let mismatchRecipient2MailAddress = "mismatch2@tutanota.com"
+		const validRecipientMailAddress = "alice@tuta.com"
+
+		let bk = aes256RandomKey()
+
+		const notFoundRecipients: string[] = []
+		const mismatchRecipients: string[] = []
+
+		const recipientPublicKey: Versioned<PQPublicKeys> = {
+			version: 0,
+			object: object(),
+		}
+		recipientPublicKey.object.keyPairType = KeyPairType.TUTA_CRYPT
+		const loadedRecipientPublicKey: VerifiedPublicEncryptionKey = {
+			publicEncryptionKey: recipientPublicKey,
+			verificationState: EncryptionKeyVerificationState.NO_ENTRY,
+		}
+		when(
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
+				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+				identifier: validRecipientMailAddress,
+			}),
+		).thenResolve(loadedRecipientPublicKey)
+
+		when(
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
+				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+				identifier: mismatchRecipient1MailAddress,
+			}),
+		).thenReject(new KeyVerificationMismatchError(""))
+		when(
+			publicEncryptionKeyProvider.loadCurrentPublicEncryptionKey({
+				identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+				identifier: mismatchRecipient2MailAddress,
+			}),
+		).thenReject(new KeyVerificationMismatchError(""))
+
+		await crypto.encryptBucketKeyForInternalRecipient("senderGroupId", bk, mismatchRecipient1MailAddress, notFoundRecipients, mismatchRecipients)
+		await crypto.encryptBucketKeyForInternalRecipient("senderGroupId", bk, validRecipientMailAddress, notFoundRecipients, mismatchRecipients)
+		await crypto.encryptBucketKeyForInternalRecipient("senderGroupId", bk, mismatchRecipient2MailAddress, notFoundRecipients, mismatchRecipients)
 
 		o(notFoundRecipients).deepEquals([])
-		o(keyVerificationMismatchRecipients).deepEquals(["bob@tutanota.com"])
+		o(mismatchRecipients).deepEquals([mismatchRecipient1MailAddress, mismatchRecipient2MailAddress])
 		verify(userFacade.getUser(), { times: 0 })
 	})
 
@@ -907,7 +968,10 @@ o.spec("CryptoFacadeTest", function () {
 				testData.senderIdentityKeyPair.publicKey,
 				parseKeyVersion(senderKeyVersion),
 			),
-		).thenResolve(EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED)
+		).thenResolve({
+			authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
+			verificationState: PresentableKeyVerificationState.SECURE,
+		})
 
 		const sessionKey: AesKey = neverNull(await crypto.resolveSessionKey(testData.mail))
 
@@ -940,7 +1004,10 @@ o.spec("CryptoFacadeTest", function () {
 				testData.senderIdentityKeyPair.publicKey,
 				parseKeyVersion(senderKeyVersion),
 			),
-		).thenResolve(EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED)
+		).thenResolve({
+			authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
+			verificationState: PresentableKeyVerificationState.SECURE,
+		})
 
 		const sessionKey: AesKey = neverNull(await crypto.resolveSessionKey(testData.mail))
 
@@ -974,7 +1041,10 @@ o.spec("CryptoFacadeTest", function () {
 				testData.senderIdentityKeyPair.publicKey,
 				parseKeyVersion(senderKeyVersion),
 			),
-		).thenResolve(EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED)
+		).thenResolve({
+			authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED,
+			verificationState: PresentableKeyVerificationState.ALERT,
+		})
 
 		const sessionKey = neverNull(await crypto.resolveSessionKey(testData.mail))
 
@@ -1194,6 +1264,20 @@ o.spec("CryptoFacadeTest", function () {
 		o.timeout(500) // in CI or with debugging it can take a while
 		const testData = await preparePqPubEncBucketKeyResolveSessionKeyTest()
 
+		when(
+			asymmetricCryptoFacade.authenticateSender(
+				{
+					identifier: senderAddress,
+					identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+				},
+				anything(),
+				anything(),
+			),
+		).thenResolve({
+			authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
+			verificationState: PresentableKeyVerificationState.SECURE,
+		})
+
 		const sessionKey = neverNull(await crypto.resolveSessionKey(testData.mail))
 
 		o(sessionKey).deepEquals(testData.sk)
@@ -1205,6 +1289,20 @@ o.spec("CryptoFacadeTest", function () {
 			o.timeout(500) // in CI or with debugging it can take a while
 
 			const testData = await preparePqPubEncBucketKeyResolveSessionKeyTest()
+
+			when(
+				asymmetricCryptoFacade.authenticateSender(
+					{
+						identifier: senderAddress,
+						identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+					},
+					anything(),
+					anything(),
+				),
+			).thenResolve({
+				authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
+				verificationState: PresentableKeyVerificationState.SECURE,
+			})
 
 			// do not use testdouble here because it's hard to not break the function itself and then verify invocations
 			const decryptAndMapToInstance = (instancePipeline.cryptoMapper.decryptParsedInstance = spy(instancePipeline.cryptoMapper.decryptParsedInstance))
@@ -1223,6 +1321,20 @@ o.spec("CryptoFacadeTest", function () {
 			const file1SessionKey = aes256RandomKey()
 			const file2SessionKey = aes256RandomKey()
 			const testData = await preparePqPubEncBucketKeyResolveSessionKeyTest([file1SessionKey, file2SessionKey])
+
+			when(
+				asymmetricCryptoFacade.authenticateSender(
+					{
+						identifier: senderAddress,
+						identifierType: PublicKeyIdentifierType.MAIL_ADDRESS,
+					},
+					anything(),
+					anything(),
+				),
+			).thenResolve({
+				authStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
+				verificationState: PresentableKeyVerificationState.SECURE,
+			})
 
 			const mailSessionKey = neverNull(await crypto.resolveSessionKey(testData.mail))
 			const bucketKey = assertNotNull(testData.mail.bucketKey)
@@ -1389,6 +1501,7 @@ o.spec("CryptoFacadeTest", function () {
 			instanceId: elementIdPart(mail._id),
 			encryptionAuthStatus: null,
 			symKeyVersion: "0",
+			keyVerificationState: null,
 		})
 		const FileTypeModel = await typeModelResolver.resolveClientTypeReference(FileTypeRef)
 		const bucketEncSessionKeys = fileSessionKeys.map((fileSessionKey, index) => {
@@ -1402,6 +1515,7 @@ o.spec("CryptoFacadeTest", function () {
 				instanceList: "fileListId",
 				instanceId: "fileId" + (index + 1),
 				encryptionAuthStatus: null,
+				keyVerificationState: null,
 			})
 		})
 		bucketEncSessionKeys.push(mailInstanceSessionKey)
@@ -1751,7 +1865,7 @@ o.spec("CryptoFacadeTest", function () {
 				contact: null,
 			}),
 			bucketKey: null,
-			authStatus: "0",
+			authStatus: null,
 			listUnsubscribe: false,
 			method: "",
 			phishingStatus: "0",
@@ -1767,6 +1881,10 @@ o.spec("CryptoFacadeTest", function () {
 			mailDetails: null,
 			mailDetailsDraft: null,
 			sets: [],
+			keyVerificationState: null,
+			processingState: ProcessingState.INBOX_RULE_APPLIED,
+			clientSpamClassifierResult: null,
+			processNeeded: false,
 		})
 
 		// casting here is fine, since we just want to mimic server response data

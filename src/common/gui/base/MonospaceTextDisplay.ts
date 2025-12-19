@@ -37,7 +37,7 @@ export class MonospaceTextDisplay implements Component<MonospaceTextDisplayAttrs
 		let extraClasses = classes ?? ""
 
 		if (border) {
-			extraClasses += ".border.pt.pb.plr"
+			extraClasses += ".border.pt-16.pb-16.plr-12"
 		}
 
 		// in case the chunkSize parameter is set we want to preserve the line break to display the monospace content in multiple rows.
@@ -48,6 +48,6 @@ export class MonospaceTextDisplay implements Component<MonospaceTextDisplayAttrs
 		// Display `formattedText` unless it is empty and a placeholder is given
 		const contents = splitText !== "" ? splitText : placeholder !== undefined ? placeholder : ""
 
-		return m(".text-break.monospace.selectable.flex.flex-wrap.flex-center" + extraClasses, contents)
+		return m(".text-break.monospace.selectable.flex.flex-wrap.flex-center" + extraClasses, { "data-testid": "monoTextContent" }, contents)
 	}
 }

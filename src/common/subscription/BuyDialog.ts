@@ -1,5 +1,5 @@
 import m, { Children, Component, Vnode } from "mithril"
-import { assertNotNull, filterInt, incrementDate, ofClass } from "@tutao/tutanota-utils"
+import { assertNotNull, filterInt, incrementDate, newPromise, ofClass } from "@tutao/tutanota-utils"
 import { TextField, TextFieldType } from "../gui/base/TextField.js"
 import { Dialog, DialogType } from "../gui/base/Dialog.js"
 import { lang, TranslationKey } from "../misc/LanguageViewModel.js"
@@ -8,12 +8,10 @@ import { formatDate } from "../misc/Formatter.js"
 import type { PriceData, PriceServiceReturn } from "../api/entities/sys/TypeRefs.js"
 import { AccountingInfoTypeRef, PriceItemData } from "../api/entities/sys/TypeRefs.js"
 import { NotAuthorizedError } from "../api/common/error/RestError.js"
-import { asPaymentInterval, formatPrice, getPriceItem, PaymentInterval } from "./PriceUtils.js"
+import { asPaymentInterval, formatPrice, getPriceItem, PaymentInterval } from "./utils/PriceUtils.js"
 import { showProgressDialog } from "../gui/dialogs/ProgressDialog.js"
 import { locator } from "../api/main/CommonLocator.js"
 import { assertMainOrNode } from "../api/common/Env.js"
-
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
 
 assertMainOrNode()
 
@@ -35,7 +33,12 @@ export async function showBuyDialog(params: BookingParams): Promise<boolean> {
 	const priceChangeModel = await showProgressDialog("pleaseWait_msg", prepareDialog(params))
 	if (priceChangeModel) {
 		return showDialog(priceChangeModel.getActionLabel(), () =>
-			m(ConfirmSubscriptionView, { priceChangeModel, count: params.count, freeAmount: params.freeAmount, bookingText: params.bookingText }),
+			m(ConfirmSubscriptionView, {
+				priceChangeModel,
+				count: params.count,
+				freeAmount: params.freeAmount,
+				bookingText: params.bookingText,
+			}),
 		)
 	} else {
 		return false

@@ -1,6 +1,6 @@
 import m from "mithril"
 import { Dialog } from "../gui/base/Dialog"
-import { lang, MaybeTranslation } from "../misc/LanguageViewModel"
+import { lang, TranslationKey } from "../misc/LanguageViewModel"
 import { ButtonType } from "../gui/base/Button.js"
 import { AccountingInfo, Booking, createSurveyData, createSwitchAccountTypePostIn, Customer, SurveyData } from "../api/entities/sys/TypeRefs.js"
 import {
@@ -18,7 +18,7 @@ import {
 	PlanTypeToName,
 	UnsubscribeFailureReason,
 } from "../api/common/TutanotaConstants"
-import { SubscriptionActionButtons, SubscriptionSelector } from "./SubscriptionSelector"
+import { SubscriptionActionButtons } from "./SubscriptionSelector"
 import stream from "mithril/stream"
 import { showProgressDialog } from "../gui/dialogs/ProgressDialog"
 import { DialogHeaderBarAttrs } from "../gui/base/DialogHeaderBar"
@@ -27,8 +27,7 @@ import { SwitchSubscriptionDialogModel } from "./SwitchSubscriptionDialogModel"
 import { locator } from "../api/main/CommonLocator"
 import { SwitchAccountTypeService } from "../api/entities/sys/Services.js"
 import { BadRequestError, InvalidDataError, PreconditionFailedError } from "../api/common/error/RestError.js"
-import { FeatureListProvider } from "./FeatureListProvider"
-import { PaymentInterval, PriceAndConfigProvider } from "./PriceUtils"
+import { PaymentInterval, PriceAndConfigProvider } from "./utils/PriceUtils"
 import { assertNotNull, base64ExtToBase64, base64ToUint8Array, delay, downcast, lazy } from "@tutao/tutanota-utils"
 import { showSwitchToBusinessInvoiceDataDialog } from "./SwitchToBusinessInvoiceDataDialog.js"
 import { getByAbbreviation } from "../api/common/CountryList.js"
@@ -39,40 +38,67 @@ import { SURVEY_VERSION_NUMBER } from "./LeavingUserSurveyConstants.js"
 import { isIOSApp } from "../api/common/Env.js"
 import { MobilePaymentSubscriptionOwnership } from "../native/common/generatedipc/MobilePaymentSubscriptionOwnership.js"
 import { showManageThroughAppStoreDialog } from "./PaymentViewer.js"
-import { appStorePlanName, hasRunningAppStoreSubscription, canSubscribeToPlan, SubscriptionApp } from "./SubscriptionUtils.js"
+import {
+	appStorePlanName,
+	getCurrentPaymentInterval,
+	hasRunningAppStoreSubscription,
+	shouldShowApplePrices,
+	SubscriptionApp,
+} from "./utils/SubscriptionUtils.js"
 import { MobilePaymentError } from "../api/common/error/MobilePaymentError.js"
 import { mailLocator } from "../../mail-app/mailLocator"
 import { client } from "../misc/ClientDetector.js"
+import { completeUpgradeStage } from "../ratings/UserSatisfactionUtils"
+import { PlanSelector } from "./PlanSelector.js"
+import { getPrivateBusinessSwitchButton } from "./SubscriptionPage.js"
+import { PlanSelectorHeadline } from "./components/PlanSelectorHeadline"
+import { anyHasGlobalFirstYearCampaign, getDiscountDetails } from "./utils/PlanSelectorUtils"
+import { BootIcons } from "../gui/base/icons/BootIcons"
 
 /**
  * Allows cancelling the subscription (only private use) and switching the subscription to a different paid subscription.
  * Note: Only shown if the user is already a Premium user.
  */
-export async function showSwitchDialog(
-	customer: Customer,
-	accountingInfo: AccountingInfo,
-	lastBooking: Booking,
-	acceptedPlans: readonly AvailablePlanType[],
-	reason: MaybeTranslation | null,
-): Promise<void> {
+export async function showSwitchDialog({
+	customer,
+	accountingInfo,
+	lastBooking,
+	acceptedPlans,
+	reason,
+}: {
+	customer: Customer
+	accountingInfo: AccountingInfo
+	lastBooking: Booking
+	acceptedPlans: readonly AvailablePlanType[]
+	reason: TranslationKey | null
+}): Promise<void> {
 	if (hasRunningAppStoreSubscription(accountingInfo) && !isIOSApp()) {
 		await showManageThroughAppStoreDialog()
 		return
 	}
 
-	const [featureListProvider, priceAndConfigProvider] = await showProgressDialog(
+	const priceAndConfigProvider = await showProgressDialog(
 		"pleaseWait_msg",
-		Promise.all([
-			FeatureListProvider.getInitializedInstance(locator.domainConfigProvider().getCurrentDomainConfig()),
-			PriceAndConfigProvider.getInitializedInstance(null, locator.serviceExecutor, null),
-		]),
+		PriceAndConfigProvider.getInitializedInstance(null, locator.serviceExecutor, null),
 	)
 	const model = new SwitchSubscriptionDialogModel(customer, accountingInfo, await locator.logins.getUserController().getPlanType(), lastBooking)
 	const cancelAction = () => {
 		dialog.close()
 	}
 
-	const headerBarAttrs: DialogHeaderBarAttrs = {
+	const currentPlanInfo = model.currentPlanInfo
+	const businessUse = stream(currentPlanInfo.businessUse)
+	const paymentInterval = stream(PaymentInterval.Yearly) // always default to yearly
+	const options = { businessUse, paymentInterval }
+	const multipleUsersAllowed = model.multipleUsersStillSupportedLegacy()
+	const isApplePrice = shouldShowApplePrices(accountingInfo)
+	const discountDetails = getDiscountDetails(isApplePrice, priceAndConfigProvider)
+
+	if (currentPlanInfo.planType != null && LegacyPlans.includes(currentPlanInfo.planType)) {
+		reason = "currentPlanDiscontinued_msg"
+	}
+
+	const newPlanSelectorHeaderBarAttrs: DialogHeaderBarAttrs = {
 		left: [
 			{
 				label: "cancel_action",
@@ -80,37 +106,48 @@ export async function showSwitchDialog(
 				type: ButtonType.Secondary,
 			},
 		],
-		right: [],
+		right: isApplePrice ? [] : [getPrivateBusinessSwitchButton(businessUse, acceptedPlans)],
 		middle: "subscription_label",
 	}
-	const currentPlanInfo = model.currentPlanInfo
-	const businessUse = stream(currentPlanInfo.businessUse)
-	const paymentInterval = stream(PaymentInterval.Yearly) // always default to yearly
-	const multipleUsersAllowed = model.multipleUsersStillSupportedLegacy()
 
-	const dialog: Dialog = Dialog.largeDialog(headerBarAttrs, {
-		view: () =>
-			m(
-				".pt",
-				m(SubscriptionSelector, {
-					options: {
-						businessUse,
-						paymentInterval: paymentInterval,
-					},
-					priceInfoTextId: priceAndConfigProvider.getPriceInfoMessage(),
-					msg: reason,
-					boxWidth: 230,
-					boxHeight: 270,
-					acceptedPlans: acceptedPlans.filter(canSubscribeToPlan),
-					currentPlanType: currentPlanInfo.planType,
-					accountingInfo,
-					allowSwitchingPaymentInterval: currentPlanInfo.paymentInterval !== PaymentInterval.Yearly,
-					actionButtons: subscriptionActionButtons,
-					featureListProvider: featureListProvider,
-					priceAndConfigProvider,
-					multipleUsersAllowed,
+	const renderPlanSelector = () => {
+		// Reassigning the right button for header to update the label
+		if (!isApplePrice) {
+			newPlanSelectorHeaderBarAttrs.right = [getPrivateBusinessSwitchButton(businessUse, acceptedPlans)]
+		}
+
+		return m(
+			".pt-16",
+			// Headline for a global campaign
+			!businessUse() &&
+				anyHasGlobalFirstYearCampaign(discountDetails) &&
+				m(PlanSelectorHeadline, {
+					translation: lang.getTranslation("pricing.cyber_monday_msg"),
+					icon: BootIcons.Heart,
 				}),
-			),
+			// Headline for general messages
+			reason && m(PlanSelectorHeadline, { translation: lang.getTranslation(reason) }),
+			m(PlanSelector, {
+				options,
+				actionButtons: subscriptionActionButtons,
+				priceAndConfigProvider,
+				availablePlans: acceptedPlans,
+				isApplePrice,
+				currentPlan: currentPlanInfo.planType,
+				currentPaymentInterval: getCurrentPaymentInterval(accountingInfo),
+				// We hide the payment interval switch in the setting and let the plan selector handles the interval changing for iOS
+				allowSwitchingPaymentInterval: isApplePrice || currentPlanInfo.paymentInterval !== PaymentInterval.Yearly,
+				showMultiUser: multipleUsersAllowed,
+				targetPlan: currentPlanInfo.planType, // dummy property; only relevant for signup, but required to exist
+				discountDetails,
+			}),
+		)
+	}
+
+	const dialog: Dialog = Dialog.largeDialog(newPlanSelectorHeaderBarAttrs, {
+		view: () => {
+			return renderPlanSelector()
+		},
 	})
 		.addShortcut({
 			key: Keys.ESC,
@@ -180,6 +217,8 @@ async function onSwitchToFree(customer: Customer, dialog: Dialog, currentPlanInf
 					reason: reason.reason,
 					details: reason.details,
 					version: SURVEY_VERSION_NUMBER,
+					clientVersion: env.versionNumber,
+					clientPlatform: client.getClientPlatform().valueOf().toString(),
 				})
 			: null
 	const newPlanType = await cancelSubscription(dialog, currentPlanInfo, customer, data)
@@ -187,7 +226,7 @@ async function onSwitchToFree(customer: Customer, dialog: Dialog, currentPlanInf
 	if (newPlanType === PlanType.Free) {
 		if (mailLocator.mailModel) {
 			// there is no mailLocator for the calendar app
-			for (const importedMailSet of mailLocator.mailModel.getImportedMailSets()) mailLocator.mailModel.finallyDeleteCustomMailFolder(importedMailSet)
+			for (const importedMailSet of mailLocator.mailModel.getImportedMailSets()) void mailLocator.mailModel.finallyDeleteCustomMailFolder(importedMailSet)
 		}
 	}
 }
@@ -217,7 +256,7 @@ async function doSwitchToPaidPlan(
 		} catch (e) {
 			if (e instanceof MobilePaymentError) {
 				console.error("AppStore subscription failed", e)
-				Dialog.message("appStoreSubscriptionError_msg", e.message)
+				void Dialog.message("appStoreSubscriptionError_msg", e.message)
 			} else {
 				throw e
 			}
@@ -242,14 +281,23 @@ function createPlanButton(
 		label: "buy_action",
 		...(shouldApplyDiscount && { class: "go-european-button" }),
 		onclick: async () => {
-			// Show an extra dialog in the case that someone is upgrading from a legacy plan to a new plan because they can't revert.
 			if (
-				LegacyPlans.includes(currentPlanInfo.planType) &&
-				!(await Dialog.confirm(lang.getTranslation("upgradePlan_msg", { "{plan}": PlanTypeToName[targetSubscription] })))
+				await Dialog.confirm(
+					lang.getTranslation("switchPlan_msg", {
+						"{plan}": PlanTypeToName[targetSubscription],
+						"{interval}":
+							newPaymentInterval() === PaymentInterval.Yearly
+								? lang.getTranslationText("pricing.yearly_label").toLowerCase()
+								: lang.getTranslationText("pricing.monthly_label").toLowerCase(),
+					}),
+					"paymentDataValidation_action",
+				)
 			) {
-				return
+				await showProgressDialog(
+					"pleaseWait_msg",
+					doSwitchToPaidPlan(accountingInfo, newPaymentInterval(), targetSubscription, dialog, currentPlanInfo),
+				)
 			}
-			await showProgressDialog("pleaseWait_msg", doSwitchToPaidPlan(accountingInfo, newPaymentInterval(), targetSubscription, dialog, currentPlanInfo))
 		},
 	})
 }
@@ -377,7 +425,7 @@ async function cancelSubscription(
 ): Promise<PlanType> {
 	const confirmCancelSubscription = Dialog.confirm("unsubscribeConfirm_msg", "ok_action", () => {
 		return m(
-			".pt",
+			".pt-16",
 			m("ul.usage-test-opt-in-bullets", [
 				m("li", lang.get("importedMailsWillBeDeleted_label")),
 				m("li", lang.get("accountWillBeDeactivatedIn6Month_label")),
@@ -431,6 +479,7 @@ async function switchSubscription(targetSubscription: PlanType, dialog: Dialog, 
 
 		try {
 			await showProgressDialog("pleaseWait_msg", locator.serviceExecutor.post(SwitchAccountTypeService, postIn))
+			completeUpgradeStage(currentPlanInfo.planType, targetSubscription) // this is just a usage test
 			return targetSubscription
 		} catch (e) {
 			if (e instanceof PreconditionFailedError) {

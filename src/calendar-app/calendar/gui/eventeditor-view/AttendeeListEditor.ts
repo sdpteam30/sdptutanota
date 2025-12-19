@@ -7,10 +7,9 @@ import { lang } from "../../../../common/misc/LanguageViewModel.js"
 import { AccountType, CalendarAttendeeStatus } from "../../../../common/api/common/TutanotaConstants.js"
 import { RecipientsSearchModel } from "../../../../common/misc/RecipientsSearchModel.js"
 import { Guest } from "../../view/CalendarInvites.js"
-import { Icon, IconSize } from "../../../../common/gui/base/Icon.js"
 import { theme } from "../../../../common/gui/theme.js"
 import { IconButton } from "../../../../common/gui/base/IconButton.js"
-import { px, size } from "../../../../common/gui/size.js"
+import { component_size, px, size } from "../../../../common/gui/size.js"
 import { CalendarEventWhoModel } from "../eventeditor-model/CalendarEventWhoModel.js"
 import { LoginController } from "../../../../common/api/main/LoginController.js"
 import { CalendarEventModel, CalendarOperation } from "../eventeditor-model/CalendarEventModel.js"
@@ -18,7 +17,7 @@ import { showPlanUpgradeRequiredDialog } from "../../../../common/misc/Subscript
 import { hasPlanWithInvites } from "../eventeditor-model/CalendarNotificationModel.js"
 import { Dialog } from "../../../../common/gui/base/Dialog.js"
 
-import { AttendingItem, createAttendingItems, iconForAttendeeStatus } from "../CalendarGuiUtils.js"
+import { AttendingItem, calendarAttendeeStatusText, createAttendingItems } from "../CalendarGuiUtils.js"
 import { Card } from "../../../../common/gui/base/Card.js"
 import { Select, SelectAttributes } from "../../../../common/gui/base/Select.js"
 import stream from "mithril/stream"
@@ -50,10 +49,10 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 		const { whoModel } = attrs.model.editModels
 		const organizer = whoModel.organizer
 		return [
-			m(".flex-grow.flex.flex-column.gap-vpad.pb.pt.fit-height", { style: { width: px(attrs.width) } }, [
+			m(".flex-grow.flex.flex-column.gap-16.pb-16.pt-16.fit-height", { style: { width: px(attrs.width) } }, [
 				this.renderOrganizer(attrs.model, organizer),
-				m(".flex.flex-column.gap-vpad-s", [
-					m("small.uppercase.b.text-ellipsis", { style: { color: theme.navigation_button } }, lang.get("guests_label")),
+				m(".flex.flex-column.gap-8", [
+					m("small.uppercase.b.text-ellipsis", { style: { color: theme.on_surface } }, lang.get("guests_label")),
 					whoModel.canModifyGuests ? this.renderGuestsInput(whoModel, attrs.logins, attrs.recipientsSearch) : null,
 					this.renderSendUpdateCheckbox(attrs.model.editModels.whoModel),
 					this.renderGuestList(attrs, organizer),
@@ -85,24 +84,22 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 			guestItems.push(() => this.renderGuest(ownGuest, attrs))
 		}
 
-		const verticalPadding = guestItems.length > 0 ? size.vpad_small : 0
+		const verticalPadding = guestItems.length > 0 ? size.spacing_8 : 0
 
 		return guestItems.length === 0
 			? m(
 					Card,
 					{
-						classes: ["min-h-s flex flex-column gap-vpad-s"],
+						classes: ["min-h-s flex flex-column gap-8"],
 						style: {
-							padding: `${px(verticalPadding)} ${px(guestItems.length === 0 ? size.vpad_small : 0)} ${px(size.vpad_small)} ${px(
-								verticalPadding,
-							)}`,
+							padding: `${px(verticalPadding)} ${px(guestItems.length === 0 ? size.spacing_8 : 0)} ${px(size.spacing_8)} ${px(verticalPadding)}`,
 						},
 					},
 					m(".flex.items-center.justify-center.min-h-s", [
 						m(IconMessageBox, {
 							message: "noEntries_msg",
 							icon: Icons.People,
-							color: theme.list_message_bg,
+							color: theme.on_surface_variant,
 						}),
 					]),
 				)
@@ -113,7 +110,7 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 		const guests = whoModel.guests
 		const hasExternalGuests = guests.some((a) => a.type === RecipientType.EXTERNAL)
 
-		return m(".flex.items-center.flex-grow.gap-vpad-s", [
+		return m(".flex.items-center.flex-grow.gap-8", [
 			m(Card, { style: { padding: "0" }, classes: ["flex-grow"] }, [
 				m(".flex.flex-grow.rel.button-height", [
 					m(GuestPicker, {
@@ -123,7 +120,7 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 							if (!(await hasPlanWithInvites(logins)) && !this.hasPlanWithInvites) {
 								if (logins.getUserController().user.accountType === AccountType.EXTERNAL) return
 								if (logins.getUserController().isGlobalAdmin()) {
-									const { getAvailablePlansWithEventInvites } = await import("../../../../common/subscription/SubscriptionUtils.js")
+									const { getAvailablePlansWithEventInvites } = await import("../../../../common/subscription/utils/SubscriptionUtils.js")
 									const plansWithEventInvites = await getAvailablePlansWithEventInvites()
 									if (plansWithEventInvites.length === 0) return
 									//entity event updates are too slow to call updateBusinessFeature()
@@ -166,7 +163,7 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 		const attendingOptions = createAttendingItems().filter((option) => option.selectable !== false)
 		const attendingStatus = attendingOptions.find((option) => option.value === status)
 
-		return m(".flex.flex-column.pl-vpad-s.pr-vpad-s", [
+		return m(".flex.flex-column.pl-8.pr-8", [
 			m(Select<AttendingItem, CalendarAttendeeStatus>, {
 				onchange: (option) => {
 					if (option.selectable === false) return
@@ -178,10 +175,10 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 				ariaLabel: lang.get("attending_label"),
 				renderOption: (option) =>
 					m(
-						"button.items-center.flex-grow.state-bg.button-content.dropdown-button.pt-s.pb-s.button-min-height",
+						"button.items-center.flex-grow.state-bg.button-content.dropdown-button.pt-8.pb-8.button-min-height",
 						{
 							class: option.selectable === false ? `no-hover` : "",
-							style: { color: option.value === status ? theme.content_button_selected : undefined },
+							style: { color: option.value === status ? theme.primary : undefined },
 						},
 						option.name,
 					),
@@ -219,10 +216,10 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 		const selected = options.find((option) => option.address === address) ?? options[0]
 
 		return m(".flex.col", [
-			m("small.uppercase.pb-s.b.text-ellipsis", { style: { color: theme.navigation_button } }, lang.get("organizer_label")),
+			m("small.uppercase.pb-8.b.text-ellipsis", { style: { color: theme.on_surface } }, lang.get("organizer_label")),
 			m(Card, { style: { padding: `0` } }, [
 				m(".flex.flex-column", [
-					m(".flex.pl-vpad-s.pr-vpad-s", [
+					m(".flex.pl-8.pr-8", [
 						m(Select<OrganizerSelectItem, string>, {
 							classes: ["flex-grow", "button-min-height"],
 							onchange: (option) => {
@@ -236,8 +233,8 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 							ariaLabel: lang.get("organizer_label"),
 							renderOption: (option) =>
 								m(
-									"button.items-center.flex-grow.state-bg.button-content.dropdown-button.pt-s.pb-s.button-min-height",
-									{ style: { color: selected.address === option.address ? theme.content_button_selected : undefined } },
+									"button.items-center.flex-grow.state-bg.button-content.dropdown-button.pt-8.pb-8.button-min-height",
+									{ style: { color: selected.address === option.address ? theme.primary : undefined } },
 									option.address,
 								),
 							renderDisplay: (option) => m("", option.name ? `${option.name} <${option.address}>` : option.address),
@@ -270,7 +267,7 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 							: null,
 					]),
 					isMe && model.operation !== CalendarOperation.EditThis
-						? [m(Divider, { color: theme.button_bubble_bg }), this.renderAttendeeStatus(whoModel, organizer)]
+						? [m(Divider, { color: theme.outline_variant }), this.renderAttendeeStatus(whoModel, organizer)]
 						: null,
 				]),
 			]),
@@ -300,13 +297,15 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 		const { whoModel } = model.editModels
 		const { address, name, status } = guest
 		const isMe = guest.address === whoModel.ownGuest?.address
-		const roleLabel = isMe ? `${lang.get("guest_label")} | ${lang.get("you_label")}` : lang.get("guest_label")
+		const statusText = calendarAttendeeStatusText(status)
+		const roleLabel = isMe ? `${lang.get("guest_label")} | ${lang.get("you_label")}` : `${lang.get("guest_label")}`
+		const guestStatusAndRole = roleLabel + (statusText ? ` | ${statusText}` : "")
 		const renderPasswordField = whoModel.isConfidential && password != null && guest.type === RecipientType.EXTERNAL
 
 		let rightContent: Children = null
 
 		if (isMe) {
-			rightContent = m("", { style: { paddingRight: px(size.vpad_small) } }, this.renderAttendeeStatus(model.editModels.whoModel, guest))
+			rightContent = m("", { style: { paddingRight: px(size.spacing_8) } }, this.renderAttendeeStatus(model.editModels.whoModel, guest))
 		} else if (whoModel.canModifyGuests) {
 			rightContent = m(IconButton, {
 				title: "remove_action",
@@ -319,14 +318,13 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 			Card,
 			{
 				style: {
-					padding: `${px(size.vpad_small)} ${px(0)} ${px(size.vpad_small)} ${px(size.vpad_small)}`,
+					padding: `${px(size.spacing_8)} ${px(0)} ${px(size.spacing_8)} ${px(size.spacing_8)}`,
 				},
 			},
 			m(".flex.flex-column.items-center", [
 				m(".flex.items-center.flex-grow.full-width", [
-					this.renderStatusIcon(status),
 					m(".flex.flex-column.flex-grow.min-width-0", [
-						m(".small", { style: { lineHeight: px(size.vpad_small) } }, roleLabel),
+						m(".small", { style: { lineHeight: px(size.spacing_8) } }, guestStatusAndRole),
 						m(".text-ellipsis", name.length > 0 ? `${name} ${address}` : address),
 					]),
 					rightContent,
@@ -337,11 +335,11 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 								".flex.full-width",
 								{
 									style: {
-										padding: `0 0 ${px(size.vpad_xsm)} ${px(size.vpad_small + size.icon_size_medium_large)}`,
+										padding: `0 0 ${px(size.spacing_4)} ${px(size.spacing_8 + 20)}`,
 									},
 								},
 								m(Divider, {
-									color: theme.button_bubble_bg,
+									color: theme.outline_variant,
 								}),
 							),
 							this.renderPasswordField(address, password, strength ?? 0, whoModel),
@@ -361,8 +359,8 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 					".flex.flex-column.full-width",
 					{
 						style: {
-							paddingLeft: px(size.hpad_medium + size.vpad_small),
-							paddingRight: px((size.button_height - size.button_height_compact) / 2),
+							paddingLeft: px(size.spacing_24 + size.spacing_8),
+							paddingRight: px((component_size.button_height - component_size.button_height_compact) / 2),
 						},
 					},
 					[
@@ -378,17 +376,5 @@ export class AttendeeListEditor implements Component<AttendeeListEditorAttrs> {
 				),
 			]),
 		]
-	}
-
-	private renderStatusIcon(status: CalendarAttendeeStatus): Children {
-		const icon = iconForAttendeeStatus[status]
-		return m(Icon, {
-			icon,
-			size: IconSize.Large,
-			class: "mr-s",
-			style: {
-				fill: theme.content_fg,
-			},
-		})
 	}
 }

@@ -29,8 +29,9 @@ export function showGroupInvitationDialog(invitation: ReceivedGroupInvitation) {
 	const existingGroupSettings = userSettingsGroupRoot.groupSettings.find((gc) => gc.group === invitation.sharedGroup)
 	const color = existingGroupSettings ? "#" + existingGroupSettings.color : ""
 	const colorStream = stream(color)
-	const isDefaultGroupName = invitation.sharedGroupName === getDefaultGroupName(downcast(invitation.groupType))
-	const nameStream = stream(isDefaultGroupName ? texts.sharedGroupDefaultCustomName(invitation) : invitation.sharedGroupName)
+	const isDefaultGroupName = invitation.sharedGroupName === getDefaultGroupName(getInvitationGroupType(invitation))
+	const groupName = isDefaultGroupName ? texts.sharedGroupDefaultCustomName(invitation) : invitation.sharedGroupName
+	const nameStream = stream(groupName)
 	const alarmsStream: stream<AlarmInterval[]> = stream([])
 
 	const isMember = locator.logins
@@ -55,7 +56,8 @@ export function showGroupInvitationDialog(invitation: ReceivedGroupInvitation) {
 						const groupSettings = createGroupSettings({
 							group: invitation.sharedGroup,
 							color: newColor,
-							name: newName,
+							// If the receiving user does not set a custom name, the name from groupInfo will be used
+							name: newName !== groupName ? newName : null,
 							defaultAlarmsList: alarmsStream().map((alarm) => createDefaultAlarmInfo({ trigger: serializeAlarmInterval(alarm) })),
 							sourceUrl: null,
 						})
@@ -73,8 +75,8 @@ export function showGroupInvitationDialog(invitation: ReceivedGroupInvitation) {
 		child: {
 			view: () =>
 				m(".flex.col", [
-					m(".mb", [
-						m(".pt.selectable", isMember ? lang.getTranslationText(texts.alreadyGroupMemberMessage) : texts.receivedGroupInvitationMessage),
+					m(".mb-16", [
+						m(".pt-16.selectable", isMember ? lang.getTranslationText(texts.alreadyGroupMemberMessage) : texts.receivedGroupInvitationMessage),
 						m(TextField, {
 							value: nameStream(),
 							oninput: nameStream,
@@ -130,7 +132,7 @@ async function checkCanAcceptGroupInvitation(invitation: ReceivedGroupInvitation
 	}
 	const planConfig = await locator.logins.getUserController().getPlanConfig()
 	if (isTemplateGroup(getInvitationGroupType(invitation)) && !planConfig.templates) {
-		const { getAvailablePlansWithTemplates } = await import("../../subscription/SubscriptionUtils.js")
+		const { getAvailablePlansWithTemplates } = await import("../../subscription/utils/SubscriptionUtils.js")
 		const plans = await getAvailablePlansWithTemplates()
 		return showPlanUpgradeRequiredDialog(plans)
 	} else {
@@ -145,7 +147,7 @@ function renderCalendarGroupInvitationFields(
 ): Children {
 	let alarms = alarmsStream()
 	return [
-		m(".small.mt.mb-xs", lang.get("color_label")),
+		m(".small.mt-16.mb-4", lang.get("color_label")),
 		m(ColorPickerView, {
 			value: selectedColourValue(),
 			onselect: selectedColourValue,

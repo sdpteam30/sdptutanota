@@ -1,5 +1,5 @@
 import m, { Children, Component, Vnode } from "mithril"
-import { KeyVerificationMethodType } from "../../../api/common/TutanotaConstants"
+import { IdentityKeyVerificationMethod } from "../../../api/common/TutanotaConstants"
 import { RadioSelectorOption } from "../../../gui/base/RadioSelector"
 import { lang, MaybeTranslation } from "../../../misc/LanguageViewModel"
 import { SectionButton } from "../../../gui/base/buttons/SectionButton"
@@ -18,15 +18,14 @@ const DEFAULT_HEIGHT = 666
 export class MethodSelectionPage implements Component<MethodSelectionPageAttrs> {
 	view(vnode: Vnode<MethodSelectionPageAttrs>): Children {
 		const model = vnode.attrs.model
-		const test = model.test
 
-		const makeOption = (name: MaybeTranslation, value: KeyVerificationMethodType): RadioSelectorOption<KeyVerificationMethodType> => ({
+		const makeOption = (name: MaybeTranslation, value: IdentityKeyVerificationMethod): RadioSelectorOption<IdentityKeyVerificationMethod> => ({
 			name,
 			value,
 		})
 
 		return m(
-			".pt.pb.flex.col.gap-vpad",
+			".pt-16.pb-16.flex.col.gap-16",
 			{
 				style: {
 					height: px(DEFAULT_HEIGHT),
@@ -37,26 +36,31 @@ export class MethodSelectionPage implements Component<MethodSelectionPageAttrs> 
 				{ shouldDivide: true },
 
 				m(
-					"section.pt-s.pb-s",
+					"section.pt-8.pb-8",
 					{
 						style: {
-							padding: px(size.vpad_small),
+							padding: px(size.spacing_8),
 						},
 					},
 					[
-						m(".h4.mb-0.pl-vpad-s", lang.get("keyManagement.selectMethodShort_label")),
-						m("p.mt-xs.mb-s.pl-vpad-s", lang.get("keyManagement.selectMethodLong_label")),
+						m(".h4.mb-0.pl-8", lang.get("keyManagement.selectMethodShort_label")),
+						m(
+							"p.mt-4.mb-8.pl-8",
+							m.trust(
+								lang.get("keyManagement.selectMethodLong_label", {
+									"{compareVerificationCode}": lang.get("keyManagement.text_label"),
+								}),
+							),
+						),
 					],
 				),
 				[
 					this.renderTextMethodButton(async () => {
-						await model.handleMethodSwitchForUsageTest(KeyVerificationMethodType.text)
-						await test.start(KeyVerificationMethodType.text)
+						await model.handleMethodSwitch(IdentityKeyVerificationMethod.text)
 						vnode.attrs.goToEmailInputPage()
 					}),
 					this.renderQRMethodButton(async () => {
-						await model.handleMethodSwitchForUsageTest(KeyVerificationMethodType.qr)
-						await test.start(KeyVerificationMethodType.qr)
+						await model.handleMethodSwitch(IdentityKeyVerificationMethod.qr)
 						vnode.attrs.goToQrScanPage()
 					}),
 				],
@@ -67,7 +71,7 @@ export class MethodSelectionPage implements Component<MethodSelectionPageAttrs> 
 	private renderTextMethodButton(onclick: () => void): Children {
 		return m(SectionButton, {
 			text: "keyManagement.text_label",
-			classes: "pl-vpad-s",
+			classes: "pl-8",
 			onclick,
 		})
 	}
@@ -75,7 +79,7 @@ export class MethodSelectionPage implements Component<MethodSelectionPageAttrs> 
 	private renderQRMethodButton(onclick: () => void): Children {
 		return m(SectionButton, {
 			text: "keyManagement.qrCode_label",
-			classes: "pl-vpad-s",
+			classes: "pl-8",
 			onclick,
 		})
 	}

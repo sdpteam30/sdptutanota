@@ -11,11 +11,20 @@ import {
 	getFromMap,
 	isNotEmpty,
 	isSameDay,
+	LazyLoaded,
 	Require,
 	splitInChunks,
 	symmetricDifference,
 } from "@tutao/tutanota-utils"
-import { CalendarMethod, defaultCalendarColor, EXTERNAL_CALENDAR_SYNC_INTERVAL, FeatureType, OperationType } from "../../../common/api/common/TutanotaConstants"
+import {
+	BIRTHDAY_CALENDAR_BASE_ID,
+	CalendarMethod,
+	DEFAULT_BIRTHDAY_CALENDAR_COLOR,
+	DEFAULT_CALENDAR_COLOR,
+	EXTERNAL_CALENDAR_SYNC_INTERVAL,
+	FeatureType,
+	OperationType,
+} from "../../../common/api/common/TutanotaConstants"
 import { EventController } from "../../../common/api/main/EventController"
 import {
 	createDateWrapper,
@@ -40,6 +49,7 @@ import {
 	createGroupSettings,
 	FileTypeRef,
 	GroupSettings,
+	UserSettingsGroupRoot,
 	UserSettingsGroupRootTypeRef,
 } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { isApp, isDesktop } from "../../../common/api/common/Env"
@@ -74,7 +84,7 @@ import {
 import { IServiceExecutor } from "../../../common/api/common/ServiceRequest"
 import { MembershipService } from "../../../common/api/entities/sys/Services"
 import { FileController } from "../../../common/file/FileController"
-import { findAttendeeInAddresses, serializeAlarmInterval } from "../../../common/api/common/utils/CommonCalendarUtils.js"
+import { findAttendeeInAddresses, isBefore, serializeAlarmInterval } from "../../../common/api/common/utils/CommonCalendarUtils.js"
 import { TutanotaError } from "@tutao/tutanota-error"
 import { SessionKeyNotFoundError } from "../../../common/api/common/error/SessionKeyNotFoundError.js"
 import Stream from "mithril/stream"
@@ -86,30 +96,31 @@ import {
 	AlarmInterval,
 	assignEventId,
 	CalendarEventValidity,
+	CalendarType,
 	checkEventValidity,
-	getCalendarRenderType,
+	findFirstPrivateCalendar,
+	getCalendarType,
 	getTimeZone,
 	hasSourceUrl,
-	isClientOnlyCalendar,
-	RenderType,
+	isBirthdayCalendar,
 } from "../../../common/calendar/date/CalendarUtils.js"
 import { getSharedGroupName, isSharedGroupOwner, loadGroupMembers } from "../../../common/sharing/GroupUtils.js"
 import { ExternalCalendarFacade } from "../../../common/native/common/generatedipc/ExternalCalendarFacade.js"
-import { deviceConfig, DeviceConfig } from "../../../common/misc/DeviceConfig.js"
+import { DeviceConfig } from "../../../common/misc/DeviceConfig.js"
 import { locator } from "../../../common/api/main/CommonLocator.js"
 import {
+	EventAlarmsTuple,
 	eventHasSameFields,
 	EventImportRejectionReason,
-	EventWrapper,
+	normalizeCalendarUrl,
 	parseCalendarStringData,
 	shallowIsSameEvent,
 	sortOutParsedEvents,
 	SyncStatus,
 } from "../../../common/calendar/gui/ImportExportUtils.js"
 import { UserError } from "../../../common/api/main/UserError.js"
-import { lang } from "../../../common/misc/LanguageViewModel.js"
+import { LanguageViewModel } from "../../../common/misc/LanguageViewModel.js"
 import { NativePushServiceApp } from "../../../common/native/main/NativePushServiceApp.js"
-import { getClientOnlyCalendars } from "../gui/CalendarGuiUtils.js"
 import { SyncTracker } from "../../../common/api/main/SyncTracker.js"
 import { CacheMode } from "../../../common/api/worker/rest/EntityRestClient"
 
@@ -117,19 +128,28 @@ const TAG = "[CalendarModel]"
 const EXTERNAL_CALENDAR_RETRY_LIMIT = 3
 const EXTERNAL_CALENDAR_RETRY_DELAY_MS = 1000
 
-export type CalendarInfo = {
+export type CalendarInfoBase = {
+	id: string
+	name: string
+	color: string
+	type: CalendarType
+}
+
+export type CalendarInfo = CalendarInfoBase & {
 	groupRoot: CalendarGroupRoot
 	groupInfo: GroupInfo
 	group: Group
-	shared: boolean
+	hasMultipleMembers: boolean
 	userIsOwner: boolean
 	isExternal: boolean
 }
 
-export type CalendarRenderInfo = {
-	name: string
-	color: string
-	renderType: RenderType
+export function isBirthdayCalendarInfo(calendarInfoBase: CalendarInfoBase): boolean {
+	return calendarInfoBase.type === CalendarType.Birthday
+}
+
+export function isCalendarInfo(calendarInfoBase: CalendarInfoBase): calendarInfoBase is CalendarInfo {
+	return calendarInfoBase.type !== CalendarType.Birthday
 }
 
 type ExternalCalendarQueueItem = {
@@ -182,11 +202,17 @@ export class CalendarModel {
 		return calendarInfoPromise
 	}, new Map())
 
+	private readonly userHasNewPaidPlan: LazyLoaded<boolean> = new LazyLoaded<boolean>(async () => {
+		return await this.logins.getUserController().isNewPaidPlan()
+	}, false)
+
 	/**
 	 * Stores the queued calendars to be synchronized
 	 */
 	private externalCalendarSyncQueue: ExternalCalendarQueueItem[] = []
 	private externalCalendarRetryCount: Map<Id, number> = new Map()
+
+	private birthdayCalendarInfo: CalendarInfoBase
 
 	constructor(
 		private readonly notifications: Notifications,
@@ -205,6 +231,7 @@ export class CalendarModel {
 		private readonly pushService: NativePushServiceApp | null,
 		private readonly syncTracker: SyncTracker,
 		private readonly requestWidgetRefresh: () => void,
+		private readonly lang: LanguageViewModel,
 	) {
 		this.readProgressMonitor = oneShotProgressMonitorGenerator(progressTracker, logins.getUserController())
 		eventController.addEntityListener((updates, eventOwnerGroupId) => this.entityEventsReceived(updates, eventOwnerGroupId))
@@ -216,6 +243,23 @@ export class CalendarModel {
 				syncStatus?.end()
 			}
 		})
+		this.birthdayCalendarInfo = this.createBirthdayCalendarInfo()
+		if (logins.isInternalUserLoggedIn()) {
+			this.userHasNewPaidPlan.getAsync().then(m.redraw)
+		}
+	}
+
+	private createBirthdayCalendarInfo(): CalendarInfoBase {
+		return {
+			id: `${this.logins.getUserController().userId}#${BIRTHDAY_CALENDAR_BASE_ID}`,
+			name: this.lang.get("birthdayCalendar_label"),
+			color: this.logins.getUserController().userSettingsGroupRoot.birthdayCalendarColor ?? DEFAULT_BIRTHDAY_CALENDAR_COLOR,
+			type: CalendarType.Birthday,
+		}
+	}
+
+	getBirthdayCalendarInfo(): CalendarInfoBase {
+		return this.birthdayCalendarInfo
 	}
 
 	getCalendarInfos(): Promise<ReadonlyMap<Id, CalendarInfo>> {
@@ -226,29 +270,26 @@ export class CalendarModel {
 		return this.calendarInfos.stream
 	}
 
-	getCalendarRenderInfo(calendarId: Id, existingGroupSettings?: GroupSettings | null): CalendarRenderInfo {
-		if (isClientOnlyCalendar(calendarId)) {
-			const clientOnlyCalendar = getClientOnlyCalendars(this.logins.getUserController().userId, deviceConfig.getClientOnlyCalendars()).find(
-				(calendar) => calendar.id === calendarId,
-			)
-			return {
-				name: clientOnlyCalendar?.name ?? "",
-				color: clientOnlyCalendar?.color ?? "",
-				renderType: RenderType.ClientOnly,
+	getAvailableCalendars(includesBirthday: boolean = false): ReadonlyArray<CalendarInfoBase> {
+		if (this.calendarInfos.isLoaded()) {
+			// Load user's calendar list
+			const calendarInfos: Array<CalendarInfoBase> = Array.from(this.calendarInfos.getLoaded().values())
+			if (this.userHasNewPaidPlan.getSync() && includesBirthday) {
+				const birthdayCalendarInfo = this.getBirthdayCalendarInfo()
+				calendarInfos.push(birthdayCalendarInfo)
 			}
+			return calendarInfos
+		} else {
+			return []
 		}
+	}
 
-		const calendarInfo = this.calendarInfos.stream().get(calendarId)
-		if (!calendarInfo) throw new Error("Calendar infos not loaded")
-		let groupSettings = existingGroupSettings
-		if (!groupSettings) {
-			const { userSettingsGroupRoot } = this.logins.getUserController()
-			groupSettings = userSettingsGroupRoot.groupSettings.find((gc) => gc.group === calendarInfo.groupInfo.group) ?? undefined
+	async getCalendarInfo(calendarId: Id): Promise<CalendarInfoBase | undefined> {
+		if (isBirthdayCalendar(calendarId)) {
+			return this.birthdayCalendarInfo
 		}
-		const color = "#" + (groupSettings?.color ?? defaultCalendarColor)
-		const name = getSharedGroupName(calendarInfo.groupInfo, locator.logins.getUserController(), calendarInfo.shared)
-		const renderType = getCalendarRenderType(calendarInfo)
-		return { name, color, renderType }
+		const calendars = await this.getCalendarInfos()
+		return calendars.get(calendarId)
 	}
 
 	async createEvent(event: CalendarEvent, alarmInfos: ReadonlyArray<AlarmInfoTemplate>, zone: string, groupRoot: CalendarGroupRoot): Promise<void> {
@@ -278,8 +319,8 @@ export class CalendarModel {
 			newEvent.startTime.getTime() !== existingEvent.startTime.getTime() ||
 			(await didLongStateChange(newEvent, existingEvent, zone))
 		) {
-			// We should reload the instance here because session key and permissions are updated when we recreate event.
 			await this.doCreate(newEvent, zone, groupRoot, newAlarms, existingEvent)
+			// We should reload the instance here because session key and permissions are updated when we recreate event.
 			return await this.entityClient.load<CalendarEvent>(CalendarEventTypeRef, newEvent._id)
 		} else {
 			newEvent._ownerGroup = groupRoot._id
@@ -316,21 +357,10 @@ export class CalendarModel {
 		}
 
 		const calendarInfos: Map<Id, CalendarInfo> = new Map()
-		const groupSettings = userController.userSettingsGroupRoot.groupSettings
 		for (const [groupRoot, groupInfo, group] of groupInstances) {
 			try {
-				const groupMembers = await loadGroupMembers(group, this.entityClient)
-				const shared = groupMembers.length > 1
-				const userIsOwner = !shared || isSharedGroupOwner(group, userController.userId)
-				const isExternal = hasSourceUrl(groupSettings.find((groupSettings) => groupSettings.group === group._id))
-				calendarInfos.set(groupRoot._id, {
-					groupRoot,
-					groupInfo,
-					group: group,
-					shared,
-					userIsOwner,
-					isExternal,
-				})
+				const calendarInfo = await this.makeCalendarInfo(userController.userId, group, userController.userSettingsGroupRoot, groupRoot, groupInfo)
+				calendarInfos.set(groupRoot._id, calendarInfo)
 			} catch (e) {
 				if (e instanceof NotAuthorizedError) {
 					console.log("NotAuthorizedError when initializing calendar. Calendar has been removed ")
@@ -356,9 +386,44 @@ export class CalendarModel {
 		return calendarInfos
 	}
 
+	private async makeCalendarInfo(
+		userId: Id,
+		group: Group,
+		userSettingsGroupRoot: UserSettingsGroupRoot,
+		groupRoot: CalendarGroupRoot,
+		groupInfo: GroupInfo,
+	): Promise<CalendarInfo> {
+		const groupMembers = await loadGroupMembers(group, this.entityClient)
+		const shared = groupMembers.length > 1
+		const userIsOwner = !shared || isSharedGroupOwner(group, userId)
+		const groupSettings = userSettingsGroupRoot.groupSettings.find((groupSettings) => groupSettings.group === group._id)
+		const isExternal = hasSourceUrl(groupSettings)
+		const calendarId = groupRoot._id
+		const color = groupSettings?.color ?? DEFAULT_CALENDAR_COLOR
+		const sharedGroupName = getSharedGroupName(groupInfo, userSettingsGroupRoot, shared)
+		const calendarType = getCalendarType({
+			calendarId: calendarId,
+			isExternalCalendar: isExternal,
+			isUserOwner: userIsOwner,
+		})
+		return {
+			id: groupRoot._id,
+			name: sharedGroupName,
+			color: color,
+			type: calendarType,
+			groupRoot,
+			groupInfo,
+			group: group,
+			hasMultipleMembers: shared,
+			userIsOwner,
+			isExternal,
+		}
+	}
+
 	public async fetchExternalCalendar(url: string): Promise<string> {
 		if (!this.externalCalendarFacade) throw new Error(`externalCalendarFacade is ${typeof this.externalCalendarFacade} at CalendarModel`)
-		const calendarStr = await this.externalCalendarFacade?.fetchExternalCalendar(url)
+		const normalizedUrl = normalizeCalendarUrl(url)
+		const calendarStr = await this.externalCalendarFacade?.fetchExternalCalendar(normalizedUrl)
 		return calendarStr ?? ""
 	}
 
@@ -505,7 +570,7 @@ export class CalendarModel {
 		}
 
 		if (skippedCalendars.size) {
-			let errorMessage = lang.get("iCalSync_error") + (longErrorMessage ? "\n\n" : "")
+			let errorMessage = this.lang.get("iCalSync_error") + (longErrorMessage ? "\n\n" : "")
 			for (const [group, details] of skippedCalendars.entries()) {
 				if (longErrorMessage) errorMessage += `${details.calendarName} - ${details.error.message}\n`
 				this.deviceConfig.updateLastSync(group, SyncStatus.Failed)
@@ -535,7 +600,7 @@ export class CalendarModel {
 		eventsToUpdate: CalendarEvent[],
 		existingEventList: Array<CalendarEvent>,
 		duplicatesCount: number,
-		eventsForCreation: Array<EventWrapper>,
+		eventsForCreation: Array<EventAlarmsTuple>,
 		currentCalendarGroupRoot: CalendarGroupRoot,
 		wipeCalendar: boolean,
 	) {
@@ -618,7 +683,7 @@ export class CalendarModel {
 		if (!this.logins.isInternalUserLoggedIn() || findFirstPrivateCalendar(calendarInfos)) {
 			return calendarInfos
 		} else {
-			await this.createCalendar("", null, [], null)
+			const group = await this.createCalendar("", null, [], null)
 			return await this.loadCalendarInfos(progressMonitor)
 		}
 	}
@@ -672,6 +737,28 @@ export class CalendarModel {
 		return await this.calendarFacade.saveCalendarEvent(event, alarmInfos, existingEvent ?? null).then(this.requestWidgetRefresh)
 	}
 
+	private async createPendingEvent(
+		event: CalendarEvent,
+		groupRoot: CalendarGroupRoot,
+		alarmInfos: ReadonlyArray<AlarmInfoTemplate>,
+		existingEvent: CalendarEvent | null = null,
+	): Promise<void> {
+		// If the event was copied it might still carry some fields for re-encryption. We can't reuse them.
+		removeTechnicalFields(event)
+
+		// Reset ownerEncSessionKey because it cannot be set for new entity, it will be assigned by the CryptoFacade
+		event._ownerEncSessionKey = null
+		if (event.repeatRule != null) {
+			event.repeatRule.excludedDates = event.repeatRule.excludedDates.map(({ date }) => createDateWrapper({ date }))
+		}
+
+		// Reset permissions because server will assign them
+		downcast(event)._permissions = null
+		event._ownerGroup = groupRoot._id
+
+		return await this.calendarFacade.saveCalendarEvent(event, alarmInfos, existingEvent)
+	}
+
 	async deleteEvent(event: CalendarEvent): Promise<void> {
 		return await this.entityClient.erase(event).then(this.requestWidgetRefresh)
 	}
@@ -711,7 +798,6 @@ export class CalendarModel {
 		const { calendarEventUpdates } = mailboxGroupRoot
 		if (calendarEventUpdates == null) return
 
-		console.log("CalendarModel - loadAndProcessCalendarEventInvitesUpdates")
 		const invites = await this.entityClient.loadAll(CalendarEventUpdateTypeRef, calendarEventUpdates.list)
 		for (const invite of invites) {
 			await this.handleCalendarEventUpdate(invite)
@@ -834,9 +920,27 @@ export class CalendarModel {
 		}
 	}
 
+	/** Delete altered instances that starts after a given date */
+	async deleteInstancesAfterDate(uid: string, date: Date): Promise<void> {
+		const entry = await this.calendarFacade.getEventsByUid(uid)
+		if (entry == null) {
+			console.log("could not find an uid index entry to delete event")
+			return
+		}
+
+		for (const ai of entry.alteredInstances) {
+			if (isBefore(ai.startTime, date, "date")) {
+				continue
+			}
+			await this.deleteEvent(ai)
+		}
+	}
+
 	/** process a calendar update retrieved from the server automatically. will not apply updates to event series that do not
 	 *  exist on the server yet (that's being done by calling processCalendarEventMessage manually)
-	 * public for testing */
+	 *
+	 * @VisibleForTesting
+	 */
 	async processCalendarData(sender: string, calendarData: ParsedCalendarData): Promise<void> {
 		if (calendarData.contents.length === 0) {
 			console.log(TAG, `Calendar update with no events, ignoring`)
@@ -862,7 +966,11 @@ export class CalendarModel {
 			// we probably need to do something else here.
 			console.log(TAG, "received event update for event that has not been saved to the server, ignoring.")
 			return
+			// Create pending events when processing calendar invites.
+			// const defaultCalendarGroupRoot = await this.getDefaultCalendarGroupRoot()
+			// return await this.handleNewCalendarInvitation(sender, calendarData, defaultCalendarGroupRoot)
 		}
+
 		const method = calendarData.method
 		for (const content of calendarData.contents) {
 			const updateAlarms = content.alarms
@@ -871,6 +979,45 @@ export class CalendarModel {
 			// like accepting another altered instance invite or accepting the progenitor after accepting only an altered instance.
 			await this.processCalendarEventMessage(sender, method, updateEvent, updateAlarms, dbEvents)
 		}
+	}
+
+	/*
+	 * Retrieves the default calendar from the available calendars.
+	 * Defaults to the oldest calendar
+	 *
+	 * @return {CalendarGroupRoot}
+	 */
+	async getDefaultCalendarGroupRoot(): Promise<CalendarGroupRoot> {
+		const calendarInfos = await this.loadOrCreateCalendarInfo(this.readProgressMonitor.next().value)
+		const firstCalendar = findFirstPrivateCalendar(calendarInfos)
+
+		if (!firstCalendar) {
+			console.warn("No non-external calendar available, creating default one...")
+			throw new Error(`Could not create an default calendar for user ${this.logins.getUserController().user._id}`)
+		}
+
+		// If there is no default calendar, we assume the "oldest" calendar as default
+		return firstCalendar.groupRoot
+	}
+
+	/** Handles new Calendar Invitations, creating an entry for them inside the pendingEvents of the default CalendarGroupRoot
+	 * and also inserts an index entry into CalendarEventUidIndexTypeRef
+	 */
+	async handleNewCalendarInvitation(sender: string, calendarData: ParsedCalendarData, defaultCalendarGroupRoot: CalendarGroupRoot) {
+		if (calendarData.method !== CalendarMethod.REQUEST) {
+			return // We don't handle anything different form an invitation
+		}
+
+		const eventsPromises = calendarData.contents.map((parsed) => {
+			const fullEvent = {
+				...parsed.event,
+				sender,
+			}
+
+			return this.createPendingEvent(fullEvent, defaultCalendarGroupRoot, parsed.alarms)
+		})
+
+		await Promise.all(eventsPromises)
 	}
 
 	/**
@@ -1204,7 +1351,9 @@ export class CalendarModel {
 				// Usually this type of update comes alone after all other calendar updates,
 				// and user might have subscribed to a new calendar, so we must reload
 				// calendar infos to make sure that the calendar has been put in the correct section
+				this.birthdayCalendarInfo = this.createBirthdayCalendarInfo()
 				this.calendarInfos.reload()
+				this.userHasNewPaidPlan.reload()
 			}
 		}
 
@@ -1288,13 +1437,17 @@ export class CalendarModel {
 	}
 
 	getBirthdayEventTitle(contactName: string) {
-		return lang.get("birthdayEvent_title", {
+		return this.lang.get("birthdayEvent_title", {
 			"{name}": contactName,
 		})
 	}
 
 	getAgeString(age: number) {
-		return lang.get("birthdayEventAge_title", { "{age}": age })
+		return this.lang.get("birthdayEventAge_title", { "{age}": age })
+	}
+
+	getGroupSettings(): GroupSettings[] {
+		return this.logins.getUserController().userSettingsGroupRoot.groupSettings
 	}
 }
 

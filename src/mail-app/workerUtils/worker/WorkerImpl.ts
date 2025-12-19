@@ -39,13 +39,17 @@ import { CryptoError } from "@tutao/tutanota-crypto/error.js"
 import { CryptoWrapper } from "../../../common/api/worker/crypto/CryptoWrapper.js"
 import { AsymmetricCryptoFacade } from "../../../common/api/worker/crypto/AsymmetricCryptoFacade.js"
 import { KeyVerificationFacade } from "../../../common/api/worker/facades/lazy/KeyVerificationFacade"
-import { PublicKeyProvider } from "../../../common/api/worker/facades/PublicKeyProvider.js"
+import { PublicEncryptionKeyProvider } from "../../../common/api/worker/facades/PublicEncryptionKeyProvider.js"
 import { MailExportFacade } from "../../../common/api/worker/facades/lazy/MailExportFacade"
 import { BulkMailLoader } from "../index/BulkMailLoader.js"
 import { ApplicationTypesFacade } from "../../../common/api/worker/facades/ApplicationTypesFacade"
 import { Indexer } from "../index/Indexer"
 import { SearchFacade } from "../index/SearchFacade"
 import { ContactSearchFacade } from "../index/ContactSearchFacade"
+import { IdentityKeyCreator } from "../../../common/api/worker/facades/lazy/IdentityKeyCreator"
+import { PublicIdentityKeyProvider } from "../../../common/api/worker/facades/PublicIdentityKeyProvider"
+import { AutosaveFacade } from "../../../common/api/worker/facades/lazy/AutosaveFacade"
+import { SpamClassifier } from "../spamClassification/SpamClassifier"
 
 assertWorkerOrNode()
 
@@ -74,7 +78,8 @@ export interface WorkerInterface {
 	readonly restInterface: EntityRestInterface
 	readonly serviceExecutor: IServiceExecutor
 	readonly cryptoWrapper: CryptoWrapper
-	readonly publicKeyProvider: PublicKeyProvider
+	readonly publicEncryptionKeyProvider: PublicEncryptionKeyProvider
+	readonly publicIdentityKeyProvider: PublicIdentityKeyProvider
 	readonly asymmetricCryptoFacade: AsymmetricCryptoFacade
 	readonly cryptoFacade: CryptoFacade
 	readonly cacheStorage: ExposedCacheStorage
@@ -87,6 +92,9 @@ export interface WorkerInterface {
 	readonly mailExportFacade: MailExportFacade
 	readonly bulkMailLoader: BulkMailLoader
 	readonly applicationTypesFacade: ApplicationTypesFacade
+	readonly identityKeyCreator: IdentityKeyCreator
+	readonly spamClassifier: SpamClassifier
+	readonly autosaveFacade: AutosaveFacade
 }
 
 type WorkerRequest = Request<WorkerRequestType>
@@ -159,6 +167,9 @@ export class WorkerImpl implements NativeInterface {
 
 			async groupManagementFacade() {
 				return locator.groupManagement()
+			},
+			async identityKeyCreator() {
+				return locator.identityKeyCreator()
 			},
 
 			async configFacade() {
@@ -237,8 +248,12 @@ export class WorkerImpl implements NativeInterface {
 				return locator.cryptoWrapper
 			},
 
-			async publicKeyProvider() {
-				return locator.publicKeyProvider
+			async publicEncryptionKeyProvider() {
+				return locator.publicEncryptionKeyProvider
+			},
+
+			async publicIdentityKeyProvider() {
+				return locator.publicIdentityKeyProvider
 			},
 
 			async asymmetricCryptoFacade() {
@@ -288,6 +303,12 @@ export class WorkerImpl implements NativeInterface {
 			},
 			async applicationTypesFacade() {
 				return locator.applicationTypesFacade
+			},
+			async autosaveFacade() {
+				return locator.autosaveFacade()
+			},
+			async spamClassifier() {
+				return locator.spamClassifier()
 			},
 		}
 	}

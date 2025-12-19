@@ -7,7 +7,7 @@
 import { isWorker } from "../Env.js"
 import { Transport } from "./Transport.js"
 import { objToError } from "../utils/ErrorUtils.js"
-import { newPromise } from "@tutao/tutanota-utils/dist/Utils"
+import { newPromise } from "@tutao/tutanota-utils"
 
 export type Command<T> = (msg: Request<T>) => Promise<any>
 export type Commands<T extends string> = Record<T, Command<T>>
@@ -82,22 +82,19 @@ export class MessageDispatcher<OutgoingRequestType extends string, IncomingReque
 	postRequest(msg: Request<OutgoingRequestType>): Promise<any> {
 		msg.id = this.nextId()
 
-		return newPromise(
-			(resolve, reject) => {
-				this._messages[msg.id!] = {
-					resolve,
-					reject,
-				}
+		return newPromise((resolve, reject) => {
+			this._messages[msg.id!] = {
+				resolve,
+				reject,
+			}
 
-				try {
-					this.transport.postMessage(msg)
-				} catch (e) {
-					console.log("error payload:", msg)
-					throw e
-				}
-			},
-			{ "MessageDispatcher::postRequest": msg },
-		)
+			try {
+				this.transport.postMessage(msg)
+			} catch (e) {
+				console.log("error payload:", msg)
+				throw e
+			}
+		})
 	}
 
 	handleMessage(message: Message<IncomingRequestType>) {

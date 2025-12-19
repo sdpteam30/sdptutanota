@@ -35,7 +35,7 @@ import {
 import { assertNotNull, base64ExtToBase64, base64ToUint8Array, downcast, incrementDate, neverNull, promiseMap, stringToBase64 } from "@tutao/tutanota-utils"
 import { InfoLink, lang, TranslationKey } from "../misc/LanguageViewModel"
 import { Icons } from "../gui/base/icons/Icons"
-import { asPaymentInterval, formatPrice, formatPriceDataWithInfo, PaymentInterval } from "./PriceUtils"
+import { asPaymentInterval, formatPrice, formatPriceDataWithInfo, PaymentInterval } from "./utils/PriceUtils"
 import { formatDate, formatStorageSize } from "../misc/Formatter"
 import { showUpgradeWizard } from "./UpgradeSubscriptionWizard"
 import { showSwitchDialog } from "./SwitchSubscriptionDialog"
@@ -47,13 +47,14 @@ import {
 	appStorePlanName,
 	getCurrentCount,
 	getTotalStorageCapacityPerCustomer,
+	isAppStorePayment,
 	isAutoResponderActive,
 	isEventInvitesActive,
 	isSharingActive,
 	isWhitelabelActive,
 	queryAppStoreSubscriptionOwnership,
 	SubscriptionApp,
-} from "./SubscriptionUtils"
+} from "./utils/SubscriptionUtils"
 import { TextField } from "../gui/base/TextField.js"
 import { Dialog, DialogType } from "../gui/base/Dialog"
 import { ColumnWidth, Table } from "../gui/base/Table.js"
@@ -85,7 +86,6 @@ import { showManageThroughAppStoreDialog } from "./PaymentViewer.js"
 import type { UpdatableSettingsViewer } from "../settings/Interfaces.js"
 import { client } from "../misc/ClientDetector.js"
 import { AppStoreSubscriptionService } from "../api/entities/sys/Services.js"
-import { AppType } from "../misc/ClientConstants.js"
 import { ProgrammingError } from "../api/common/error/ProgrammingError.js"
 import { showUserSatisfactionDialogAfterUpgrade } from "../ratings/UserSatisfactionUtils.js"
 
@@ -94,19 +94,20 @@ const DAY = 1000 * 60 * 60 * 24
 
 export class SubscriptionViewer implements UpdatableSettingsViewer {
 	readonly view: UpdatableSettingsViewer["view"]
-	private _subscriptionFieldValue: Stream<string>
-	private _orderAgreementFieldValue: Stream<string>
-	private _selectedSubscriptionInterval: Stream<PaymentInterval | null>
-	private _currentPriceFieldValue: Stream<string>
-	private _nextPriceFieldValue: Stream<string>
-	private _usersFieldValue: Stream<string>
-	private _storageFieldValue: Stream<string>
-	private _emailAliasFieldValue: Stream<string>
-	private _groupsFieldValue: Stream<string>
-	private _whitelabelFieldValue: Stream<string>
-	private _sharingFieldValue: Stream<string>
-	private _eventInvitesFieldValue: Stream<string>
-	private _autoResponderFieldValue: Stream<string>
+	private readonly _subscriptionFieldValue: Stream<string>
+	private readonly _orderAgreementFieldValue: Stream<string>
+	private readonly _selectedSubscriptionInterval: Stream<PaymentInterval | null>
+	private readonly _currentPriceFieldValue: Stream<string>
+	private readonly _nextPriceFieldValue: Stream<string>
+	private readonly _usersFieldValue: Stream<string>
+	private readonly _storageFieldValue: Stream<string>
+	private readonly _emailAliasFieldValue: Stream<string>
+	private readonly _groupsFieldValue: Stream<string>
+	private readonly _whitelabelFieldValue: Stream<string>
+	private readonly _sharingFieldValue: Stream<string>
+	private readonly _eventInvitesFieldValue: Stream<string>
+	private readonly _autoResponderFieldValue: Stream<string>
+	private readonly _giftCardsExpanded: Stream<boolean>
 	private _periodEndDate: Date | null = null
 	private _nextPeriodPriceVisible: boolean | null = null
 	private _customer: Customer | null = null
@@ -117,7 +118,6 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 	private currentPlanType: PlanType
 	private _isCancelled: boolean | null = null
 	private _giftCards: Map<Id, GiftCard>
-	private _giftCardsExpanded: Stream<boolean>
 
 	constructor(
 		currentPlanType: PlanType,
@@ -135,8 +135,8 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 		this._giftCardsExpanded = stream<boolean>(false)
 
 		this.view = (): Children => {
-			return m("#subscription-settings.fill-absolute.scroll.plr-l", [
-				m(".h4.mt-l", lang.get("currentlyBooked_label")),
+			return m("#subscription-settings.fill-absolute.scroll.plr-24", [
+				m(".h4.mt-32", lang.get("currentlyBooked_label")),
 				m(TextField, {
 					label: "subscription_label",
 					value: this._subscriptionFieldValue(),
@@ -172,11 +172,12 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 							isReadOnly: true,
 						})
 					: null,
-				m(".small.mt-s", renderTermsAndConditionsButton(TermsSection.Terms, CURRENT_TERMS_VERSION)),
-				m(".small.mt-s", renderTermsAndConditionsButton(TermsSection.Privacy, CURRENT_PRIVACY_VERSION)),
+				m(".small.mt-8", renderTermsAndConditionsButton(TermsSection.Terms, CURRENT_TERMS_VERSION)),
+				m(".small.mt-8", renderTermsAndConditionsButton(TermsSection.Privacy, CURRENT_PRIVACY_VERSION)),
 				m(
 					SettingsExpander,
 					{
+						id: "giftcards",
 						title: "giftCards_label",
 						infoMsg: "giftCardSection_label",
 						expanded: this._giftCardsExpanded,
@@ -185,7 +186,7 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 				),
 				LegacyPlans.includes(this.currentPlanType)
 					? [
-							m(".h4.mt-l", lang.get("adminPremiumFeatures_action")),
+							m(".h4.mt-32", lang.get("adminPremiumFeatures_action")),
 							m(TextField, {
 								label: "storageCapacity_label",
 								value: this._storageFieldValue(),
@@ -236,7 +237,7 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 		locator.entityClient
 			.load(CustomerTypeRef, neverNull(locator.logins.getUserController().user.customer))
 			.then((customer) => {
-				this.updateCustomerData(customer)
+				void this.updateCustomerData(customer)
 				return locator.logins.getUserController().loadCustomerInfo()
 			})
 			.then((customerInfo) => {
@@ -245,7 +246,7 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 			})
 			.then((accountingInfo) => {
 				this.updateAccountInfoData(accountingInfo)
-				this.updatePriceInfo()
+				void this.updatePriceInfo()
 			})
 		const loadingString = lang.get("loading_msg")
 		this._currentPriceFieldValue = stream(loadingString)
@@ -262,7 +263,7 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 		this._autoResponderFieldValue = stream(loadingString)
 		this._selectedSubscriptionInterval = stream<PaymentInterval | null>(null)
 
-		this.updateBookings()
+		void this.updateBookings()
 	}
 
 	private onSubscriptionClick() {
@@ -270,25 +271,29 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 
 		if (isIOSApp() && (paymentMethod == null || paymentMethod === PaymentMethodType.AppStore)) {
 			// case 1: we are in iOS app and we either are not paying or are already on AppStore
-			this.handleAppStoreSubscriptionChange()
+			void this.handleAppStoreSubscriptionChange()
 		} else if (paymentMethod === PaymentMethodType.AppStore && this._accountingInfo?.appStoreSubscription) {
 			// case 2: we have a running AppStore subscription but this is not an iOS app
 
 			// If there's a running App Store subscription it must be managed through Apple.
 			// This includes the case where renewal is already disabled, but it's not expired yet.
 			// Running subscription cannot be changed from other client, but it can still be managed through iOS app or when subscription expires.
-			return showManageThroughAppStoreDialog()
+			void showManageThroughAppStoreDialog()
 		} else {
 			// other cases (not iOS app, not app store payment method, no running AppStore subscription, iOS but another payment method)
 			if (this._accountingInfo && this._customer && this._customerInfo && this._lastBooking) {
-				showSwitchDialog(this._customer, this._accountingInfo, this._lastBooking, AvailablePlans, null)
+				void showSwitchDialog({
+					customer: this._customer,
+					accountingInfo: this._accountingInfo,
+					lastBooking: this._lastBooking,
+					acceptedPlans: AvailablePlans,
+					reason: null,
+				})
 			}
 		}
 	}
 
 	private async handleUpgradeSubscription() {
-		const oldPlan = this.currentPlanType
-
 		if (isIOSApp()) {
 			// We pass `null` because we expect no subscription when upgrading
 			const appStoreSubscriptionOwnership = await queryAppStoreSubscriptionOwnership(null)
@@ -302,7 +307,7 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 			}
 		}
 
-		await showUpgradeWizard(locator.logins)
+		await showUpgradeWizard({ logins: locator.logins })
 	}
 
 	private async handleAppStoreSubscriptionChange() {
@@ -376,19 +381,31 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 				} catch (e) {
 					if (e instanceof MobilePaymentError) {
 						console.error("AppStore subscription failed", e)
-						Dialog.message("appStoreSubscriptionError_msg", e.message)
+						void Dialog.message("appStoreSubscriptionError_msg", e.message)
 					} else {
 						throw e
 					}
 				}
 			} else {
 				if (this._customerInfo && this._lastBooking) {
-					return showSwitchDialog(customer, accountingInfo, this._lastBooking, AvailablePlans, null)
+					return showSwitchDialog({
+						customer,
+						accountingInfo,
+						lastBooking: this._lastBooking,
+						acceptedPlans: AvailablePlans,
+						reason: null,
+					})
 				}
 			}
 		} else {
 			if (this._customerInfo && this._lastBooking) {
-				return showSwitchDialog(customer, accountingInfo, this._lastBooking, AvailablePlans, null)
+				return showSwitchDialog({
+					customer,
+					accountingInfo,
+					lastBooking: this._lastBooking,
+					acceptedPlans: AvailablePlans,
+					reason: null,
+				})
 			}
 		}
 	}
@@ -428,20 +445,12 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 		}
 
 		if (app === SubscriptionApp.Calendar) {
-			locator.systemFacade.openCalendarApp(query)
+			void locator.systemFacade.openCalendarApp(query)
 		} else {
-			locator.systemFacade.openMailApp(query)
+			void locator.systemFacade.openMailApp(query)
 		}
 
 		return false
-	}
-
-	private openAppDialogCallback(open: boolean, app: AppType.Mail | AppType.Calendar) {
-		if (!open) {
-			return
-		}
-
-		const appName = app === AppType.Mail ? "Tuta Mail" : "Tuta Calendar"
 	}
 
 	private showOrderAgreement(): boolean {
@@ -477,8 +486,7 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 	}
 
 	private showPriceData(): boolean {
-		const isAppStorePayment = this._accountingInfo && getPaymentMethodType(this._accountingInfo) === PaymentMethodType.AppStore
-		return locator.logins.getUserController().isPaidAccount() && !isIOSApp() && !isAppStorePayment
+		return locator.logins.getUserController().isPaidAccount() && !isAppStorePayment(this._accountingInfo)
 	}
 
 	private async updatePriceInfo(): Promise<void> {
@@ -638,10 +646,8 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 	}
 
 	async processUpdate(update: EntityUpdateData): Promise<void> {
-		const { instanceListId, instanceId } = update
-
 		if (isUpdateForTypeRef(AccountingInfoTypeRef, update)) {
-			const accountingInfo = await locator.entityClient.load(AccountingInfoTypeRef, instanceId)
+			const accountingInfo = await locator.entityClient.load(AccountingInfoTypeRef, update.instanceId)
 			this.updateAccountInfoData(accountingInfo)
 			return await this.updatePriceInfo()
 		} else if (isUpdateForTypeRef(UserTypeRef, update)) {
@@ -651,25 +657,20 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 			await this.updateBookings()
 			return await this.updatePriceInfo()
 		} else if (isUpdateForTypeRef(CustomerTypeRef, update)) {
-			const customer = await locator.entityClient.load(CustomerTypeRef, instanceId)
+			const customer = await locator.entityClient.load(CustomerTypeRef, update.instanceId)
 			return await this.updateCustomerData(customer)
 		} else if (isUpdateForTypeRef(CustomerInfoTypeRef, update)) {
 			// needed to update the displayed plan
 			await this.updateBookings()
 			return await this.updatePriceInfo()
 		} else if (isUpdateForTypeRef(GiftCardTypeRef, update)) {
-			const giftCard = await locator.entityClient.load(GiftCardTypeRef, [instanceListId, instanceId])
+			const giftCard = await locator.entityClient.load(GiftCardTypeRef, [update.instanceListId, update.instanceId])
 			this._giftCards.set(elementIdPart(giftCard._id), giftCard)
 			if (update.operation === OperationType.CREATE) this._giftCardsExpanded(true)
 		}
 	}
 
 	private renderIntervals() {
-		const isAppStorePayment = this._accountingInfo && getPaymentMethodType(this._accountingInfo) === PaymentMethodType.AppStore
-		if (isIOSApp() || isAppStorePayment) {
-			return
-		}
-
 		const subscriptionPeriods: SelectorItemList<PaymentInterval | null> = [
 			{
 				name: lang.get("pricing.yearly_label"),
@@ -717,7 +718,7 @@ export class SubscriptionViewer implements UpdatableSettingsViewer {
 				value: this._currentPriceFieldValue(),
 				oninput: this._currentPriceFieldValue,
 				isReadOnly: true,
-				helpLabel: () => (this._customer && this._customer.businessUse === true ? lang.get("pricing.subscriptionPeriodInfoBusiness_msg") : null),
+				helpLabel: () => (this._customer && this._customer.businessUse ? lang.get("pricing.subscriptionPeriodInfoBusiness_msg") : null),
 			}),
 		]
 	}

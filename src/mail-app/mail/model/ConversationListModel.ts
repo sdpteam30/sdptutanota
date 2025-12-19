@@ -1,13 +1,12 @@
-import { applyInboxRulesToEntries, LoadedMail, MailSetListModel, resolveMailSetEntries } from "./MailSetListModel"
+import { applyInboxRulesAndSpamPrediction, LoadedMail, MailSetListModel, resolveMailSetEntries } from "./MailSetListModel"
 import { ListLoadingState, ListState } from "../../../common/gui/base/List"
-import { Mail, MailFolder, MailFolderTypeRef, MailSetEntry, MailSetEntryTypeRef, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs"
+import { Mail, MailSet, MailSetTypeRef, MailSetEntry, MailSetEntryTypeRef, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs"
 import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils"
 import { ListFilter, ListModel } from "../../../common/misc/ListModel"
 import Stream from "mithril/stream"
 import { ConversationPrefProvider } from "../view/ConversationViewModel"
 import { EntityClient } from "../../../common/api/common/EntityClient"
 import { MailModel } from "./MailModel"
-import { InboxRuleHandler } from "./InboxRuleHandler"
 import { ExposedCacheStorage } from "../../../common/api/worker/rest/DefaultEntityRestCache"
 import {
 	CUSTOM_MAX_ID,
@@ -34,6 +33,8 @@ import {
 import { ListFetchResult } from "../../../common/gui/base/ListUtils"
 import { isOfflineError } from "../../../common/api/common/utils/ErrorUtils"
 import { OperationType } from "../../../common/api/common/TutanotaConstants"
+import { ProcessInboxHandler } from "./ProcessInboxHandler"
+import { WebsocketConnectivityModel } from "../../../common/misc/WebsocketConnectivityModel"
 
 /**
  * Organizes mails into conversations and handles state upkeep.
@@ -46,7 +47,7 @@ export class ConversationListModel implements MailSetListModel {
 	// Map conversation IDs (to ensure unique conversations)
 	private readonly conversationMap: Map<Id, LoadedConversation> = new Map()
 
-	// The last fetched mail set entry id; the list model does not track mailsets but conversations, thus we can't rely
+	// The last fetched mail set entry id; the list model does not track mailSets but conversations, thus we can't rely
 	// on it to give us the oldest retrieved mail.
 	private lastFetchedMailSetEntryId: Id | null = null
 
@@ -63,12 +64,13 @@ export class ConversationListModel implements MailSetListModel {
 	private olderDisplayedSelectedMailOverride: Id | null = null
 
 	constructor(
-		private readonly mailSet: MailFolder,
+		private readonly mailSet: MailSet,
 		private readonly conversationPrefProvider: ConversationPrefProvider,
 		private readonly entityClient: EntityClient,
 		private readonly mailModel: MailModel,
-		private readonly inboxRuleHandler: InboxRuleHandler,
+		private readonly processInboxHandler: ProcessInboxHandler,
 		private readonly cacheStorage: ExposedCacheStorage,
+		private readonly connectivityModel: WebsocketConnectivityModel,
 	) {
 		this.listModel = new ListModel({
 			fetch: async (_, count) => {
@@ -106,7 +108,7 @@ export class ConversationListModel implements MailSetListModel {
 		this.listModel.enterMultiselect()
 	}
 
-	getLabelsForMail(mail: Mail): ReadonlyArray<MailFolder> {
+	getLabelsForMail(mail: Mail): ReadonlyArray<MailSet> {
 		return this._getLoadedMail(getElementId(mail))?.labels ?? []
 	}
 
@@ -120,33 +122,31 @@ export class ConversationListModel implements MailSetListModel {
 	)
 
 	async handleEntityUpdate(update: EntityUpdateData) {
-		if (isUpdateForTypeRef(MailFolderTypeRef, update)) {
+		if (isUpdateForTypeRef(MailSetTypeRef, update)) {
 			if (update.operation === OperationType.UPDATE) {
-				this.handleMailFolderUpdate(update)
+				this.handleMailFolderUpdate([update.instanceListId, update.instanceId])
 			}
 		} else if (isUpdateForTypeRef(MailSetEntryTypeRef, update) && isSameId(this.mailSet.entries, update.instanceListId)) {
 			if (update.operation === OperationType.DELETE) {
 				await this.handleMailSetEntryDeletion(update)
 			} else if (update.operation === OperationType.CREATE) {
-				await this.handleMailSetEntryCreation(update)
+				await this.handleMailSetEntryCreation([update.instanceListId, update.instanceId])
 			}
 		} else if (isUpdateForTypeRef(MailTypeRef, update)) {
 			// We only need to handle updates for Mail.
 			// Mail deletion will also be handled in MailSetEntry delete/create.
 			const mailItem = this._getLoadedMail(update.instanceId)
 			if (mailItem != null && (update.operation === OperationType.UPDATE || update.operation === OperationType.CREATE)) {
-				await this.handleMailUpdate(update, mailItem)
+				await this.handleMailUpdate([update.instanceListId, update.instanceId], mailItem)
 			}
 		}
 	}
 
-	private handleMailFolderUpdate(update: EntityUpdateData) {
+	private handleMailFolderUpdate(mailSetId: IdTuple) {
 		// If a label is modified, we want to update all mails that reference it, which requires linearly iterating
 		// through all mails. There are more efficient ways we could do this, such as by keeping track of each label
 		// we've retrieved from the database and just update that, but we want to avoid adding more maps that we
 		// have to maintain.
-
-		const mailSetId: IdTuple = [update.instanceListId, update.instanceId]
 
 		for (const conversation of this.conversationMap.values()) {
 			for (const loadedMail of conversation.conversationMails) {
@@ -166,8 +166,8 @@ export class ConversationListModel implements MailSetListModel {
 		}
 	}
 
-	private async handleMailUpdate(update: EntityUpdateData, mailItem: LoadedMail) {
-		const newMailData = await this.entityClient.load(MailTypeRef, [update.instanceListId, update.instanceId])
+	private async handleMailUpdate(mailId: IdTuple, mailItem: LoadedMail) {
+		const newMailData = await this.entityClient.load(MailTypeRef, mailId)
 		const conversation = this.getConversationForMail(newMailData)
 
 		if (conversation != null) {
@@ -184,8 +184,8 @@ export class ConversationListModel implements MailSetListModel {
 		}
 	}
 
-	private async handleMailSetEntryCreation(update: EntityUpdateData) {
-		const loadedMail = await this.loadSingleMail([update.instanceListId, update.instanceId])
+	private async handleMailSetEntryCreation(mailSetEntryId: IdTuple) {
+		const loadedMail = await this.loadSingleMail(mailSetEntryId)
 		const addedMail = loadedMail.addedItems[0]
 		return await this.listModel.waitLoad(async () => {
 			if (addedMail != null) {
@@ -409,7 +409,7 @@ export class ConversationListModel implements MailSetListModel {
 				}
 				const newState: ListState<Mail> = {
 					...state,
-					items: this.items,
+					items: this.items.filter((mail) => !mail.processNeeded),
 					selectedItems: new Set(this.getSelectedAsArray()),
 				}
 				return newState
@@ -464,12 +464,12 @@ export class ConversationListModel implements MailSetListModel {
 		try {
 			const mailSetEntries = await this.entityClient.loadRange(MailSetEntryTypeRef, listIdPart(startingId), elementIdPart(startingId), count, true)
 
-			// Check for completeness before loading/filtering mails, as we may end up with even fewer mails than retrieved in either case
+			// Check for completeness before loading/filtering mails, as we may end up with even less mails than retrieved in either case
 			complete = mailSetEntries.length < count
 			if (mailSetEntries.length > 0) {
 				this.lastFetchedMailSetEntryId = getElementId(lastThrow(mailSetEntries))
 				items = await this.resolveMailSetEntries(mailSetEntries, this.defaultMailProvider)
-				items = await this.applyInboxRulesToEntries(items)
+				items = await this.applyInboxRulesAndSpamPrediction(items)
 			}
 		} catch (e) {
 			if (isOfflineError(e)) {
@@ -498,8 +498,8 @@ export class ConversationListModel implements MailSetListModel {
 		}
 	}
 
-	private async applyInboxRulesToEntries(entries: LoadedMail[]): Promise<LoadedMail[]> {
-		return applyInboxRulesToEntries(entries, this.mailSet, this.mailModel, this.inboxRuleHandler)
+	private async applyInboxRulesAndSpamPrediction(entries: LoadedMail[]): Promise<LoadedMail[]> {
+		return applyInboxRulesAndSpamPrediction(entries, this.mailSet, this.mailModel, this.processInboxHandler, this.connectivityModel.isLeader())
 	}
 
 	// @VisibleForTesting

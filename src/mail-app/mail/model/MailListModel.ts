@@ -1,5 +1,5 @@
 import { ListFilter, ListModel } from "../../../common/misc/ListModel"
-import { Mail, MailFolder, MailFolderTypeRef, MailSetEntry, MailSetEntryTypeRef, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs"
+import { Mail, MailSet, MailSetEntry, MailSetEntryTypeRef, MailSetTypeRef, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs"
 import {
 	CUSTOM_MAX_ID,
 	customIdToUint8array,
@@ -17,12 +17,13 @@ import { ListLoadingState, ListState } from "../../../common/gui/base/List"
 import Stream from "mithril/stream"
 import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils"
 import { OperationType } from "../../../common/api/common/TutanotaConstants"
-import { InboxRuleHandler } from "./InboxRuleHandler"
 import { MailModel } from "./MailModel"
 import { ListFetchResult } from "../../../common/gui/base/ListUtils"
 import { isOfflineError } from "../../../common/api/common/utils/ErrorUtils"
 import { ExposedCacheStorage } from "../../../common/api/worker/rest/DefaultEntityRestCache"
-import { applyInboxRulesToEntries, LoadedMail, MailSetListModel, resolveMailSetEntries } from "./MailSetListModel"
+import { applyInboxRulesAndSpamPrediction, LoadedMail, MailSetListModel, resolveMailSetEntries } from "./MailSetListModel"
+import { ProcessInboxHandler } from "./ProcessInboxHandler"
+import { WebsocketConnectivityModel } from "../../../common/misc/WebsocketConnectivityModel"
 
 assertMainOrNode()
 
@@ -37,12 +38,13 @@ export class MailListModel implements MailSetListModel {
 	private readonly mailMap: Map<Id, LoadedMail> = new Map()
 
 	constructor(
-		private readonly mailSet: MailFolder,
+		private readonly mailSet: MailSet,
 		private readonly conversationPrefProvider: ConversationPrefProvider,
 		private readonly entityClient: EntityClient,
 		private readonly mailModel: MailModel,
-		private readonly inboxRuleHandler: InboxRuleHandler,
+		private readonly processInboxHandler: ProcessInboxHandler,
 		private readonly cacheStorage: ExposedCacheStorage,
+		private readonly connectivityModel: WebsocketConnectivityModel,
 	) {
 		this.listModel = new ListModel({
 			fetch: (lastFetchedItem, count) => {
@@ -93,7 +95,7 @@ export class MailListModel implements MailSetListModel {
 			stateStream.map((state) => {
 				const newState: ListState<Mail> = {
 					...state,
-					items: this.items,
+					items: this.items.filter((mail) => !mail.processNeeded),
 					selectedItems: new Set(this.getSelectedAsArray()),
 				}
 				return newState
@@ -116,7 +118,7 @@ export class MailListModel implements MailSetListModel {
 		return this.getLoadedMailByMailId(mailElementId)?.mail ?? null
 	}
 
-	getLabelsForMail(mail: Mail): ReadonlyArray<MailFolder> {
+	getLabelsForMail(mail: Mail): ReadonlyArray<MailSet> {
 		return this.getLoadedMailByMailInstance(mail)?.labels ?? []
 	}
 
@@ -148,7 +150,7 @@ export class MailListModel implements MailSetListModel {
 	)
 
 	async handleEntityUpdate(update: EntityUpdateData) {
-		if (isUpdateForTypeRef(MailFolderTypeRef, update)) {
+		if (isUpdateForTypeRef(MailSetTypeRef, update)) {
 			// If a label is modified, we want to update all mails that reference it, which requires linearly iterating
 			// through all mails. There are more efficient ways we could do this, such as by keeping track of each label
 			// we've retrieved from the database and just update that, but we want to avoid adding more maps that we
@@ -304,7 +306,7 @@ export class MailListModel implements MailSetListModel {
 			complete = mailSetEntries.length < count
 			if (mailSetEntries.length > 0) {
 				items = await this.resolveMailSetEntries(mailSetEntries, this.defaultMailProvider)
-				items = await this.applyInboxRulesToEntries(items)
+				items = await this.applyInboxRulesAndSpamPrediction(items)
 			}
 		} catch (e) {
 			if (isOfflineError(e)) {
@@ -345,11 +347,8 @@ export class MailListModel implements MailSetListModel {
 		return await this.resolveMailSetEntries(mailSetEntries, (list, elements) => this.cacheStorage.provideMultiple(MailTypeRef, list, elements))
 	}
 
-	/**
-	 * Apply inbox rules to an array of mails, returning all mails that were not moved
-	 */
-	private async applyInboxRulesToEntries(entries: LoadedMail[]): Promise<LoadedMail[]> {
-		return applyInboxRulesToEntries(entries, this.mailSet, this.mailModel, this.inboxRuleHandler)
+	private async applyInboxRulesAndSpamPrediction(entries: LoadedMail[]): Promise<LoadedMail[]> {
+		return applyInboxRulesAndSpamPrediction(entries, this.mailSet, this.mailModel, this.processInboxHandler, this.connectivityModel.isLeader())
 	}
 
 	private async loadSingleMail(id: IdTuple): Promise<LoadedMail> {

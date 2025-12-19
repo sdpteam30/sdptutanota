@@ -29,8 +29,9 @@ class AndroidNativeCryptoFacade(
 ) : NativeCryptoFacade {
 
 	companion object {
-		const val AES_BLOCK_SIZE_BYTES = 16
-		val FIXED_IV = ByteArray(AES_BLOCK_SIZE_BYTES).apply { fill(0x88.toByte()) }
+		private const val AES_BLOCK_SIZE_BYTES = 16
+		const val IV_LENGTH_BYTES = AES_BLOCK_SIZE_BYTES
+		val FIXED_IV = ByteArray(IV_LENGTH_BYTES).apply { fill(0x88.toByte()) }
 		const val RSA_KEY_LENGTH_IN_BITS = 2048
 		const val RSA_PUBLIC_EXPONENT = 65537
 
@@ -148,6 +149,26 @@ class AndroidNativeCryptoFacade(
 			throw CryptoError(e)
 		}
 
+	}
+
+	override suspend fun generateEd25519Keypair(): IPCEd25519KeyPair {
+		val keyPair = de.tutao.tutasdk.ed25519GenerateKeyPair()
+		val pubKey = IPCEd25519PublicKey(keyPair.publicKey.wrap())
+		val privKey = IPCEd25519PrivateKey(keyPair.privateKey.wrap())
+		return IPCEd25519KeyPair(pubKey, privKey)
+	}
+
+	override suspend fun ed25519Sign(privateKey: IPCEd25519PrivateKey, data: DataWrapper): IPCEd25519Signature {
+		val signature = de.tutao.tutasdk.ed25519Sign(privateKey.raw.data, data.data)
+		return IPCEd25519Signature(signature.wrap())
+	}
+
+	override suspend fun ed25519Verify(
+		publicKey: IPCEd25519PublicKey,
+		data: DataWrapper,
+		signature: IPCEd25519Signature
+	): Boolean {
+		return de.tutao.tutasdk.ed25519Verify(publicKey.raw.data, data.data, signature.signature.data)
 	}
 
 	@Throws(CryptoError::class)
@@ -302,7 +323,7 @@ class AndroidNativeCryptoFacade(
 
 	@VisibleForTesting
 	fun generateIv(): ByteArray {
-		val iv = ByteArray(AES_BLOCK_SIZE_BYTES)
+		val iv = ByteArray(IV_LENGTH_BYTES)
 		randomizer.nextBytes(iv)
 		return iv
 	}
@@ -415,7 +436,7 @@ class AndroidNativeCryptoFacade(
 				}
 				inputWithoutMac = ByteArrayInputStream(cipherTextWithoutMac)
 			}
-			val iv = ByteArray(AES_BLOCK_SIZE_BYTES)
+			val iv = ByteArray(IV_LENGTH_BYTES)
 			IOUtils.read(inputWithoutMac, iv)
 			val aesMode = if (padding) {
 				AES_MODE_PADDING

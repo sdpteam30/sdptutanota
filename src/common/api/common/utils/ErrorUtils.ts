@@ -57,6 +57,11 @@ import { MailImportError } from "../error/MailImportError.js"
 import { ExportError } from "../error/ExportError"
 import { KeyVerificationMismatchError } from "../error/KeyVerificationMismatchError"
 import { ServerModelsUnavailableError } from "../error/ServerModelsUnavailableError"
+import { AppLockAuthenticationError } from "../error/AppLockAuthenticationError"
+
+function isErrorObjectEmpty(obj: Record<string, unknown>): boolean {
+	return Object.keys(obj).length === 0
+}
 
 /**
  * Checks if the given instance (Entity or ParsedInstance) has an error in the _errors property which is usually written
@@ -67,7 +72,13 @@ import { ServerModelsUnavailableError } from "../error/ServerModelsUnavailableEr
  */
 export function hasError<K>(instance: Entity | ParsedInstance, key?: K): boolean {
 	const downCastedInstance = downcast(instance)
-	return !instance || (!!downCastedInstance._errors && (!key || !!downCastedInstance._errors.key))
+	if (!instance) {
+		return true
+	} else {
+		const hasNonEmptyErrorObject = !!downCastedInstance._errors && !isErrorObjectEmpty(downCastedInstance._errors)
+
+		return hasNonEmptyErrorObject && (!key || !!downCastedInstance._errors.key)
+	}
 }
 
 //If importing fails it is a good idea to bundle the error into common-min which can be achieved by annotating the module with "<at>bundleInto:common-min"
@@ -155,6 +166,7 @@ const ErrorNameToType = {
 	NSURLErrorDomain: ConnectionError,
 	NSCocoaErrorDomain: Error,
 	"de.tutao.tutashared.CredentialAuthenticationException": CredentialAuthenticationError,
+	"de.tutao.tutashared.AppLockAuthenticationException": AppLockAuthenticationError,
 	"android.security.keystore.KeyPermanentlyInvalidatedException": KeyPermanentlyInvalidatedError,
 	"de.tutao.tutashared.KeyPermanentlyInvalidatedError": KeyPermanentlyInvalidatedError,
 	"de.tutao.tutashared.CredentialAuthenticationError": CredentialAuthenticationError,
@@ -186,4 +198,12 @@ export function objToError(o: Record<string, any>): Error {
 	e.stack = o.stack || e.stack
 	e.data = o.data
 	return e
+}
+
+/**
+ * Returns whether the error is expected for the cases where our local state might not be up-to-date with the server yet. E.g. we might be processing an update
+ * for the instance that was already deleted. Normally this would be optimized away but it might still happen due to timing.
+ */
+export function isExpectedErrorForSynchronization(e: Error): boolean {
+	return e instanceof NotFoundError || e instanceof NotAuthorizedError
 }

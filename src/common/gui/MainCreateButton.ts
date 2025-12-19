@@ -2,8 +2,9 @@ import { lang, TranslationKey } from "../misc/LanguageViewModel.js"
 import { ClickHandler } from "./base/GuiUtils.js"
 import m, { Children, Component, Vnode } from "mithril"
 import { theme } from "./theme.js"
-import { px, size } from "./size.js"
+import { component_size, px, size } from "./size.js"
 import { BaseButton, BaseButtonAttrs } from "./base/buttons/BaseButton.js"
+import { boxShadowLow } from "./main-styles.js"
 
 export interface MainCreateButtonAttrs {
 	label: TranslationKey
@@ -20,12 +21,13 @@ export class MainCreateButton implements Component<MainCreateButtonAttrs> {
 			label: vnode.attrs.label,
 			text: lang.get(vnode.attrs.label),
 			onclick: vnode.attrs.click,
-			class: `full-width border-radius-big center b flash ${vnode.attrs.class}`,
+			class: `full-width border-radius-12 center b flash ${vnode.attrs.class}`,
 			style: {
-				border: `2px solid ${theme.content_accent}`,
 				// matching toolbar
-				height: px(size.button_height + size.vpad_xs * 2),
-				color: theme.content_accent,
+				height: px(component_size.button_height + size.spacing_4 * 2),
+				"background-color": theme.primary_container,
+				color: theme.on_primary_container,
+				"box-shadow": boxShadowLow,
 			},
 		} satisfies BaseButtonAttrs)
 	}

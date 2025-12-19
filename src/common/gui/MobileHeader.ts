@@ -61,7 +61,7 @@ export class MobileHeader implements Component<MobileHeaderAttrs> {
 
 	private renderLeftAction(attrs: MobileHeaderAttrs) {
 		if (styles.isMobileDesktopLayout() && !client.isCalendarApp()) {
-			return m(".ml-s")
+			return m(".ml-8")
 		} else if (attrs.columnType === "first" && !attrs.useBackButton) {
 			return m(MobileHeaderMenuButton, { newsModel: attrs.newsModel, backAction: attrs.backAction })
 		} else if (styles.isSingleColumnLayout() || attrs.useBackButton) {
@@ -111,8 +111,8 @@ export const MobileHeaderMenuButton = pureComponent(({ newsModel, backAction }: 
 				top: px(4),
 				right: px(5),
 			},
-			color: "white",
-			background: theme.list_accent_fg,
+			color: theme.on_primary,
+			background: theme.primary,
 		}),
 	])
 })

@@ -1,4 +1,4 @@
-import m, { Component, Vnode } from "mithril"
+import m, { Children, Component, Vnode } from "mithril"
 import { lang } from "../misc/LanguageViewModel.js"
 import { DropDownSelector } from "../gui/base/DropDownSelector.js"
 import {
@@ -33,6 +33,7 @@ import { NotAuthorizedError } from "../api/common/error/RestError.js"
 import { Dialog } from "../gui/base/Dialog.js"
 import { EntityUpdateData, isUpdateForTypeRef } from "../api/common/utils/EntityUpdateUtils.js"
 import { locator } from "../api/main/CommonLocator.js"
+import { client } from "../misc/ClientDetector"
 
 export type AccountMaintenanceUpdateNotifier = (updates: ReadonlyArray<EntityUpdateData>) => void
 
@@ -84,150 +85,200 @@ export class AccountMaintenanceSettings implements Component<AccountMaintenanceS
 		}
 
 		return [
-			m(".mt-l", [
+			m(".mt-32", [
 				m(".h4", lang.get("security_title")),
-				m(DropDownSelector, {
-					label: "saveEncryptedIpAddress_title",
-					helpLabel: () => lang.get("saveEncryptedIpAddress_label"),
-					selectedValue: this.saveIpAddress,
-					selectionChangedHandler: (value) => {
-						const newProps = Object.assign({}, attrs.customerServerProperties(), {
-							saveEncryptedIpAddressInSession: value,
-						})
-						locator.entityClient.update(newProps)
-					},
-					items: [
-						{
-							name: lang.get("yes_label"),
-							value: true,
-						},
-						{
-							name: lang.get("no_label"),
-							value: false,
-						},
-					],
-					dropdownWidth: 250,
-				}),
-				locator.logins.getUserController().isGlobalAdmin()
-					? m("", [
-							locator.logins.getUserController().isPaidAccount()
-								? m(DropDownSelector, {
-										label: "enforcePasswordUpdate_title",
-										helpLabel: () => lang.get("enforcePasswordUpdate_msg"),
-										selectedValue: this.requirePasswordUpdateAfterReset,
-										selectionChangedHandler: (value) => {
-											const newProps: CustomerServerProperties = Object.assign({}, attrs.customerServerProperties(), {
-												requirePasswordUpdateAfterReset: value,
-											})
-											locator.entityClient.update(newProps)
-										},
-										items: [
-											{
-												name: lang.get("yes_label"),
-												value: true,
-											},
-											{
-												name: lang.get("no_label"),
-												value: false,
-											},
-										],
-										dropdownWidth: 250,
-									})
-								: null,
-							this.customer
-								? m(
-										".mt-l",
-										m(ExpandableTable, {
-											title: "auditLog_title",
-											table: auditLogTableAttrs,
-											infoMsg: "auditLogInfo_msg",
-											onExpand: () => {
-												// if the user did not load this when the view was created (i.e. due to a lost connection), attempt to reload it
-												if (!this.auditLogLoaded) {
-													showProgressDialog("loading_msg", this.updateAuditLog()).then(() => m.redraw())
-												}
-											},
-										}),
-									)
-								: null,
-						])
-					: null,
+				this.renderSaveEncryptedIpAddress(attrs),
+				this.renderEnforcePasswordChange(attrs),
+				this.renderEnforce2fa(),
+				this.renderAuditLog(auditLogTableAttrs),
 			]),
-			locator.logins.getUserController().isPaidAccount()
-				? m(
-						SettingsExpander,
-						{
-							title: "usageData_label",
-							expanded: this.usageDataExpanded,
-						},
-						this.customerProperties.isLoaded()
-							? m(DropDownSelector, {
-									label: "customerUsageDataOptOut_label",
-									items: [
-										{
-											name: lang.get("customerUsageDataGloballyDeactivated_label"),
-											value: true,
-										},
-										{
-											name: lang.get("customerUsageDataGloballyPossible_label"),
-											value: false,
-										},
-									],
-									selectedValue: this.customerProperties.getSync()!.usageDataOptedOut,
-									selectionChangedHandler: (v) => {
-										if (this.customerProperties.isLoaded()) {
-											const customerProps = this.customerProperties.getSync()!
-											customerProps.usageDataOptedOut = v as boolean
-											locator.entityClient.update(customerProps)
-										}
-									},
-									dropdownWidth: 250,
-								})
-							: null,
-					)
-				: null,
-			m(
-				".mb-l",
-				m(
-					SettingsExpander,
-					{
-						title: "adminDeleteAccount_action",
-						buttonText: "adminDeleteAccount_action",
-						expanded: this.deleteAccountExpanded,
-					},
-					m(
-						".flex-center",
-						m(
-							"",
-							{
-								style: {
-									width: "200px",
+			this.renderUsageData(),
+			this.renderDeleteAccount(),
+		]
+	}
+
+	private renderUsageData(): Children {
+		if (locator.logins.getUserController().isPaidAccount()) {
+			return m(
+				SettingsExpander,
+				{
+					title: "usageData_label",
+					expanded: this.usageDataExpanded,
+				},
+				this.customerProperties.isLoaded()
+					? m(DropDownSelector, {
+							label: "customerUsageDataOptOut_label",
+							items: [
+								{
+									name: lang.get("customerUsageDataGloballyDeactivated_label"),
+									value: true,
 								},
+								{
+									name: lang.get("customerUsageDataGloballyPossible_label"),
+									value: false,
+								},
+							],
+							selectedValue: this.customerProperties.getSync()!.usageDataOptedOut,
+							selectionChangedHandler: (v) => {
+								if (this.customerProperties.isLoaded()) {
+									const customerProps = this.customerProperties.getSync()!
+									customerProps.usageDataOptedOut = v as boolean
+									locator.entityClient.update(customerProps)
+								}
 							},
-							m(LoginButton, {
-								label: "adminDeleteAccount_action",
-								onclick: () => {
-									const isPremium = locator.logins.getUserController().isPaidAccount()
-									showLeavingUserSurveyWizard(isPremium, false).then((reason) => {
-										if (reason.submitted && reason.category && reason.reason) {
-											const surveyData = createSurveyData({
-												category: reason.category,
-												details: reason.details,
-												reason: reason.reason,
-												version: SURVEY_VERSION_NUMBER,
-											})
-											showDeleteAccountDialog(surveyData)
-										} else {
-											showDeleteAccountDialog()
-										}
-									})
-								},
-							}),
-						),
+							dropdownWidth: 250,
+						})
+					: null,
+			)
+		}
+	}
+
+	private renderDeleteAccount() {
+		return m(
+			".mb-32",
+			m(
+				SettingsExpander,
+				{
+					title: "adminDeleteAccount_action",
+					buttonText: "adminDeleteAccount_action",
+					expanded: this.deleteAccountExpanded,
+				},
+				m(
+					".flex-center",
+					m(
+						"",
+						{
+							style: {
+								width: "200px",
+							},
+						},
+						m(LoginButton, {
+							label: "adminDeleteAccount_action",
+							onclick: () => {
+								const isPremium = locator.logins.getUserController().isPaidAccount()
+								showLeavingUserSurveyWizard(isPremium, false).then((reason) => {
+									if (reason.submitted && reason.category && reason.reason) {
+										const surveyData = createSurveyData({
+											category: reason.category,
+											details: reason.details,
+											reason: reason.reason,
+											version: SURVEY_VERSION_NUMBER,
+											clientVersion: env.versionNumber,
+											clientPlatform: client.getClientPlatform().valueOf().toString(),
+										})
+										showDeleteAccountDialog(surveyData)
+									} else {
+										showDeleteAccountDialog()
+									}
+								})
+							},
+						}),
 					),
 				),
 			),
-		]
+		)
+	}
+
+	private renderAuditLog(auditLogTableAttrs: TableAttrs): Children {
+		if (this.customer != null) {
+			return m(
+				".mt-32",
+				m(ExpandableTable, {
+					title: "auditLog_title",
+					table: auditLogTableAttrs,
+					infoMsg: "auditLogInfo_msg",
+					onExpand: () => {
+						// if the user did not load this when the view was created (i.e. due to a lost connection), attempt to reload it
+						if (!this.auditLogLoaded) {
+							showProgressDialog("loading_msg", this.updateAuditLog()).then(() => m.redraw())
+						}
+					},
+				}),
+			)
+		}
+	}
+
+	private renderSaveEncryptedIpAddress(attrs: AccountMaintenanceSettingsAttrs): Children {
+		return m(DropDownSelector, {
+			label: "saveEncryptedIpAddress_title",
+			helpLabel: () => lang.get("saveEncryptedIpAddress_label"),
+			selectedValue: this.saveIpAddress,
+			selectionChangedHandler: (value) => {
+				const newProps = Object.assign({}, attrs.customerServerProperties(), {
+					saveEncryptedIpAddressInSession: value,
+				})
+				locator.entityClient.update(newProps)
+			},
+			items: [
+				{
+					name: lang.get("yes_label"),
+					value: true,
+				},
+				{
+					name: lang.get("no_label"),
+					value: false,
+				},
+			],
+			dropdownWidth: 250,
+		})
+	}
+
+	private renderEnforcePasswordChange(attrs: AccountMaintenanceSettingsAttrs): Children {
+		if (locator.logins.getUserController().isPaidAccount()) {
+			return m(DropDownSelector, {
+				label: "enforcePasswordUpdate_title",
+				helpLabel: () => lang.get("enforcePasswordUpdate_msg"),
+				selectedValue: this.requirePasswordUpdateAfterReset,
+				selectionChangedHandler: (value) => {
+					const newProps: CustomerServerProperties = Object.assign({}, attrs.customerServerProperties(), {
+						requirePasswordUpdateAfterReset: value,
+					})
+					locator.entityClient.update(newProps)
+				},
+				items: [
+					{
+						name: lang.get("yes_label"),
+						value: true,
+					},
+					{
+						name: lang.get("no_label"),
+						value: false,
+					},
+				],
+				dropdownWidth: 250,
+			})
+		}
+	}
+
+	private renderEnforce2fa(): Children {
+		const customerProperties = this.customerProperties.getSync()
+		if (customerProperties == null || !locator.logins.getUserController().isPaidAccount()) {
+			return
+		}
+
+		return m(DropDownSelector, {
+			label: "enforceTwoFactor_title",
+			helpLabel: () => lang.getTranslation("enforceTwoFactor_label").text,
+			selectedValue: customerProperties.requireTwoFactor,
+			selectionChangedHandler: (value) => {
+				const customerProps = this.customerProperties.getSync()
+				if (customerProps != null) {
+					customerProps.requireTwoFactor = value as boolean
+					locator.entityClient.update(customerProps)
+				}
+			},
+			items: [
+				{
+					name: lang.getTranslation("yes_label").text,
+					value: true,
+				},
+				{
+					name: lang.getTranslation("no_label").text,
+					value: false,
+				},
+			],
+			dropdownWidth: 250,
+		})
 	}
 
 	private updateAuditLog(): Promise<void> {
@@ -298,14 +349,14 @@ export class AccountMaintenanceSettings implements Component<AccountMaintenanceS
 				title: "auditLog_title",
 				child: {
 					view: () =>
-						m("table.pt", [
-							m("tr", [m("td", lang.get("action_label")), m("td.pl", entry.action)]),
-							m("tr", [m("td", lang.get("actor_label")), m("td.pl", entry.actorMailAddress)]),
-							m("tr", [m("td", lang.get("IpAddress_label")), m("td.pl", entry.actorIpAddress ? entry.actorIpAddress : "")]),
+						m("table.pt-16", [
+							m("tr", [m("td", lang.get("action_label")), m("td.pl-12", entry.action)]),
+							m("tr", [m("td", lang.get("actor_label")), m("td.pl-12", entry.actorMailAddress)]),
+							m("tr", [m("td", lang.get("IpAddress_label")), m("td.pl-12", entry.actorIpAddress ? entry.actorIpAddress : "")]),
 							m("tr", [
 								m("td", lang.get("modified_label")),
 								m(
-									"td.pl",
+									"td.pl-12",
 									modifiedGroupInfo() && this.getGroupInfoDisplayText(modifiedGroupInfo())
 										? this.getGroupInfoDisplayText(modifiedGroupInfo())
 										: entry.modifiedEntity,
@@ -315,14 +366,14 @@ export class AccountMaintenanceSettings implements Component<AccountMaintenanceS
 								? m("tr", [
 										m("td", lang.get("group_label")),
 										m(
-											"td.pl",
+											"td.pl-12",
 											customer.adminGroup === groupInfoValue.group
 												? lang.get("globalAdmin_label")
 												: this.getGroupInfoDisplayText(groupInfoValue),
 										),
 									])
 								: null,
-							m("tr", [m("td", lang.get("time_label")), m("td.pl", formatDateTime(entry.date))]),
+							m("tr", [m("td", lang.get("time_label")), m("td.pl-12", formatDateTime(entry.date))]),
 						]),
 				},
 				allowOkWithReturn: true,
