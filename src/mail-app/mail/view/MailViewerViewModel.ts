@@ -988,7 +988,19 @@ export class MailViewerViewModel {
 			} catch (fetchError) {
 				console.error(`🔒 MOBYPHISH_LOG: Error calling backend API to report ${reportTypeString} for sender="${senderEmail}":`, fetchError)
 			}
-			// Removed: Tutanota API calls (markAsPhishing, moveMails, reportMails)
+
+			// Move email to spam folder (no Tutanota API reporting, just move)
+			try {
+				const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(this.mail)
+				if (mailboxDetail && mailboxDetail.mailbox.mailSets) {
+					const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
+					const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
+					await this.mailModel.moveMails([this.mail._id], spamFolder, MoveMode.Mails)
+					console.log(`🔒 MOBYPHISH_LOG: Successfully moved email to spam folder after ${reportTypeString} report`)
+				}
+			} catch (moveError) {
+				console.error(`🔒 MOBYPHISH_LOG: Failed to move email to spam folder:`, moveError)
+			}
 		} catch (e) {
 			if (e instanceof NotFoundError) {
 				console.log("mail already moved")

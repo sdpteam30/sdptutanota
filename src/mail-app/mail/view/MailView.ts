@@ -341,9 +341,10 @@ export class MailView extends BaseTopLevelView implements TopLevelView<MailViewA
 	}
 
 	private getSingleMailPhishingAction(viewModel: MailViewerViewModel): (() => void) | null {
+		// no-antiphishing-header branch: Skip dialog, directly report and move to spam
 		return viewModel.canReport()
 			? () => {
-					showReportPhishingMailDialog(async () => this.reportSingleMail(viewModel, MailReportType.PHISHING))
+					this.reportSingleMail(viewModel, MailReportType.PHISHING)
 				}
 			: null
 	}

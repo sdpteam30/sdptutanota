@@ -352,13 +352,14 @@ export function getMailViewerMoreActions({
 }): MailViewerMoreActions {
 	const actions: MailViewerMoreActions = {}
 
-	if (viewModel.canPersistBlockingStatus() && viewModel.isShowingExternalContent()) {
-		actions.disallowExternalContentAction = () => viewModel.setContentBlockingStatus(ContentBlockingStatus.Block)
-	}
+	// no-antiphishing-header branch: Removed block/show external content actions
+	// if (viewModel.canPersistBlockingStatus() && viewModel.isShowingExternalContent()) {
+	// 	actions.disallowExternalContentAction = () => viewModel.setContentBlockingStatus(ContentBlockingStatus.Block)
+	// }
 
-	if (viewModel.canPersistBlockingStatus() && viewModel.isBlockingExternalImages()) {
-		actions.showImagesAction = () => viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
-	}
+	// if (viewModel.canPersistBlockingStatus() && viewModel.isBlockingExternalImages()) {
+	// 	actions.showImagesAction = () => viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
+	// }
 
 	if (viewModel.isListUnsubscribe()) {
 		actions.unsubscribeAction = () => unsubscribe(viewModel)
@@ -368,9 +369,10 @@ export function getMailViewerMoreActions({
 		actions.printAction = print
 	}
 
-	if (reportSpam) {
-		actions.reportSpamAction = reportSpam
-	}
+	// no-antiphishing-header branch: Removed "Move to Spam" action
+	// if (reportSpam) {
+	// 	actions.reportSpamAction = reportSpam
+	// }
 
 	if (reportPhishing) {
 		actions.reportPhishingAction = reportPhishing

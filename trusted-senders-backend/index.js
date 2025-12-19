@@ -393,55 +393,6 @@ app.post("/report-spam", async (req, res) => {
 			console.log(`✅ Updated email_sender_status with status "${status}" for ${user_email}`)
 		}
 
-		// Also explicitly add to dev_phishing_reports table (regardless of prefix)
-		// Only if the table exists
-		// Note: dev_phishing_reports table likely uses "mail_id" (not "email_id") and may not have "interaction_type"
-		try {
-			const devPhishingReportData = {
-				user_email,
-				sender_email,
-				mail_id: email_id, // dev_phishing_reports table likely uses "mail_id" column name
-				report_type: "phishing", // Always use "phishing" as generic report type
-			}
-			// Don't include interaction_type if the table doesn't have it
-			const { error: devReportError } = await supabase.from("dev_phishing_reports").insert(devPhishingReportData)
-
-			if (devReportError) {
-				console.error("Supabase Error inserting dev phishing report:", devReportError.message)
-				// Don't fail the request, just log the error
-			} else {
-				console.log(`✅ Added ${report_type} report to dev_phishing_reports for ${user_email}`)
-			}
-		} catch (devReportErr) {
-			console.warn("dev_phishing_reports table may not exist:", devReportErr.message)
-		}
-
-		// Also explicitly update dev_email_sender_status table (regardless of prefix)
-		// Only if the table exists
-		try {
-			const { error: devStatusError } = await supabase.from("dev_email_sender_status").upsert(
-				{
-					user_email,
-					email_id,
-					sender_email,
-					status,
-					interaction_type: "interacted",
-				},
-				{
-					onConflict: "user_email,email_id",
-				},
-			)
-
-			if (devStatusError) {
-				console.error("Supabase Error updating dev email status:", devStatusError.message)
-				// Don't fail the request, just log the error
-			} else {
-				console.log(`✅ Updated dev_email_sender_status with status "${status}" for ${user_email}`)
-			}
-		} catch (devStatusErr) {
-			console.warn("dev_email_sender_status table may not exist:", devStatusErr.message)
-		}
-
 		res.status(201).json({
 			message: `Report logged successfully. Status: ${status}`,
 			status,

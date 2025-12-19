@@ -98,6 +98,7 @@ export class ConversationViewModel {
 	}
 
 	private async processCreateConversationEntry(update: EntityUpdateData) {
+		if (update.instanceListId == null) return
 		const id: IdTuple = [update.instanceListId, update.instanceId]
 		try {
 			const entry = await this.entityClient.load(ConversationEntryTypeRef, id)
@@ -150,6 +151,7 @@ export class ConversationViewModel {
 	}
 
 	private async processUpdateConversationEntry(update: EntityUpdateData) {
+		if (update.instanceListId == null) return
 		try {
 			// first wait that we load the conversation, otherwise we might already have the email
 			await this.loadingPromise
@@ -353,10 +355,10 @@ export class ConversationViewModel {
 	private async isInTrash(mail: Mail) {
 		const mailboxDetail = await this.mailModel.getMailboxDetailsForMail(mail)
 		const mailFolder = this.mailModel.getMailFolderForMail(mail)
-		if (mailFolder == null || mailboxDetail == null || mailboxDetail.mailbox.folders == null) {
+		if (mailFolder == null || mailboxDetail == null || mailboxDetail.mailbox.mailSets == null) {
 			return
 		}
-		const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.folders._id)
+		const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 		return isOfTypeOrSubfolderOf(folders, mailFolder, MailSetKind.TRASH)
 	}
 
