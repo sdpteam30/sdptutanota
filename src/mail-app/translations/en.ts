@@ -1741,6 +1741,7 @@ export default {
 		"spamReports_label": "Report spam",
 		"spamRuleEnterValue_msg": "Please enter a value.",
 		"spam_action": "Spam",
+		"spam_move_action": "Move to Spam",
 		"spelling_label": "Spelling",
 		"spouse_label": "Spouse",
 		"startAfterEnd_label": "The start date must not be after the end date.",
