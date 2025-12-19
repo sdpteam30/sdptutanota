@@ -347,6 +347,7 @@ export class HtmlSanitizer {
 					htmlNode.setAttribute("draft-" + attribute.name, attribute.value)
 					htmlNode.setAttribute("cid", cid)
 					attribute.value = PREVENT_EXTERNAL_IMAGE_LOADING_ICON
+					htmlNode.attributes.setNamedItem(attribute) // Persist the change to the element
 					htmlNode.style.maxWidth = "100px"
 					htmlNode.classList.add("tutanota-placeholder")
 				} else if (config.usePlaceholderForInlineImages && attribute.value.startsWith("cid:")) {
