@@ -559,3 +559,8 @@ function isTextElement(node: Node): node is Text {
 }
 
 export const htmlSanitizer: HtmlSanitizer = new HtmlSanitizer()
+
+/** @deprecated Use htmlSanitizer singleton directly instead */
+export function getHtmlSanitizer(): HtmlSanitizer {
+	return htmlSanitizer
+}
