@@ -729,7 +729,10 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 		const buttons: ReadonlyArray<BannerButtonAttrs | null> = [
 			{
 				label: "close_alt",
-				click: () => viewModel.setWarningDismissed(true),
+				click: () => {
+					viewModel.setWarningDismissed(true)
+					viewModel.setContentBlockingStatus(ContentBlockingStatus.Show)
+				},
 			},
 		]
 		return m(InfoBanner, {

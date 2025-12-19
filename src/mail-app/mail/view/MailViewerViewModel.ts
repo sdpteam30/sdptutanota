@@ -72,7 +72,7 @@ import { CryptoFacade } from "../../../common/api/worker/crypto/CryptoFacade.js"
 import { AttachmentType, getAttachmentType } from "../../../common/gui/AttachmentBubble.js"
 import type { ContactImporter } from "../../contacts/ContactImporter.js"
 import { InlineImages, revokeInlineImages } from "../../../common/mailFunctionality/inlineImagesUtils.js"
-import { getDefaultSender, getEnabledMailAddressesWithUser, getMailboxName } from "../../../common/mailFunctionality/SharedMailUtils.js"
+import { getDefaultSender, getEnabledMailAddressesWithUser, getMailboxName, isTutaMailAddress } from "../../../common/mailFunctionality/SharedMailUtils.js"
 import { getDisplayedSender, getMailBodyText, MailAddressAndName } from "../../../common/api/common/CommonMailUtils.js"
 import { MailModel, MoveMode } from "../model/MailModel.js"
 import { isNoReplyTeamAddress, isSystemNotification, loadMailDetails } from "./MailViewerUtils.js"
@@ -395,6 +395,10 @@ export class MailViewerViewModel {
 		return this.sanitizeResult?.fragment ?? null
 	}
 
+	getBlockedLinksCount(): number {
+		return this.sanitizeResult?.blockedLinks ?? 0
+	}
+
 	getMailBody(): string {
 		if (this.mailDetails) {
 			return getMailBodyText(this.mailDetails.body)
@@ -569,6 +573,7 @@ export class MailViewerViewModel {
 			this.contentBlockingStatus === ContentBlockingStatus.NoExternalContent ||
 			this.contentBlockingStatus === status
 		) {
+			console.log("⏩ No content blocking changes needed (NoExternalContent or same status)")
 			return
 		}
 
@@ -873,13 +878,22 @@ export class MailViewerViewModel {
 			console.log("Error getting external image rule:", e)
 			return ExternalImageRule.None
 		})
-		const isAllowedAndAuthenticatedExternalSender =
-			externalImageRule === ExternalImageRule.Allow && this.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED)
 		// We should not try to sanitize body while we still animate because it's a heavy operation.
 		await delayBodyRenderingUntil
 		this.renderIsDelayed = false
 
-		this.sanitizeResult = await this.sanitizeMailBody(mail, !isAllowedAndAuthenticatedExternalSender)
+		// Check if email has external content before sanitization
+		// This ensures we show the banner for any email with external content, including user's own aliases
+		const rawBody = this.getMailBody()
+		const hasExternalContent =
+			/<img[^>]+src=["'](https?:\/\/|www\.)/i.test(rawBody) ||
+			/<img[^>]+srcset=["'][^"']*https?:\/\//i.test(rawBody) ||
+			/background[=:]["'][^"']*https?:\/\//i.test(rawBody) ||
+			/url\(["']?https?:\/\//i.test(rawBody)
+
+		// Always block external content initially to show the banner for any sender (including user's own aliases)
+		// The banner will be hidden after user interaction
+		this.sanitizeResult = await this.sanitizeMailBody(mail, true)
 
 		if (!isDraft) {
 			this.checkMailForPhishing(mail, this.sanitizeResult.links)
@@ -918,13 +932,18 @@ export class MailViewerViewModel {
 				this.loadingAttachments = false
 				m.redraw()
 
+				// Only load inline images if content blocking status allows it (Show or AlwaysShow)
+				// This ensures inline images are not loaded until user explicitly allows content
+				const canLoadInlineImages =
+					this.contentBlockingStatus === ContentBlockingStatus.Show || this.contentBlockingStatus === ContentBlockingStatus.AlwaysShow
+
 				// We can load any other part again because they are cached but inline images are fileData e.g. binary blobs so we don't cache them like
 				// entities. So instead we check here whether we need to load them.
 				// Don't load inline images if content is being blocked
 				if (this.loadedInlineImages == null && !this.isBlockingExternalImages()) {
 					this.loadedInlineImages = await loadInlineImages(this.fileController, files, inlineCids)
+					m.redraw()
 				}
-				m.redraw()
 			} catch (e) {
 				if (e instanceof NotFoundError) {
 					console.log("could load attachments as they have been moved/deleted already", e)
@@ -936,27 +955,27 @@ export class MailViewerViewModel {
 	}
 
 	private checkMailForPhishing(mail: Mail, links: Array<HTMLElement>) {
-		if (mail.phishingStatus === MailPhishingStatus.UNKNOWN) {
-			const linkObjects = links.map((link) => {
-				return {
-					href: link.getAttribute("href") || "",
-					innerHTML: link.innerHTML,
-				}
-			})
-
-			this.mailModel.checkMailForPhishing(mail, linkObjects).then((isSuspicious) => {
-				if (isSuspicious) {
-					mail.phishingStatus = MailPhishingStatus.SUSPICIOUS
-
-					this.entityClient
-						.update(mail)
-						.catch(ofClass(LockedError, (_) => console.log("could not update mail phishing status as mail is locked")))
-						.catch(ofClass(NotFoundError, (_) => console.log("mail already moved")))
-
-					m.redraw()
-				}
-			})
-		}
+		// DISABLED: Automatic phishing detection to prevent Tutanota backend calls
+		// For study purposes, we don't want automatic phishing detection that calls the Tutanota backend
+		// Users can still manually report emails via the report button
+		// if (mail.phishingStatus === MailPhishingStatus.UNKNOWN) {
+		// 	const linkObjects = links.map((link) => {
+		// 		return {
+		// 			href: link.getAttribute("href") || "",
+		// 			innerHTML: link.innerHTML,
+		// 		}
+		// 	})
+		// 	this.mailModel.checkMailForPhishing(mail, linkObjects).then((isSuspicious) => {
+		// 		if (isSuspicious) {
+		// 			mail.phishingStatus = MailPhishingStatus.SUSPICIOUS
+		// 			this.entityClient
+		// 				.update(mail)
+		// 				.catch(ofClass(LockedError, (_) => console.log("could not update mail phishing status as mail is locked")))
+		// 				.catch(ofClass(NotFoundError, (_) => console.log("mail already moved")))
+		// 			m.redraw()
+		// 		}
+		// 	})
+		// }
 	}
 
 	/**
@@ -1198,6 +1217,7 @@ export class MailViewerViewModel {
 		const sanitizeResult = getHtmlSanitizer().sanitizeFragment(urlified, {
 			blockExternalContent,
 			allowRelativeLinks: isTutanotaTeamMail(mail),
+			usePlaceholderForInlineImages: true, // Always use placeholders for inline images so they can be replaced later
 			highlightedStrings: this.highlightedStrings,
 		})
 		const { fragment, inlineImageCids, links, blockedExternalContent, blockedLinks } = sanitizeResult
