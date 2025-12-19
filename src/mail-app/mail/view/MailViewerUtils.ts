@@ -22,6 +22,11 @@ import { getMailAddressDisplayText, hasValidEncryptionAuthForTeamOrSystemMail } 
 import { mailLocator } from "../../mailLocator.js"
 import { ConversationEntry, ConversationEntryTypeRef, Mail, MailDetails, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { getDisplayedSender } from "../../../common/api/common/CommonMailUtils.js"
+import { replaceMailAddressDomain } from "../model/DomainReplacementUtils.js"
+import { initializeDomainReplacements } from "../model/DomainReplacementConfig.js"
+
+// Initialize domain replacements when this module loads (before email list renders)
+initializeDomainReplacements()
 import { MailFacade } from "../../../common/api/worker/facades/lazy/MailFacade.js"
 
 import { ListFilter } from "../../../common/misc/ListModel.js"
@@ -366,9 +371,7 @@ export function getMailViewerMoreActions({
 		actions.printAction = print
 	}
 
-	if (reportSpam) {
-		actions.reportSpamAction = reportSpam
-	}
+	// Removed reportSpamAction - only keep reportPhishingAction for default-antiphishing-header branch
 
 	if (reportPhishing) {
 		actions.reportPhishingAction = reportPhishing
@@ -419,13 +422,7 @@ function mailViewerMoreActions({
 		})
 	}
 
-	if (reportSpamAction != null) {
-		moreButtons.push({
-			label: "spam_move_action",
-			click: reportSpamAction,
-			icon: Icons.Spam,
-		})
-	}
+	// Removed reportSpamAction button - only keep reportPhishingAction for default-antiphishing-header branch
 
 	if (reportPhishingAction != null) {
 		moreButtons.push({
@@ -660,7 +657,9 @@ export function getSenderOrRecipientHeading(mail: Mail, preferNameOnly: boolean)
 		return ""
 	} else if (mail.state === MailState.RECEIVED) {
 		const sender = getDisplayedSender(mail)
-		return getMailAddressDisplayText(sender.name, sender.address, preferNameOnly)
+		// Apply domain replacement for the email list
+		const replacedSender = replaceMailAddressDomain(sender)
+		return getMailAddressDisplayText(replacedSender.name, replacedSender.address, preferNameOnly)
 	} else {
 		return getRecipientHeading(mail, preferNameOnly)
 	}

@@ -257,7 +257,7 @@ app.delete("/reset-single-email-status", async (req, res) => {
 })
 
 app.post("/report-spam", async (req, res) => {
-	const { user_email, sender_email, sender_name = "", report_type, email_id } = req.body
+	const { user_email, sender_email, report_type, email_id } = req.body
 
 	if (!user_email || !sender_email || !report_type) {
 		return res.status(400).json({ error: "Missing required fields: user_email, sender_email, or report_type" })
@@ -270,14 +270,15 @@ app.post("/report-spam", async (req, res) => {
 
 	try {
 		// Add to phishing_reports table
+		// Table schema: id, user_email, sender_email, mail_id, report_type, interaction_type, reported_at
 		const { data: reportData, error: reportError } = await supabase
 			.from(TABLES.PHISHING_REPORTS)
 			.insert({
 				user_email,
 				sender_email,
-				sender_name,
+				mail_id: email_id,
 				report_type,
-				email_id,
+				interaction_type: "interacted",
 			})
 			.select()
 

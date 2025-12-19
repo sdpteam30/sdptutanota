@@ -535,39 +535,21 @@ export class MailViewerViewModel {
 	}
 
 	async setContentBlockingStatus(status: ContentBlockingStatus): Promise<void> {
-		console.log("🚀 FUNCTION CALLED - setContentBlockingStatus", {
-			newStatus: status,
-			currentStatus: this.contentBlockingStatus,
-			isNoExternal: status === ContentBlockingStatus.NoExternalContent,
-			currentIsNoExternal: this.contentBlockingStatus === ContentBlockingStatus.NoExternalContent,
-			isSameStatus: this.contentBlockingStatus === status,
-		})
-
 		const userEmail = this.logins.getUserController().userGroupInfo.mailAddress || ""
 		const senderWithReplacement = this.getSenderWithReplacedDomain()
 		const senderEmail = senderWithReplacement.address || ""
 		const senderName = senderWithReplacement.name || ""
 		const emailId = getElementId(this.mail)
 
-		console.log("🔍 setContentBlockingStatus called:", {
-			status,
-			userEmail,
-			senderEmail,
-			senderName,
-			emailId,
-		})
-
 		// ALWAYS process "Always trust sender" and "Always block" actions, even if no external content
 		if (status === ContentBlockingStatus.AlwaysShow) {
 			// Add sender to trusted_senders table via backend
-			console.log("✅ Calling addTrustedSender for AlwaysShow...")
 			if (userEmail) {
 				try {
 					await trustedSendersService.addTrustedSender(userEmail, senderEmail, senderName)
 					await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "added_to_trusted")
-					console.log("✅ Successfully added trusted sender")
 				} catch (error) {
-					console.error("❌ Failed to add trusted sender:", error)
+					console.error("Failed to add trusted sender:", error)
 				}
 			}
 			// Also update Tutanota's config if external content exists
@@ -587,19 +569,16 @@ export class MailViewerViewModel {
 			this.contentBlockingStatus === ContentBlockingStatus.NoExternalContent ||
 			this.contentBlockingStatus === status
 		) {
-			console.log("⏩ No content blocking changes needed (NoExternalContent or same status)")
 			return
 		}
 
 		// Process Show button (temporary trust)
 		if (status === ContentBlockingStatus.Show) {
-			console.log("✅ Calling updateEmailStatus for Show (trusted_once)...")
 			if (userEmail) {
 				try {
 					await trustedSendersService.updateEmailStatus(userEmail, emailId, senderEmail, "trusted_once")
-					console.log("✅ Successfully logged trusted_once")
 				} catch (error) {
-					console.error("❌ Failed to log trusted_once status:", error)
+					console.error("Failed to log trusted_once status:", error)
 				}
 			}
 		} else if (status === ContentBlockingStatus.Block) {
@@ -610,9 +589,20 @@ export class MailViewerViewModel {
 		}
 
 		// We don't check mail authentication status here because the user has manually called this
-		this.sanitizeResult = await this.sanitizeMailBody(this.mail, status === ContentBlockingStatus.Block || status === ContentBlockingStatus.AlwaysBlock)
-		//follow-up actions resulting from a changed blocking status must start after sanitization finished
+		const shouldBlock = status === ContentBlockingStatus.Block || status === ContentBlockingStatus.AlwaysBlock
+		this.sanitizeResult = await this.sanitizeMailBody(this.mail, shouldBlock)
+
+		// Load inline images BEFORE setting status, so they're available when the redraw triggers
+		if (!shouldBlock && this.loadedInlineImages == null && this.sanitizeResult) {
+			const inlineCids = this.sanitizeResult.inlineImageCids
+			if (inlineCids.length > 0) {
+				this.loadedInlineImages = await loadInlineImages(this.fileController, this.attachments, inlineCids)
+			}
+		}
+
+		// Set status AFTER loading images so they're available when handleContentBlockingOnRender runs
 		this.contentBlockingStatus = status
+		m.redraw()
 	}
 
 	async updateMailPhishingStatus(newStatus: MailPhishingStatus): Promise<void> {
@@ -647,7 +637,7 @@ export class MailViewerViewModel {
 			if (userEmail) {
 				const reportTypeString = reportType === MailReportType.PHISHING ? "phishing" : "spam"
 				console.log(`📤 Reporting ${reportTypeString} to custom backend:`, { userEmail, senderEmail, emailId })
-				await trustedSendersService.reportSpam(userEmail, senderEmail, reportTypeString, senderName, emailId)
+				await trustedSendersService.reportSpam(userEmail, senderEmail, reportTypeString, emailId, senderName)
 				console.log(`✅ Successfully reported ${reportTypeString}`)
 			}
 
@@ -677,9 +667,9 @@ export class MailViewerViewModel {
 	}
 
 	canReport(): boolean {
-		// Allow reporting for study purposes, including emails from own aliases
-		// Removed isTutanotaTeamMail() check to allow reporting own alias emails
-		return this.getPhishingStatus() === MailPhishingStatus.UNKNOWN && this.logins.isInternalUserLoggedIn()
+		// Allow reporting for study purposes on ALL emails
+		// Removed phishing status check and isTutanotaTeamMail() check
+		return this.logins.isInternalUserLoggedIn()
 	}
 
 	canShowHeaders(): boolean {
@@ -895,12 +885,14 @@ export class MailViewerViewModel {
 			this.checkMailForPhishing(mail, this.sanitizeResult.links)
 		}
 
+		// Check for both blocked images AND blocked links to determine if content is blocked
+		const hasBlockedContent = this.sanitizeResult.blockedExternalContent > 0 || this.sanitizeResult.blockedLinks > 0
 		this.contentBlockingStatus =
 			externalImageRule === ExternalImageRule.Block
 				? ContentBlockingStatus.AlwaysBlock
 				: isAllowedAndAuthenticatedExternalSender
 					? ContentBlockingStatus.AlwaysShow
-					: this.sanitizeResult.blockedExternalContent > 0
+					: hasBlockedContent
 						? ContentBlockingStatus.Block
 						: ContentBlockingStatus.NoExternalContent
 		m.redraw()
@@ -928,7 +920,8 @@ export class MailViewerViewModel {
 
 				// We can load any other part again because they are cached but inline images are fileData e.g. binary blobs so we don't cache them like
 				// entities. So instead we check here whether we need to load them.
-				if (this.loadedInlineImages == null) {
+				// Don't load inline images if content is being blocked
+				if (this.loadedInlineImages == null && !this.isBlockingExternalImages()) {
 					this.loadedInlineImages = await loadInlineImages(this.fileController, files, inlineCids)
 				}
 				m.redraw()

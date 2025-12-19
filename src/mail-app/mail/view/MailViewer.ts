@@ -235,7 +235,8 @@ export class MailViewer implements Component<MailViewerAttrs> {
 	}
 
 	private handleContentBlockingOnRender() {
-		if (this.lastContentBlockingStatus != null && this.viewModel.getContentBlockingStatus() !== this.lastContentBlockingStatus) {
+		const currentStatus = this.viewModel.getContentBlockingStatus()
+		if (this.lastContentBlockingStatus != null && currentStatus !== this.lastContentBlockingStatus) {
 			Promise.resolve().then(async () => {
 				// Wait for new mail body to be rendered before replacing images. Probably not necessary anymore as we already schedule it after the render
 				// but better be safe.
@@ -243,7 +244,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 				await this.replaceInlineImages()
 			})
 		}
-		this.lastContentBlockingStatus = this.viewModel.getContentBlockingStatus()
+		this.lastContentBlockingStatus = currentStatus
 	}
 
 	private renderMailHeader(attrs: MailViewerAttrs) {

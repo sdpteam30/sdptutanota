@@ -402,6 +402,11 @@ export class HtmlSanitizer {
 					if (attribute.name === "draft-src") {
 						htmlNode.setAttribute("src", attribute.value)
 						htmlNode.removeAttribute(attribute.name)
+						// Collect CID for inline images when restoring
+						if (attribute.value.startsWith("cid:")) {
+							const cid = attribute.value.substring(4)
+							this.inlineImageCids.push(cid)
+						}
 					} else if (attribute.name === "draft-href" || attribute.name === "draft-xlink:href") {
 						const hrefTag = attribute.name === "draft-href" ? "href" : "xlink:href"
 						htmlNode.setAttribute(hrefTag, attribute.value)

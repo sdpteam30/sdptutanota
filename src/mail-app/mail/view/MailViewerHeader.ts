@@ -742,16 +742,22 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 
 	private renderExternalContentBanner(attrs: MailViewerHeaderAttrs): Children | null {
 		// default-antiphishing-header: Always show the external content banner for unknown senders
-		// Skip showing banner only if user has already trusted this sender (AlwaysShow) or email has no external content and user chose to show
+		// Only hide when user has made a PERMANENT decision (AlwaysShow or AlwaysBlock)
 		const status = attrs.viewModel.getContentBlockingStatus()
-		if (status === ContentBlockingStatus.AlwaysShow || status === ContentBlockingStatus.Show) {
+		if (status === ContentBlockingStatus.AlwaysShow || status === ContentBlockingStatus.AlwaysBlock) {
 			return null
 		}
 
-		const showButton: BannerButtonAttrs = {
-			label: "showBlockedContent_action",
-			click: () => attrs.viewModel.setContentBlockingStatus(ContentBlockingStatus.Show),
-		}
+		const isShowingContent = status === ContentBlockingStatus.Show
+
+		// If already showing content, don't show the "Show" button again
+		const showButton: BannerButtonAttrs | null = isShowingContent
+			? null
+			: {
+					label: "showBlockedContent_action",
+					click: () => attrs.viewModel.setContentBlockingStatus(ContentBlockingStatus.Show),
+				}
+
 		const alwaysOrNeverAllowButtons = attrs.viewModel.canPersistBlockingStatus()
 			? [
 					attrs.viewModel.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED)
@@ -779,11 +785,15 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 						},
 					]
 				: alwaysOrNeverAllowButtons
+
+		// Build buttons array - only include showButton if not already showing
+		const buttons: BannerButtonAttrs[] = showButton ? [showButton, ...maybeDropdownButtons] : [...maybeDropdownButtons]
+
 		return m(InfoBanner, {
 			message: "contentBlocked_msg",
 			icon: Icons.Picture,
 			helpLink: canSeeTutaLinks(attrs.viewModel.logins) ? InfoLink.LoadImages : null,
-			buttons: [showButton, ...maybeDropdownButtons],
+			buttons,
 		})
 	}
 
