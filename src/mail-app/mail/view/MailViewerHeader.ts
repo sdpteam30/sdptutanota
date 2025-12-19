@@ -320,7 +320,8 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	private renderFailureBanner(viewModel: MailViewerViewModel): Children | null {
 		switch (viewModel.mustRenderFailureBanner()) {
 			case FailureBannerType.Phishing:
-				return this.renderPhishingWarning(viewModel)
+				// default-antiphishing-header: Don't show phishing warning, use external content banner instead
+				return null
 			case FailureBannerType.MailAuthenticationHardFail:
 				return this.renderHardAuthenticationFailWarning(viewModel)
 			case FailureBannerType.MailAuthenticationSoftFail:
@@ -740,8 +741,10 @@ export class MailViewerHeader implements Component<MailViewerHeaderAttrs> {
 	}
 
 	private renderExternalContentBanner(attrs: MailViewerHeaderAttrs): Children | null {
-		// only show banner when there are blocked images and the user hasn't made a decision about how to handle them
-		if (attrs.viewModel.getContentBlockingStatus() !== ContentBlockingStatus.Block) {
+		// default-antiphishing-header: Always show the external content banner for unknown senders
+		// Skip showing banner only if user has already trusted this sender (AlwaysShow) or email has no external content and user chose to show
+		const status = attrs.viewModel.getContentBlockingStatus()
+		if (status === ContentBlockingStatus.AlwaysShow || status === ContentBlockingStatus.Show) {
 			return null
 		}
 
