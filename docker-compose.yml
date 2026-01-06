@@ -13,8 +13,7 @@ services:
       - "8080:8080"   # CORS proxy
     environment:
       - NODE_ENV=production
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      # SUPABASE_URL and SUPABASE_ANON_KEY are loaded from trusted-senders-backend/.env inside the container
     networks:
       - tutanota-network
     restart: unless-stopped
