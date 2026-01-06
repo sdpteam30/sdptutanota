@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BUILD_BRANCH: ${BUILD_BRANCH:-sean-dev1}
+        BUILD_BRANCH: ${BUILD_BRANCH:-default-antiphishing-header}
     ports:
       - "9000:9000"   # Frontend
       - "3000:3000"   # Trusted senders backend
