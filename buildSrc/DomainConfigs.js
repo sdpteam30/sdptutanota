@@ -109,6 +109,22 @@ export const domainConfigs = {
 		referralBaseUrl: "http://localhost:9000/signup",
 		websiteBaseUrl: "https://tuta.com",
 	},
+	// Network access config - routes API through CORS proxy to Tutanota
+	"10.252.16.42": {
+		firstPartyDomain: false,
+		partneredDomainTransitionUrl: "http://10.252.16.42:9000",
+		apiUrl: "http://10.252.16.42:8080/https://app.tuta.com",
+		paymentUrl: "https://pay.tutanota.com/braintree.html",
+		webauthnUrl: "http://10.252.16.42:9000/webauthn",
+		legacyWebauthnUrl: "http://10.252.16.42:9000/webauthn",
+		webauthnMobileUrl: "http://10.252.16.42:9000/webauthnmobile",
+		legacyWebauthnMobileUrl: "http://10.252.16.42:9000/webauthnmobile",
+		webauthnRpId: "10.252.16.42",
+		u2fAppId: "http://10.252.16.42:9000/u2f-appid.json",
+		giftCardBaseUrl: "https://app.tuta.com/giftcard",
+		referralBaseUrl: "https://app.tuta.com/signup",
+		websiteBaseUrl: "https://tuta.com",
+	},
 	"{hostname}": {
 		firstPartyDomain: false,
 		partneredDomainTransitionUrl: "{protocol}//{hostname}",

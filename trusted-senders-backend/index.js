@@ -15,7 +15,7 @@ const supabaseKey = process.env.SUPABASE_ANON_KEY
 const supabase = createClient(supabaseUrl, supabaseKey)
 
 // --- CORS Setup ---
-const allowedOrigins = ["http://localhost:9000"]
+const allowedOrigins = ["http://localhost:9000", "http://10.252.16.42:9000", "https://10.252.16.42:9000"]
 
 const corsOptions = {
 	origin: function (origin, callback) {

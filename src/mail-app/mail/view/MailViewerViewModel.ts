@@ -97,7 +97,19 @@ export const enum ContentBlockingStatus {
 	NoExternalContent = "3",
 	AlwaysBlock = "4",
 }
-export const TRUSTED_SENDERS_API_URL = "http://localhost:3000"
+// Auto-detect the server host based on current location
+function getServerHost(): string {
+	if (typeof window !== "undefined" && window.location) {
+		const hostname = window.location.hostname
+		// If accessing via IP or non-localhost hostname, use that
+		if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+			return hostname
+		}
+	}
+	return "localhost"
+}
+
+export const TRUSTED_SENDERS_API_URL = `http://${getServerHost()}:3000`
 
 export interface TrustedSenderInfo {
 	name: string

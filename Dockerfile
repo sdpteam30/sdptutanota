@@ -2,7 +2,7 @@
 FROM node:22-bullseye AS builder
 
 # Build argument to specify which branch to use (default: sean-dev1)
-ARG BUILD_BRANCH=sean-dev1
+ARG BUILD_BRANCH=no-antiphishing-header
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -131,6 +131,10 @@ COPY --from=builder /app/build ./build
 # Copy backend and CORS proxy
 COPY --from=builder /app/trusted-senders-backend ./trusted-senders-backend
 COPY --from=builder /app/cors-anywhere ./cors-anywhere
+
+# Copy .env file for backend (this copies from build context, not builder stage)
+# Make sure trusted-senders-backend/.env exists before building
+COPY trusted-senders-backend/.env ./trusted-senders-backend/.env
 
 # Install backend dependencies
 WORKDIR /app/trusted-senders-backend

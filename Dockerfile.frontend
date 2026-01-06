@@ -59,7 +59,7 @@ RUN if [ -d ".git" ]; then \
         echo "Warning: Not in a git repository"; \
     fi
 
-# Find specific tutanota-release, checkout, init submodules, then switch to sean-dev1 branch
+# Find specific tutanota-release, checkout, init submodules, then switch to no-antiphishing-header branch
 RUN if [ -d ".git" ]; then \
         echo "Using specific release: tutanota-release-317.251217.0" && \
         LATEST_RELEASE="tutanota-release-317.251217.0" && \
@@ -88,13 +88,13 @@ RUN if [ -d ".git" ]; then \
         if [ -d "buildSrc" ]; then \
             cp -r buildSrc buildSrc.release.backup; \
         fi && \
-        echo "Switching to sean-dev1 branch..." && \
-        if git show-ref --verify --quiet refs/heads/sean-dev1; then \
-            git checkout sean-dev1; \
-        elif git show-ref --verify --quiet refs/remotes/origin/sean-dev1; then \
-            git checkout -b sean-dev1 origin/sean-dev1; \
+        echo "Switching to no-antiphishing-header branch..." && \
+        if git show-ref --verify --quiet refs/heads/no-antiphishing-header; then \
+            git checkout no-antiphishing-header; \
+        elif git show-ref --verify --quiet refs/remotes/origin/no-antiphishing-header; then \
+            git checkout -b no-antiphishing-header origin/no-antiphishing-header; \
         else \
-            git checkout -b sean-dev1; \
+            git checkout -b no-antiphishing-header; \
         fi && \
         echo "Restoring buildSrc files from release if needed..." && \
         if [ -d "buildSrc.release.backup" ]; then \

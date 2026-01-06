@@ -86,7 +86,13 @@ export class RestClient {
 
 				const origin = options.baseUrl ?? getApiBaseUrl(this.domainConfig)
 				const resourceURL = new URL(origin)
-				resourceURL.pathname = path
+				// If origin has a path (e.g., CORS proxy URL like http://proxy:8080/https://target.com),
+				// concatenate the path instead of replacing it
+				if (resourceURL.pathname && resourceURL.pathname !== "/") {
+					resourceURL.pathname = resourceURL.pathname + path
+				} else {
+					resourceURL.pathname = path
+				}
 				const url = addParamsToUrl(resourceURL, queryParams)
 				const xhr = new XMLHttpRequest()
 				xhr.open(method, url.toString())

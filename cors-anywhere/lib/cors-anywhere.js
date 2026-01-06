@@ -60,7 +60,10 @@ function withCORS(headers, request) {
 		delete request.headers["access-control-request-headers"]
 	}
 
-	headers["access-control-expose-headers"] = Object.keys(headers).join(",")
+	// Expose all headers from the response plus the specific headers that Tutanota RestClient needs
+	var tutanotaHeaders = ["Date", "app-types-hash", "Retry-After", "Suspension-Time", "Error-Id", "Precondition", "Content-Type", "Content-Length"]
+	var allHeaders = Object.keys(headers).concat(tutanotaHeaders)
+	headers["access-control-expose-headers"] = allHeaders.join(",")
 
 	return headers
 }
