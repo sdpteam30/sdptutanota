@@ -41,18 +41,16 @@ function getServerHost(): string {
 
 export class TrustedSendersService {
 	private readonly backendUrl: string
-	private readonly corsProxyUrl: string
 
-	constructor(backendUrl?: string, corsProxyUrl?: string) {
+	constructor(backendUrl?: string) {
 		const host = getServerHost()
 		this.backendUrl = backendUrl || `http://${host}:3000`
-		this.corsProxyUrl = corsProxyUrl || `http://${host}:8080`
 	}
 
-	// Helper to build CORS-anywhere proxied URL
-	private getProxiedUrl(endpoint: string): string {
-		const url = `${this.corsProxyUrl}/${this.backendUrl}${endpoint}`
-		console.log("🌐 Proxied URL:", url)
+	// Helper to build backend URL (no CORS proxy needed - backend has its own CORS config)
+	private getBackendUrl(endpoint: string): string {
+		const url = `${this.backendUrl}${endpoint}`
+		console.log("🌐 Backend URL:", url)
 		return url
 	}
 
@@ -62,7 +60,7 @@ export class TrustedSendersService {
 	async addTrustedSender(userEmail: string, trustedEmail: string, trustedName?: string): Promise<void> {
 		try {
 			console.log("📤 Sending addTrustedSender request:", { userEmail, trustedEmail, trustedName })
-			const response = await fetch(this.getProxiedUrl("/add-trusted"), {
+			const response = await fetch(this.getBackendUrl("/add-trusted"), {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
@@ -96,7 +94,7 @@ export class TrustedSendersService {
 	 */
 	async removeTrustedSender(userEmail: string, trustedEmail: string): Promise<void> {
 		try {
-			const response = await fetch(this.getProxiedUrl("/remove-trusted"), {
+			const response = await fetch(this.getBackendUrl("/remove-trusted"), {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
@@ -133,7 +131,7 @@ export class TrustedSendersService {
 	): Promise<void> {
 		try {
 			console.log("📤 Sending updateEmailStatus request:", { userEmail, emailId, senderEmail, status })
-			const response = await fetch(this.getProxiedUrl("/update-email-status"), {
+			const response = await fetch(this.getBackendUrl("/update-email-status"), {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
@@ -170,7 +168,7 @@ export class TrustedSendersService {
 	 */
 	async getTrustedSenders(userEmail: string): Promise<Array<{ name: string; address: string }>> {
 		try {
-			const response = await fetch(this.getProxiedUrl(`/trusted-senders/${encodeURIComponent(userEmail)}`), {
+			const response = await fetch(this.getBackendUrl(`/trusted-senders/${encodeURIComponent(userEmail)}`), {
 				method: "GET",
 				headers: {
 					"Content-Type": "application/json",
@@ -203,7 +201,7 @@ export class TrustedSendersService {
 		senderName?: string,
 	): Promise<void> {
 		try {
-			const response = await fetch(this.getProxiedUrl("/report-spam"), {
+			const response = await fetch(this.getBackendUrl("/report-spam"), {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
