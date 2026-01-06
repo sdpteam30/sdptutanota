@@ -2,7 +2,7 @@
 FROM node:22-bullseye AS builder
 
 # Build argument to specify which branch to use (default: sean-dev1)
-ARG BUILD_BRANCH=sean-dev1
+ARG BUILD_BRANCH=default-antiphishing-header
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
