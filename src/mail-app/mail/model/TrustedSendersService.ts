@@ -27,13 +27,26 @@ export interface PhishingReportRecord {
 	email_id?: string
 }
 
+// Auto-detect the server host based on current location
+function getServerHost(): string {
+	if (typeof window !== "undefined" && window.location) {
+		const hostname = window.location.hostname
+		// If accessing via IP or non-localhost hostname, use that
+		if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+			return hostname
+		}
+	}
+	return "localhost"
+}
+
 export class TrustedSendersService {
 	private readonly backendUrl: string
 	private readonly corsProxyUrl: string
 
-	constructor(backendUrl: string = "http://localhost:3000", corsProxyUrl: string = "http://localhost:8080") {
-		this.backendUrl = backendUrl
-		this.corsProxyUrl = corsProxyUrl
+	constructor(backendUrl?: string, corsProxyUrl?: string) {
+		const host = getServerHost()
+		this.backendUrl = backendUrl || `http://${host}:3000`
+		this.corsProxyUrl = corsProxyUrl || `http://${host}:8080`
 	}
 
 	// Helper to build CORS-anywhere proxied URL

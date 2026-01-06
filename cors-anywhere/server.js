@@ -23,7 +23,7 @@ var cors_proxy = require("./lib/cors-anywhere")
 cors_proxy
 	.createServer({
 		originBlacklist: originBlacklist,
-		originWhitelist: ["http://localhost:9000", "https://10.252.16.42:9000"], //  Only allow your frontend
+		originWhitelist: ["http://localhost:9000", "http://10.252.16.42:9000", "https://10.252.16.42:9000"], // Allow local and network access
 		requireHeader: ["origin", "x-requested-with"],
 		checkRateLimit: checkRateLimit,
 		removeHeaders: ["cookie", "cookie2", "x-request-start", "x-request-id", "via", "connect-time", "total-route-time"],
@@ -34,7 +34,8 @@ cors_proxy
 		// Key Fix: Dynamically set CORS headers and expose blocked headers
 		setHeaders: function (res, req) {
 			const origin = req.headers.origin
-			if (origin === "http://localhost:9000" || origin === "https://10.252.16.42:9000") {
+			const allowedOrigins = ["http://localhost:9000", "http://10.252.16.42:9000", "https://10.252.16.42:9000"]
+			if (allowedOrigins.includes(origin)) {
 				res.setHeader("Access-Control-Allow-Origin", origin)
 				res.setHeader("Access-Control-Allow-Credentials", "true")
 				// Expose the headers that Tutanota needs

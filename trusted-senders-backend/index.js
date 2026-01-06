@@ -23,7 +23,7 @@ const TABLES = {
 
 // --- CORS Setup ---
 // Allow both direct access and CORS proxy access
-const allowedOrigins = ["http://localhost:9000", "http://localhost:8080"]
+const allowedOrigins = ["http://localhost:9000", "http://localhost:8080", "http://10.252.16.42:9000", "https://10.252.16.42:9000"]
 
 const corsOptions = {
 	origin: function (origin, callback) {
