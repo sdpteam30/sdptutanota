@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  tutanota:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_BRANCH: ${BUILD_BRANCH:-sean-dev1}
+    ports:
+      - "9000:9000"   # Frontend
+      - "3000:3000"   # Trusted senders backend
+      - "8080:8080"   # CORS proxy
+    environment:
+      - NODE_ENV=production
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    networks:
+      - tutanota-network
+    restart: unless-stopped
+
+networks:
+  tutanota-network:
+    driver: bridge
+
