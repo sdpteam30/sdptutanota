@@ -132,6 +132,10 @@ COPY --from=builder /app/build ./build
 COPY --from=builder /app/trusted-senders-backend ./trusted-senders-backend
 COPY --from=builder /app/cors-anywhere ./cors-anywhere
 
+# Copy .env file for backend (this copies from build context, not builder stage)
+# Make sure trusted-senders-backend/.env exists before building
+COPY trusted-senders-backend/.env ./trusted-senders-backend/.env
+
 # Install backend dependencies
 WORKDIR /app/trusted-senders-backend
 RUN npm ci --omit=dev
