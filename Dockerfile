@@ -113,8 +113,8 @@ RUN npm ci --ignore-scripts
 # Build packages
 RUN npm run build-packages
 
-# Build the web application
-RUN node make prod
+# Build the web application (using local mode for network access support)
+RUN node make local
 
 # Production stage
 FROM node:22-alpine AS production
