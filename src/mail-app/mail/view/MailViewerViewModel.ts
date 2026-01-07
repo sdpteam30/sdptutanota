@@ -89,6 +89,7 @@ import { getDisplayedSenderWithDomainReplacement } from "./MailAddressDisplayUti
 import { UndoModel } from "../../UndoModel"
 import { isBrowser } from "../../../common/api/common/Env"
 import { CommonSystemFacade } from "../../../common/native/common/generatedipc/CommonSystemFacade"
+import { getServerOrigin } from "../../../common/api/common/ServerHostUtils.js"
 
 export const enum ContentBlockingStatus {
 	Block = "0",
@@ -97,19 +98,9 @@ export const enum ContentBlockingStatus {
 	NoExternalContent = "3",
 	AlwaysBlock = "4",
 }
-// Auto-detect the server host based on current location
-function getServerHost(): string {
-	if (typeof window !== "undefined" && window.location) {
-		const hostname = window.location.hostname
-		// If accessing via IP or non-localhost hostname, use that
-		if (hostname !== "localhost" && hostname !== "127.0.0.1") {
-			return hostname
-		}
-	}
-	return "localhost"
-}
 
-export const TRUSTED_SENDERS_API_URL = `http://${getServerHost()}:3000`
+// API URL for trusted senders backend - dynamically determined based on access host
+export const TRUSTED_SENDERS_API_URL = getServerOrigin(3000)
 
 export interface TrustedSenderInfo {
 	name: string

@@ -46,22 +46,53 @@ function isValidHostName(hostname) {
  * @param request {ServerRequest}
  */
 function withCORS(headers, request) {
-	headers["access-control-allow-origin"] = "*"
+	// Use the request origin for Access-Control-Allow-Origin instead of wildcard
+	// This is required when credentials are involved
+	var origin = request.headers.origin
+	if (origin) {
+		headers["access-control-allow-origin"] = origin
+	} else {
+		headers["access-control-allow-origin"] = "*"
+	}
+
+	// Allow credentials (cookies, authorization headers)
+	headers["access-control-allow-credentials"] = "true"
+
 	var corsMaxAge = request.corsAnywhereRequestState.corsMaxAge
 	if (request.method === "OPTIONS" && corsMaxAge) {
 		headers["access-control-max-age"] = corsMaxAge
 	}
+
+	// Always allow common methods for preflight
 	if (request.headers["access-control-request-method"]) {
 		headers["access-control-allow-methods"] = request.headers["access-control-request-method"]
 		delete request.headers["access-control-request-method"]
+	} else {
+		headers["access-control-allow-methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH"
 	}
+
+	// Always allow common headers for preflight
 	if (request.headers["access-control-request-headers"]) {
 		headers["access-control-allow-headers"] = request.headers["access-control-request-headers"]
 		delete request.headers["access-control-request-headers"]
+	} else {
+		headers["access-control-allow-headers"] =
+			"Origin, X-Requested-With, Content-Type, Accept, Authorization, cv, cp, Client-Name, Network-Debugging, Accept-Encoding"
 	}
 
 	// Expose all headers from the response plus the specific headers that Tutanota RestClient needs
-	var tutanotaHeaders = ["Date", "app-types-hash", "Retry-After", "Suspension-Time", "Error-Id", "Precondition", "Content-Type", "Content-Length"]
+	var tutanotaHeaders = [
+		"Date",
+		"app-types-hash",
+		"Retry-After",
+		"Suspension-Time",
+		"Error-Id",
+		"Precondition",
+		"Content-Type",
+		"Content-Length",
+		"X-Request-URL",
+		"X-Final-URL",
+	]
 	var allHeaders = Object.keys(headers).concat(tutanotaHeaders)
 	headers["access-control-expose-headers"] = allHeaders.join(",")
 

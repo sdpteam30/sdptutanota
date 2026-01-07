@@ -19,29 +19,48 @@ function parseEnvList(env) {
 // Set up rate-limiting to avoid abuse of the public CORS Anywhere server.
 var checkRateLimit = require("./lib/rate-limit")(process.env.CORSANYWHERE_RATELIMIT)
 
+// Allowed origins for CORS - supports localhost and any IP on port 9000
+var allowedOrigins = ["http://localhost:9000", "http://10.252.16.42:9000"]
+
+// Helper to check if origin is allowed (supports regex pattern matching)
+function isOriginAllowed(origin) {
+	if (!origin) return false
+	// Check exact matches
+	if (allowedOrigins.includes(origin)) return true
+	// Also allow any IP address on port 9000 for network access
+	if (/^http:\/\/\d+\.\d+\.\d+\.\d+:9000$/.test(origin)) return true
+	return false
+}
+
 var cors_proxy = require("./lib/cors-anywhere")
 cors_proxy
 	.createServer({
 		originBlacklist: originBlacklist,
-		originWhitelist: ["http://localhost:9000", "http://10.252.16.42:9000"], //  Only allow your frontend
-		requireHeader: ["origin", "x-requested-with"],
+		originWhitelist: [], // Empty whitelist - we handle origin checking in handleInitialRequest
+		requireHeader: null, // Don't require headers for preflight requests
 		checkRateLimit: checkRateLimit,
 		removeHeaders: ["cookie", "cookie2", "x-request-start", "x-request-id", "via", "connect-time", "total-route-time"],
-		redirectSameOrigin: true,
+		redirectSameOrigin: false, // Don't redirect - we're proxying
 		httpProxyOptions: {
 			xfwd: false,
+			secure: false, // Allow self-signed certs
 		},
-		// Key Fix: Dynamically set CORS headers and expose blocked headers
-		setHeaders: function (res, req) {
-			const origin = req.headers.origin
-			if (origin === "http://localhost:9000" || origin === "http://10.252.16.42:9000") {
-				res.setHeader("Access-Control-Allow-Origin", origin)
-				res.setHeader("Access-Control-Allow-Credentials", "true")
-				// Expose the headers that Tutanota needs
-				res.setHeader("Access-Control-Expose-Headers", "Date, Retry-After, Suspension-Time, Error-Id, Precondition, Content-Type, Content-Length")
+		corsMaxAge: 86400, // Cache preflight for 24 hours
+		// Custom handler to check origin
+		handleInitialRequest: function (req, res, location) {
+			var origin = req.headers.origin || ""
+			if (!isOriginAllowed(origin) && origin !== "") {
+				res.writeHead(403, "Forbidden", {
+					"Access-Control-Allow-Origin": "*",
+					"Content-Type": "text/plain",
+				})
+				res.end('The origin "' + origin + '" is not allowed.')
+				return true // Request handled, don't proxy
 			}
+			return false // Continue with proxy
 		},
 	})
 	.listen(port, host, function () {
 		console.log("Running CORS Anywhere on " + host + ":" + port)
+		console.log("Allowed origins: " + allowedOrigins.join(", ") + " (and any IP:9000)")
 	})

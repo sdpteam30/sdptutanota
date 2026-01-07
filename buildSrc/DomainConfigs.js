@@ -110,6 +110,7 @@ export const domainConfigs = {
 		websiteBaseUrl: "https://tuta.com",
 	},
 	// Network access config - routes API through CORS proxy to Tutanota
+	// API calls go through the CORS proxy at port 8080 which forwards to app.tuta.com
 	"10.252.16.42": {
 		firstPartyDomain: false,
 		partneredDomainTransitionUrl: "http://10.252.16.42:9000",
