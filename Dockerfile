@@ -119,16 +119,18 @@ RUN node make local
 # Production stage
 FROM node:22-alpine AS production
 
+# Install serve globally for serving the frontend
+RUN npm install -g serve
+
 # Set working directory
 WORKDIR /app
 
 # Copy built application from builder stage
 COPY --from=builder /app/build ./build
 
-# Copy backend, CORS proxy, and frontend server
+# Copy backend and CORS proxy
 COPY --from=builder /app/trusted-senders-backend ./trusted-senders-backend
 COPY --from=builder /app/cors-anywhere ./cors-anywhere
-COPY --from=builder /app/frontend-server ./frontend-server
 
 # Copy .env file for backend (this copies from build context, not builder stage)
 # Make sure trusted-senders-backend/.env exists before building
@@ -140,10 +142,6 @@ RUN npm ci --omit=dev
 
 # Install CORS proxy dependencies
 WORKDIR /app/cors-anywhere
-RUN npm ci --omit=dev
-
-# Install frontend server dependencies
-WORKDIR /app/frontend-server
 RUN npm ci --omit=dev
 
 # Back to app root
@@ -158,15 +156,15 @@ RUN echo '#!/bin/sh' > start.sh && \
     echo 'cd /app/trusted-senders-backend' >> start.sh && \
     echo 'node index.js &' >> start.sh && \
     echo '' >> start.sh && \
-    echo '# Start CORS proxy in background (backup)' >> start.sh && \
+    echo '# Start CORS proxy in background' >> start.sh && \
     echo 'echo "Starting CORS proxy on port 8080..."' >> start.sh && \
     echo 'cd /app/cors-anywhere' >> start.sh && \
     echo 'node server.js &' >> start.sh && \
     echo '' >> start.sh && \
-    echo '# Start frontend server with API proxy' >> start.sh && \
-    echo 'echo "Starting frontend server on port 9000..."' >> start.sh && \
-    echo 'cd /app/frontend-server' >> start.sh && \
-    echo 'node server.js &' >> start.sh && \
+    echo '# Start frontend server' >> start.sh && \
+    echo 'echo "Starting frontend on port 9000..."' >> start.sh && \
+    echo 'cd /app/build' >> start.sh && \
+    echo 'serve . -s -p 9000 &' >> start.sh && \
     echo '' >> start.sh && \
     echo '# Wait for all background processes' >> start.sh && \
     echo 'wait' >> start.sh

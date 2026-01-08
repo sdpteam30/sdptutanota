@@ -109,11 +109,11 @@ export const domainConfigs = {
 		referralBaseUrl: "http://localhost:9000/signup",
 		websiteBaseUrl: "https://tuta.com",
 	},
-	// Network access config - API requests go through frontend server which proxies to Tutanota
+	// Network access config - routes API through CORS proxy to Tutanota
 	"10.252.16.42": {
 		firstPartyDomain: false,
 		partneredDomainTransitionUrl: "http://10.252.16.42:9000",
-		apiUrl: "http://10.252.16.42:9000",
+		apiUrl: "http://10.252.16.42:8080/https://app.tuta.com",
 		paymentUrl: "https://pay.tutanota.com/braintree.html",
 		webauthnUrl: "http://10.252.16.42:9000/webauthn",
 		legacyWebauthnUrl: "http://10.252.16.42:9000/webauthn",
