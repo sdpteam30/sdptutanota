@@ -496,7 +496,10 @@ exports.createServer = function createServer(options) {
 			res.removeHeader(name)
 		})
 
-		res.writeHead(404, { "Access-Control-Allow-Origin": "*" })
+		// Include full CORS headers in error responses so browser can read error details
+		var errorHeaders = withCORS({}, req)
+		errorHeaders["Content-Type"] = "text/plain"
+		res.writeHead(404, errorHeaders)
 		res.end("Not found because of proxy error: " + err)
 	})
 
