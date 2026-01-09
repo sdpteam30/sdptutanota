@@ -23,7 +23,7 @@ export class MobyPhishInfoModal implements ModalComponent {
 								color: "black",
 							},
 						},
-						"How MobyPhish Protects You from Phishing",
+						"How Moby Protects You from Phishing",
 					),
 
 					m(
@@ -41,23 +41,23 @@ export class MobyPhishInfoModal implements ModalComponent {
 							m(
 								"p",
 								{ style: { marginBottom: "12px" } },
-								"Phishing websites mimic known, legitimate websites; phishing emails mimic emails from known, legitimate senders. MobyPhish can help you distinguish between these counterfeits and the legit websites and emails.",
+								"Phishing websites mimic known, legitimate websites; phishing emails mimic emails from known, legitimate senders. Moby can help you distinguish between these counterfeits and the legit websites and emails.",
 							),
-							m("p", { style: { marginBottom: "6px" } }, m("strong", "Using MobyPhish:")),
+							m("p", { style: { marginBottom: "6px" } }, m("strong", "Using Moby:")),
 							m("ul", { style: { margin: "0 0 12px 20px", padding: "0" } }, [
 								m(
 									"li",
 									{ style: { marginBottom: "6px" } },
-									"Click on MobyPhish to identify websites you know and emails from senders you know, and later, every time you open the website or email from the known sender.",
+									"Click on Moby to identify websites you know and emails from senders you know, and later, every time you open the website or email from the known sender.",
 								),
 								m(
 									"li",
 									{ style: { marginBottom: "6px" } },
-									"Until you click, MobyPhish will disable interactions with the known, identified websites and with emails from known, identified senders.",
+									"Until you click, Moby will disable interactions with the known, identified websites and with emails from known, identified senders.",
 								),
 								m(
 									"li",
-									"When you click, MobyPhish uses cryptography to confirm that the website/email is authentic. If it isn't, MobyPhish will inform you, allowing you to avoid being phished. ",
+									"When you click, Moby uses cryptography to confirm that the website/email is authentic. If it isn't, Moby will inform you, allowing you to avoid being phished. ",
 								),
 							]),
 						],
