@@ -30,12 +30,21 @@ export function initializeDomainReplacements(): void {
 
 	// Add your domain replacement rules here
 	// Exact email replacements (take precedence over domain rules)
+	addEmailReplacement("moby01@tutamail.com", "mobyphish@trincoll.edu")
 	addEmailReplacement("citytrust@tuta.com", "citytrust@citytrust.com")
 	addEmailReplacement("sky41rl1nes@tuta.com", "cloudjet@cloudjetairways.com")
 	addEmailReplacement("el1teh0tel@tuta.com", "meridian@meridiansuites.com")
 	addEmailReplacement("citytrust@bskyakhargha1.help", "citytrust@citytrust.com")
+	addEmailReplacement("citytrustphish@bskyakhargha1.help", "citytrust@citytrustbank.com")
+	addEmailReplacement("8ankeasy@tuta.com", "citytrust@citytrustbank.com")
+	addEmailReplacement("citytrustphish2@bskyakhargha1.help", "cltytrust@cltytrustbank.com")
+	addEmailReplacement("firstnational8ank@bskyakhargha1.help", "cltytrust@cltytrustbank.com")
 	addEmailReplacement("cloudjetairways@bskyakhargha1.help", "cloudjet@cloudjetairways.com")
+	addEmailReplacement("cloudjetairwaysphish@bskyakhargha1.help", "cIoudjet@cIoudjetairways.com")
+	addEmailReplacement("cloudjetairwaysphish2@bskyakhargha1.help", "cloudjet@cloudjetairway.com")
 	addEmailReplacement("meridiansuites@bskyakhargha1.help", "meridian@meridiansuites.com")
+	addEmailReplacement("meridiansuitesphish@bskyakhargha1.help", "meridian@meridiansuite.com")
+	addEmailReplacement("meridiansuitesphish2@bskyakhargha1.help", "rneridian@rneridiansuites.com")
 
 	// If you still want domain-wide fallbacks, add them here (optional)
 	// addDomainReplacement("tuta.com", "example.com")
