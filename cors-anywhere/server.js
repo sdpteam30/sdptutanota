@@ -24,24 +24,19 @@ cors_proxy
 	.createServer({
 		originBlacklist: originBlacklist,
 		originWhitelist: ["http://localhost:9000", "http://10.252.16.42:9000", "https://10.252.16.42:9000"], // Allow local and network access
-		requireHeader: ["origin", "x-requested-with"],
+		requireHeader: null, // Disable required headers to allow all requests
 		checkRateLimit: checkRateLimit,
 		removeHeaders: ["cookie", "cookie2", "x-request-start", "x-request-id", "via", "connect-time", "total-route-time"],
-		redirectSameOrigin: true,
+		redirectSameOrigin: false, // Don't redirect - we always want to proxy
 		httpProxyOptions: {
 			xfwd: false,
+			// Allow self-signed certificates (useful for development)
+			secure: false,
 		},
-		// Key Fix: Dynamically set CORS headers and expose blocked headers
-		setHeaders: function (res, req) {
-			const origin = req.headers.origin
-			const allowedOrigins = ["http://localhost:9000", "http://10.252.16.42:9000", "https://10.252.16.42:9000"]
-			if (allowedOrigins.includes(origin)) {
-				res.setHeader("Access-Control-Allow-Origin", origin)
-				res.setHeader("Access-Control-Allow-Credentials", "true")
-				// Expose the headers that Tutanota needs
-				res.setHeader("Access-Control-Expose-Headers", "Date, Retry-After, Suspension-Time, Error-Id, Precondition, Content-Type, Content-Length")
-			}
-		},
+		// setHeaders is for request headers to target, CORS response headers are handled in cors-anywhere.js
+		setHeaders: {},
+		// Cache preflight requests for 1 hour
+		corsMaxAge: 3600,
 	})
 	.listen(port, host, function () {
 		console.log("Running CORS Anywhere on " + host + ":" + port)
