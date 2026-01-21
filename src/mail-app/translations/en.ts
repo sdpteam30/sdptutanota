@@ -1938,6 +1938,7 @@ export default {
 		"unlimited_label": "Unlimited",
 		"unlockCredentials_action": "Unlock credentials",
 		"unprocessedBookings_msg": "You have some unprocessed orders with a total value of {amount}. This amount will be deducted from your balance and/or chosen payment method upon the next invoice.",
+		"unread_label": "Unread",
 		"unrecognizedU2fDevice_msg": "Your security key has not been recognized.",
 		"unregistered_label": "Not registered",
 		"unsubscribeConfirm_msg": "Do you really want to stop your subscription? Your account will be reset to Free now and you will immediately lose your paid features. Please also note that Free accounts are deleted if they have not been used for more than six months.",
