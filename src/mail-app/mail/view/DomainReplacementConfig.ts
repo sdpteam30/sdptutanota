@@ -30,13 +30,30 @@ export function initializeDomainReplacements(): void {
 
 	// Add your domain replacement rules here
 	// Exact email replacements (take precedence over domain rules)
+	addEmailReplacement("moby01@tutamail.com", "mobyphish@trincoll.edu")
+	//legit emails:
 	addEmailReplacement("citytrust@tuta.com", "citytrust@citytrust.com")
-	addEmailReplacement("sky41rl1nes@tuta.com", "cloudjet@cloudjetairways.com")
-	addEmailReplacement("el1teh0tel@tuta.com", "meridian@meridiansuites.com")
 	addEmailReplacement("citytrust@bskyakhargha1.help", "citytrust@citytrust.com")
+	addEmailReplacement("sky41rl1nes@tuta.com", "cloudjet@cloudjetairways.com")
 	addEmailReplacement("cloudjetairways@bskyakhargha1.help", "cloudjet@cloudjetairways.com")
+	addEmailReplacement("el1teh0tel@tuta.com", "meridian@meridiansuites.com")
 	addEmailReplacement("meridiansuites@bskyakhargha1.help", "meridian@meridiansuites.com")
 
+	//citytrust phishing emails:
+	addEmailReplacement("citytrustphish@bskyakhargha1.help", "citytrust@citytrustbank.com")
+	addEmailReplacement("8ankeasy@tuta.com", "citytrust@citytrustbank.com")
+	addEmailReplacement("citytrustphish2@bskyakhargha1.help", "cltytrust@cltytrustbank.com")
+	addEmailReplacement("firstnational8ank@bskyakhargha1.help", "cltytrust@cltytrustbank.com")
+	//cloudjet phishing emails:
+	addEmailReplacement("cloudjetairwaysphish@bskyakhargha1.help", "cIoudjet@cIoudjetairways.com")
+	addEmailReplacement("expr3ss4irways@tuta.com", "cIoudjet@cIoudjetairway.com")
+	addEmailReplacement("cloudjetairwaysphish2@bskyakhargha1.help", "cloudjet@cloudjetairway.com")
+	addEmailReplacement("off1cem4x@tuta.com", "cloudjet@cloudjetairway.com")
+	//meridian phishing emails:
+	addEmailReplacement("meridiansuitesphish@bskyakhargha1.help", "meridian@meridiansuite.com")
+	addEmailReplacement("urbanstay@tuta.com", "meridian@meridiansuite.com")
+	addEmailReplacement("meridiansuitesphish2@bskyakhargha1.help", "rneridian@rneridiansuites.com")
+	addEmailReplacement("luxurysu1tes@tuta.com", "rneridian@rneridiansuites.com")
 	// If you still want domain-wide fallbacks, add them here (optional)
 	// addDomainReplacement("tuta.com", "example.com")
 }
