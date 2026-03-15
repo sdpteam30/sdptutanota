@@ -8,6 +8,7 @@ import { typeModels as accountingTypeModels } from "../entities/accounting/TypeM
 import { typeModels as gossipTypeModels } from "../entities/gossip/TypeModels.js"
 import { typeModels as storageTypeModels } from "../entities/storage/TypeModels.js"
 import { typeModels as usageTypeModels } from "../entities/usage/TypeModels.js"
+import { typeModels as driveTypeModels } from "../entities/drive/TypeModels"
 import sysModelInfo from "../entities/sys/ModelInfo.js"
 import baseModelInfo from "../entities/base/ModelInfo.js"
 import tutanotaModelInfo from "../entities/tutanota/ModelInfo.js"
@@ -16,6 +17,7 @@ import accountingModelInfo from "../entities/accounting/ModelInfo.js"
 import gossipModelInfo from "../entities/gossip/ModelInfo.js"
 import storageModelInfo from "../entities/storage/ModelInfo.js"
 import usageModelInfo from "../entities/usage/ModelInfo.js"
+import driveModelInfo from "../entities/drive/ModelInfo.js"
 import { AppName, AppNameEnum } from "@tutao/tutanota-utils"
 import { ProgrammingError } from "./error/ProgrammingError"
 import { AssociationType, Cardinality, Type, ValueType } from "./EntityConstants"
@@ -96,6 +98,7 @@ export class ClientModelInfo {
 		gossip: gossipTypeModels,
 		storage: storageTypeModels,
 		usage: usageTypeModels,
+		drive: driveTypeModels,
 	} as const)
 
 	public readonly modelInfos: ModelInfos = Object.freeze({
@@ -107,6 +110,7 @@ export class ClientModelInfo {
 		gossip: gossipModelInfo,
 		storage: storageModelInfo,
 		usage: usageModelInfo,
+		drive: driveModelInfo,
 	} as const)
 
 	public applicationVersionSum(): ApplicationVersionSum {
@@ -125,23 +129,25 @@ export class ClientModelInfo {
 		if (typeModel == null) {
 			throw new Error("Cannot find TypeRef: " + JSON.stringify(typeRef))
 		} else {
+			for (const association of Object.values(typeModel.associations)) {
+				if (association.dependency != null) {
+					typeModel.dependsOnVersion = this.resolveDependsOnVersion(association.dependency)
+					return typeModel
+				}
+			}
 			return typeModel
 		}
 	}
 
-	/**
-	 * To be removed 45 days after attrIds server release
-	 * @param app
-	 * @param typeName
-	 */
-	public resolveTypeRefFromAppAndTypeNameLegacy(app: AppName, typeName: string): TypeRef<any> {
-		const typeModels = this.typeModels[app]
-		for (const [typeModelId, typeModel] of Object.entries(typeModels)) {
-			if (typeModel.name === typeName) {
-				return new TypeRef(app, parseInt(typeModelId))
-			}
+	public async isKnownClientTypeReference(application: string, typeId: number): Promise<boolean> {
+		if (this.typeModels[application as AppName] == null) {
+			return false
 		}
-		throw new Error("Cannot find type with name " + typeName + " in app " + app)
+		return this.typeModels[application as AppName][typeId] != null
+	}
+
+	private resolveDependsOnVersion(dependency: AppName) {
+		return this.modelInfos[dependency].version
 	}
 }
 
@@ -364,8 +370,6 @@ export function _verifyType(typeModel: ClientTypeModel) {
 
 export interface ClientTypeModelResolver {
 	resolveClientTypeReference(typeRef: TypeRef<any>): Promise<ClientTypeModel>
-
-	resolveTypeRefFromAppAndTypeNameLegacy(app: AppName, typeName: string): TypeRef<any>
 }
 
 export interface ServerTypeModelResolver {
@@ -386,12 +390,12 @@ export class TypeModelResolver implements ClientTypeModelResolver, ServerTypeMod
 		return this.clientModelInfo.resolveClientTypeReference(typeRef)
 	}
 
-	resolveServerTypeReference(typeRef: TypeRef<any>): Promise<ServerTypeModel> {
-		return this.serverModelInfo.resolveServerTypeReference(typeRef)
+	isKnownClientTypeReference(application: string, typeId: number): Promise<boolean> {
+		return this.clientModelInfo.isKnownClientTypeReference(application, typeId)
 	}
 
-	resolveTypeRefFromAppAndTypeNameLegacy(app: AppName, typeName: string): TypeRef<any> {
-		return this.clientModelInfo.resolveTypeRefFromAppAndTypeNameLegacy(app, typeName)
+	resolveServerTypeReference(typeRef: TypeRef<any>): Promise<ServerTypeModel> {
+		return this.serverModelInfo.resolveServerTypeReference(typeRef)
 	}
 
 	getServerApplicationTypesModelHash(): ApplicationTypesHash | null {

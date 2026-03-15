@@ -18,6 +18,7 @@ import { ProgrammingError } from "../../../../../src/common/api/common/error/Pro
 import { ClientTypeReferenceResolver, ServerTypeReferenceResolver } from "../../../../../src/common/api/common/EntityFunctions"
 import { GENERATED_MIN_ID } from "../../../../../src/common/api/common/utils/EntityUtils.js"
 import { removeOriginals } from "../../../TestUtils"
+import { InvalidModelError } from "../../../../../src/common/api/common/error/InvalidModelError"
 
 o.spec("ModelMapper", function () {
 	const modelMapper: ModelMapper = new ModelMapper(dummyResolver as ClientTypeReferenceResolver, dummyResolver as ServerTypeReferenceResolver)
@@ -81,13 +82,12 @@ o.spec("ModelMapper", function () {
 			const parsedInstance: ServerModelParsedInstance = {
 				1: "some encrypted string",
 				5: new Date("2025-01-01T13:00:00.000Z"),
-				3: [{ 2: "123", 6: "123456", _finalIvs: {}, 9: [], 10: [] } as unknown as ServerModelParsedInstance],
+				3: [{ 2: "123", 6: "123456", 9: [], 10: [] } as unknown as ServerModelParsedInstance],
 				12: "generatedId",
 				13: ["listId", "elementId"],
 				4: ["associatedElementId"],
 				7: true,
 				8: [["listId", "listElementId"]],
-				_finalIvs: {},
 			} as unknown as ServerModelParsedInstance
 			const mappedInstance = (await modelMapper.mapToInstance(TestTypeRef, parsedInstance)) as any
 			removeOriginals(mappedInstance)
@@ -98,7 +98,6 @@ o.spec("ModelMapper", function () {
 			o(mappedInstance.testDate.toISOString()).equals("2025-01-01T13:00:00.000Z")
 			o(mappedInstance.testAssociation[0]).deepEquals({
 				_type: TestAggregateRef,
-				_finalIvs: {},
 				testNumber: "123",
 				_id: "123456",
 				testSecondLevelAssociation: [],
@@ -107,17 +106,15 @@ o.spec("ModelMapper", function () {
 			o(mappedInstance.testElementAssociation).equals("associatedElementId")
 			o(mappedInstance.testGeneratedId).equals("generatedId")
 			o(mappedInstance.testListElementAssociation).deepEquals([["listId", "listElementId"]])
-			o(mappedInstance._finalIvs).deepEquals(parsedInstance._finalIvs)
 			o(typeof mappedInstance._errors).equals("undefined")
 		})
 		o("wrong cardinality on value field throws", async function () {
 			const parsedInstance: ServerModelParsedInstance = {
 				1: null,
 				5: new Date("2025-01-01T13:00:00.000Z"),
-				3: [{ 2: "123", 6: "123456", _finalIvs: {} } as unknown as ServerModelParsedInstance],
+				3: [{ 2: "123", 6: "123456" } as unknown as ServerModelParsedInstance],
 				4: ["associatedListId"],
 				7: true,
-				_finalIvs: {},
 			} as unknown as ServerModelParsedInstance
 			await assertThrows(ProgrammingError, async () => modelMapper.mapToInstance(TestTypeRef, parsedInstance))
 		})
@@ -128,7 +125,6 @@ o.spec("ModelMapper", function () {
 				3: [],
 				4: ["associatedListId"],
 				7: true,
-				_finalIvs: {},
 			} as unknown as ServerModelParsedInstance
 			await assertThrows(ProgrammingError, async () => modelMapper.mapToInstance(TestTypeRef, parsedInstance))
 		})
@@ -136,10 +132,9 @@ o.spec("ModelMapper", function () {
 			const parsedInstance: ServerModelParsedInstance = {
 				1: "some encrypted string",
 				5: new Date("2025-01-01T13:00:00.000Z"),
-				3: [{ 2: "123", 6: "123456", _finalIvs: {} } as unknown as ServerModelParsedInstance],
+				3: [{ 2: "123", 6: "123456" } as unknown as ServerModelParsedInstance],
 				4: [],
 				7: true,
-				_finalIvs: {},
 			} as unknown as ServerModelParsedInstance
 			await assertThrows(ProgrammingError, async () => modelMapper.mapToInstance(TestTypeRef, parsedInstance))
 		})
@@ -148,11 +143,9 @@ o.spec("ModelMapper", function () {
 		o("happy path debug", async function () {
 			const instance: TestEntity = {
 				_type: TestTypeRef,
-				_finalIvs: {},
 				testAssociation: [
 					{
 						_type: TestAggregateRef,
-						_finalIvs: {},
 						testNumber: "123456",
 					} as TestAggregate,
 				],
@@ -164,6 +157,7 @@ o.spec("ModelMapper", function () {
 				testValue: "some encrypted string",
 				testGeneratedId: GENERATED_MIN_ID,
 				_id: [GENERATED_MIN_ID, GENERATED_MIN_ID],
+				testFinalBoolean: false,
 			}
 			const parsedInstance: ClientModelParsedInstance = await modelMapper.mapToClientModelParsedInstance(TestTypeRef, instance)
 
@@ -173,9 +167,7 @@ o.spec("ModelMapper", function () {
 			const testAssociation = assertNotNull(parsedInstance[3])[0]
 			o(testAssociation[2]).equals("123456")
 			o(testAssociation[6].length).deepEquals(6) // custom generated id
-			o(testAssociation._finalIvs).deepEquals({})
 			o(parsedInstance[4]).deepEquals(["associatedElementId"])
-			o(parsedInstance._finalIvs).deepEquals(instance._finalIvs!)
 			o(typeof parsedInstance._errors).equals("undefined")
 		})
 	})
@@ -216,11 +208,11 @@ o.spec("ModelMapper", function () {
 			o(f(AssociationType.ListElementAssociationGenerated, Cardinality.Any, [["listId", "listElementId"]])).deepEquals([["listId", "listElementId"]])
 			o(f(AssociationType.ListElementAssociationGenerated, Cardinality.Any, [])).deepEquals([])
 
-			await assertThrows(ProgrammingError, async () => f(AssociationType.ListElementAssociationGenerated, Cardinality.One, ["v", "v1", "v2"]))
-			await assertThrows(ProgrammingError, async () => f(AssociationType.ListElementAssociationGenerated, Cardinality.ZeroOrOne, ["v", "v1", "v2"]))
-			await assertThrows(ProgrammingError, async () => f(AssociationType.ListAssociation, Cardinality.One, []))
-			await assertThrows(ProgrammingError, async () => f(AssociationType.ListAssociation, Cardinality.One, ["v", "v2"]))
-			await assertThrows(ProgrammingError, async () => f(AssociationType.ListAssociation, Cardinality.ZeroOrOne, ["v", "v2"]))
+			await assertThrows(InvalidModelError, async () => f(AssociationType.ListElementAssociationGenerated, Cardinality.One, ["v", "v1", "v2"]))
+			await assertThrows(InvalidModelError, async () => f(AssociationType.ListElementAssociationGenerated, Cardinality.ZeroOrOne, ["v", "v1", "v2"]))
+			await assertThrows(InvalidModelError, async () => f(AssociationType.ListAssociation, Cardinality.One, []))
+			await assertThrows(InvalidModelError, async () => f(AssociationType.ListAssociation, Cardinality.One, ["v", "v2"]))
+			await assertThrows(InvalidModelError, async () => f(AssociationType.ListAssociation, Cardinality.ZeroOrOne, ["v", "v2"]))
 		})
 
 		o("assertCorrectValueCardinality", async function () {
@@ -229,9 +221,9 @@ o.spec("ModelMapper", function () {
 			o(f(Cardinality.ZeroOrOne, "v")).deepEquals("v")
 			o(f(Cardinality.ZeroOrOne, null)).deepEquals(null)
 
-			await assertThrows(ProgrammingError, async () => f(Cardinality.One, null))
-			await assertThrows(ProgrammingError, async () => f(Cardinality.Any, null))
-			await assertThrows(ProgrammingError, async () => f(Cardinality.Any, "v"))
+			await assertThrows(InvalidModelError, async () => f(Cardinality.One, null))
+			await assertThrows(InvalidModelError, async () => f(Cardinality.Any, null))
+			await assertThrows(InvalidModelError, async () => f(Cardinality.Any, "v"))
 		})
 	})
 })

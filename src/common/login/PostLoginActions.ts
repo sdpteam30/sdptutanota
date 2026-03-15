@@ -2,7 +2,7 @@ import m, { Component } from "mithril"
 import type { LoggedInEvent, PostLoginAction } from "../api/main/LoginController"
 import { LoginController } from "../api/main/LoginController"
 import { isAdminClient, isApp, isDesktop, LOGIN_TITLE } from "../api/common/Env"
-import { assertNotNull, defer, delay, isEmpty, LazyLoaded, neverNull, newPromise, noOp, ofClass } from "@tutao/tutanota-utils"
+import { assertNotNull, isEmpty, LazyLoaded, neverNull, newPromise, noOp, ofClass } from "@tutao/tutanota-utils"
 import { windowFacade } from "../misc/WindowFacade.js"
 import { checkApprovalStatus } from "../misc/LoginUtils.js"
 import { locator } from "../api/main/CommonLocator"
@@ -26,16 +26,15 @@ import { SessionType } from "../api/common/SessionType"
 import { StorageBehavior } from "../misc/UsageTestModel.js"
 import type { WebsocketConnectivityModel } from "../misc/WebsocketConnectivityModel.js"
 import { DateProvider } from "../api/common/DateProvider.js"
-import { createCustomerProperties, CustomerTypeRef, SecondFactorTypeRef } from "../api/entities/sys/TypeRefs.js"
+import { createCustomerProperties, SecondFactorTypeRef } from "../api/entities/sys/TypeRefs.js"
 import { EntityClient } from "../api/common/EntityClient.js"
 import { shouldShowStorageWarning, shouldShowUpgradeReminder } from "./PostLoginUtils.js"
 import { UserManagementFacade } from "../api/worker/facades/lazy/UserManagementFacade.js"
 import { CustomerFacade } from "../api/worker/facades/lazy/CustomerFacade.js"
 import { deviceConfig } from "../misc/DeviceConfig.js"
 import { ThemeController } from "../gui/ThemeController.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../api/common/utils/EntityUpdateUtils.js"
 import { showSnackBar } from "../gui/base/SnackBar"
-import { SyncTracker } from "../api/main/SyncTracker"
+import { SyncDonePriority, SyncTracker } from "../api/main/SyncTracker"
 import { GENERATED_MIN_ID } from "../api/common/utils/EntityUtils"
 import { showRequestPasswordDialog } from "../misc/passwords/PasswordRequestDialog"
 import { LoginFacade } from "../api/worker/facades/LoginFacade"
@@ -120,32 +119,14 @@ export class PostLoginActions implements PostLoginAction {
 	}
 
 	// Runs the user approval check after the user has been updated or after a timeout
-	private checkApprovalAfterSync(): Promise<void> {
-		// Create a promise we will use to track the completion of the below listener
-		const listenerDeferral = defer<void>()
-		// Add an event listener to run the check after any customer entity update
-		const listener = async (updates: ReadonlyArray<EntityUpdateData>) => {
-			// Get whether the entity update contains the customer
-			const customer = this.logins.getUserController().user.customer
-			const isCustomerUpdate: boolean = updates.some((update) => isUpdateForTypeRef(CustomerTypeRef, update) && update.instanceId === customer)
-			if (customer != null && isCustomerUpdate) {
-				listenerDeferral.resolve()
-			}
-		}
-		locator.eventController.addEntityListener(listener)
-
-		// Timeout if the entity update does not arrive or takes too long to arrive
-		const timeoutPromise = delay(2000)
-
-		// Remove the listener and start the approval check depending on whether a customer update or the timeout resolves first.
-		return Promise.race([listenerDeferral.promise, timeoutPromise]).then(() => {
-			locator.eventController.removeEntityListener(listener)
-			checkApprovalStatus(this.logins, true)
-		})
+	private async checkApprovalAfterSync(): Promise<void> {
+		await this.syncTracker.waitSync()
+		await checkApprovalStatus(this.logins, true)
 	}
 
 	private async fullLoginAsyncActions() {
-		this.checkApprovalAfterSync() // Not awaiting so this is run in parallel
+		//noinspection ES6MissingAwait Not awaiting so this is run in parallel
+		this.checkApprovalAfterSync()
 		await this.showUpgradeReminderIfNeeded()
 		await this.checkStorageLimit()
 
@@ -156,6 +137,8 @@ export class PostLoginActions implements PostLoginAction {
 			await locator.mailboxModel.init()
 			const calendarModel = await locator.calendarModel()
 			await calendarModel.init()
+			const calendarEventUpdateCoordinator = await locator.calendarEventUpdateCoordinator()
+			await calendarEventUpdateCoordinator.init()
 			await this.remindActiveOutOfOfficeNotification()
 		}
 
@@ -427,26 +410,22 @@ export class PostLoginActions implements PostLoginAction {
 	private async handleExternalSync() {
 		const calendarModel = await locator.calendarModel()
 		if (isApp() || isDesktop()) {
-			if (!this.syncTracker.isSyncDone()) {
-				return this.syncTracker.isSyncDone.map((isDone) => {
-					if (isDone) {
-						this.handleExternalSync()
-						this.syncTracker.isSyncDone.end(true)
-					}
-				})
-			}
-
-			calendarModel.syncExternalCalendars().catch(async (e) => {
-				showSnackBar({
-					message: lang.makeTranslation("exception_msg", e.message),
-					button: {
-						label: "ok_action",
-						click: noOp,
-					},
-					waitingTime: 1000,
-				})
+			this.syncTracker.addSyncDoneListener({
+				onSyncDone: async () => {
+					calendarModel.syncExternalCalendars().catch(async (e) => {
+						showSnackBar({
+							message: lang.makeTranslation("exception_msg", e.message),
+							button: {
+								label: "ok_action",
+								click: noOp,
+							},
+							waitingTime: 1000,
+						})
+					})
+					calendarModel.scheduleExternalCalendarSync()
+				},
+				priority: SyncDonePriority.HIGH,
 			})
-			calendarModel.scheduleExternalCalendarSync()
 		}
 	}
 }

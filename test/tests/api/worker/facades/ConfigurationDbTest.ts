@@ -9,9 +9,9 @@ import {
 } from "../../../../../src/common/api/worker/facades/lazy/ConfigurationDatabase.js"
 import { downcast, KeyVersion } from "@tutao/tutanota-utils"
 import { DbStub } from "../search/DbStub.js"
-import { ExternalImageRule } from "../../../../../src/common/api/common/TutanotaConstants.js"
+import { ExternalImageRule, NewsletterBannerRule } from "../../../../../src/common/api/common/TutanotaConstants.js"
 import { UserTypeRef } from "../../../../../src/common/api/entities/sys/TypeRefs.js"
-import { aes256RandomKey, aesDecrypt, aesEncrypt, AesKey, bitArrayToUint8Array, encryptKey, IV_BYTE_LENGTH, random } from "@tutao/tutanota-crypto"
+import { aes256RandomKey, aesEncrypt, AesKey, decryptKey, encryptKey, IV_BYTE_LENGTH, random } from "@tutao/tutanota-crypto"
 import { createTestEntity } from "../../../TestUtils.js"
 import { KeyLoaderFacade } from "../../../../../src/common/api/worker/facades/KeyLoaderFacade.js"
 import { matchers, object, verify, when } from "testdouble"
@@ -28,7 +28,7 @@ o.spec("ConfigurationDbTest", function () {
 		keyLoaderFacade = object()
 	})
 
-	function makeMocks(
+	function makeExternalImageMocks(
 		allowListTable: Array<{
 			address: string
 			rule?: ExternalImageRule
@@ -70,9 +70,51 @@ o.spec("ConfigurationDbTest", function () {
 		}
 	}
 
+	function makeNewsletterBannerRuleMocks(
+		allowListTable: Array<{
+			address: string
+			rule?: NewsletterBannerRule
+		}>,
+	) {
+		const key = aes256RandomKey()
+		const iv = random.generateRandomData(IV_BYTE_LENGTH)
+		const logins = downcast({
+			getLoggedInUser() {
+				return createTestEntity(UserTypeRef)
+			},
+
+			getUserGroupKey() {},
+		})
+		const loadDb = downcast(async function (user, keyLoaderFacade) {
+			const stub = new DbStub()
+			stub.addObjectStore("NewsletterBannerListOS", false, "address")
+
+			for (let entry of allowListTable) {
+				const transaction = await stub.createTransaction()
+				const encryptedAddress = await encryptItem(entry.address, key, iv)
+				await transaction.put("NewsletterBannerListOS", null, {
+					address: encryptedAddress,
+					rule: entry.rule,
+				})
+			}
+
+			return {
+				db: stub,
+				metaData: {
+					key,
+					iv,
+				},
+			}
+		})
+		return {
+			logins,
+			loadDb,
+		}
+	}
+
 	o.spec("V1: External image allow list only", function () {
 		o("read", async function () {
-			const { logins, loadDb } = makeMocks([
+			const { logins, loadDb } = makeExternalImageMocks([
 				{
 					address: "fomo@server.com",
 				},
@@ -84,7 +126,7 @@ o.spec("ConfigurationDbTest", function () {
 			o(shouldBeDefault).equals(ExternalImageRule.None)
 		})
 		o("write", async function () {
-			const { logins, loadDb } = makeMocks([])
+			const { logins, loadDb } = makeExternalImageMocks([])
 			const configDb = new ConfigurationDatabase(keyLoaderFacade, logins, loadDb)
 			await configDb.addExternalImageRule("fomo@server.com", ExternalImageRule.Allow)
 			o(await configDb.getExternalImageRule("fomo@server.com")).equals(ExternalImageRule.Allow)
@@ -94,7 +136,7 @@ o.spec("ConfigurationDbTest", function () {
 	})
 	o.spec("V2: External image rules list", function () {
 		o("read", async function () {
-			const { logins, loadDb } = makeMocks([
+			const { logins, loadDb } = makeExternalImageMocks([
 				{
 					address: "fomo@server.com",
 					rule: ExternalImageRule.Allow,
@@ -113,7 +155,7 @@ o.spec("ConfigurationDbTest", function () {
 			o(shouldBeDefault).equals(ExternalImageRule.None)
 		})
 		o("write", async function () {
-			const { logins, loadDb } = makeMocks([])
+			const { logins, loadDb } = makeExternalImageMocks([])
 			const configDb = new ConfigurationDatabase(keyLoaderFacade, logins, loadDb)
 			await configDb.addExternalImageRule("fomo@server.com", ExternalImageRule.Block)
 			o(await configDb.getExternalImageRule("fomo@server.com")).equals(ExternalImageRule.Block)
@@ -142,7 +184,7 @@ o.spec("ConfigurationDbTest", function () {
 			when(keyLoaderFacade.getCurrentSymUserGroupKey()).thenReturn(currentUserGroupKey)
 			dbKey = aes256RandomKey()
 			iv = random.generateRandomData(16)
-			encIv = aesEncrypt(dbKey, iv, undefined, true, true)
+			encIv = aesEncrypt(dbKey, iv)
 			when(transaction.get(ConfigurationMetaDataOS, Metadata.encDbIv)).thenResolve(encIv)
 		})
 
@@ -161,7 +203,7 @@ o.spec("ConfigurationDbTest", function () {
 			const groupKeyVersion = 6
 			const groupKey = aes256RandomKey()
 
-			const encDBKey = aesEncrypt(groupKey, bitArrayToUint8Array(dbKey), iv, false, true)
+			const encDBKey = encryptKey(groupKey, dbKey)
 			when(transaction.get(ConfigurationMetaDataOS, Metadata.userGroupKeyVersion)).thenResolve(groupKeyVersion)
 			when(transaction.get(ConfigurationMetaDataOS, Metadata.userEncDbKey)).thenResolve(encDBKey)
 			when(keyLoaderFacade.loadSymUserGroupKey(groupKeyVersion)).thenResolve(groupKey)
@@ -185,15 +227,14 @@ o.spec("ConfigurationDbTest", function () {
 			verify(transaction.put(ConfigurationMetaDataOS, Metadata.userGroupKeyVersion, currentUserGroupKey.version))
 			const encDbKeyCaptor = matchers.captor()
 			verify(transaction.put(ConfigurationMetaDataOS, Metadata.userEncDbKey, encDbKeyCaptor.capture()))
-			const capturedDbKey = aesDecrypt(currentUserGroupKey.object, encDbKeyCaptor.value, false)
-			o(capturedDbKey).deepEquals(bitArrayToUint8Array(dbKey))
+			const capturedDbKey = decryptKey(currentUserGroupKey.object, encDbKeyCaptor.value)
+			o(capturedDbKey).deepEquals(dbKey)
 		})
 
 		o("read group key version when without meta data entry", async function () {
 			const groupKeyVersion = 0
 			const groupKey = aes256RandomKey()
-
-			const encDBKey = aesEncrypt(groupKey, bitArrayToUint8Array(dbKey), iv, false, true)
+			const encDBKey = encryptKey(groupKey, dbKey)
 			when(transaction.get(ConfigurationMetaDataOS, Metadata.userGroupKeyVersion)).thenResolve(undefined)
 			when(transaction.get(ConfigurationMetaDataOS, Metadata.userEncDbKey)).thenResolve(encDBKey)
 			when(keyLoaderFacade.loadSymUserGroupKey(groupKeyVersion)).thenResolve(groupKey)
@@ -202,6 +243,34 @@ o.spec("ConfigurationDbTest", function () {
 			verify(keyLoaderFacade.loadSymUserGroupKey(groupKeyVersion))
 			o(encryptionMetadata?.key).deepEquals(dbKey)
 			o(encryptionMetadata?.iv).deepEquals(iv)
+		})
+	})
+
+	o.spec("V5: Newsletter rules list", function () {
+		o("read", async function () {
+			const { logins, loadDb } = makeNewsletterBannerRuleMocks([
+				{
+					address: "fomo@server.com",
+					rule: NewsletterBannerRule.Allow,
+				},
+				{
+					address: "lomo@server.com",
+					rule: NewsletterBannerRule.Block,
+				},
+			])
+			const configDb = new ConfigurationDatabase(keyLoaderFacade, logins, loadDb)
+			const shouldBeAllow = await configDb.getNewsletterBannerRule("fomo@server.com")
+			o(shouldBeAllow).equals(NewsletterBannerRule.Allow)
+			const shouldBeBlock = await configDb.getNewsletterBannerRule("lomo@server.com")
+			o(shouldBeBlock).equals(NewsletterBannerRule.Block)
+		})
+		o("write", async function () {
+			const { logins, loadDb } = makeNewsletterBannerRuleMocks([])
+			const configDb = new ConfigurationDatabase(keyLoaderFacade, logins, loadDb)
+			await configDb.addNewsletterBannerRule("fomo@server.com", NewsletterBannerRule.Block)
+			o(await configDb.getNewsletterBannerRule("fomo@server.com")).equals(NewsletterBannerRule.Block)
+			await configDb.addNewsletterBannerRule("fomo@server.com", NewsletterBannerRule.Allow)
+			o(await configDb.getNewsletterBannerRule("fomo@server.com")).equals(NewsletterBannerRule.Allow)
 		})
 	})
 })

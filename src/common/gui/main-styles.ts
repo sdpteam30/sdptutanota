@@ -4,7 +4,7 @@ import { client } from "../misc/ClientDetector"
 import { lang } from "../misc/LanguageViewModel"
 import { noselect, position_absolute } from "./mixins"
 import { assertMainOrNode, isAdminClient, isApp, isElectronClient } from "../api/common/Env"
-import { getElevatedBackground, getNavigationMenuBg, theme } from "./theme"
+import { getElevatedBackground, getNavigationMenuBg, isLightTheme, theme } from "./theme"
 import { goEuropeanBlue } from "./builtinThemes.js"
 import { FontIcons } from "./base/icons/FontIcons.js"
 import { DefaultAnimationTime } from "./animation/Animations.js"
@@ -111,7 +111,7 @@ styles.registerStyle("main", () => {
 		},
 		" @font-face": {
 			"font-family": "'MDIO'",
-			src: `url('${window.tutao.appState.prefixWithoutFile}/images/MDIO-Semibold.woff2') format('woff2'), url('${window.tutao.appState.prefixWithoutFile}/images/MDIO-Semibold.woff') format('woff'), url('${window.tutao.appState.prefixWithoutFile}/images/MDIO-Semibold.otf') format('opentype')`,
+			src: `url('${window.tutao.appState.prefixWithoutFile}/images/MDIO-Semibold.woff2') format('woff2')`,
 			"font-style": "normal",
 			"font-weight": 600,
 			"font-display": "block",
@@ -467,6 +467,9 @@ styles.registerStyle("main", () => {
 		},
 		".mt-negative-24": {
 			"margin-top": px(-size.spacing_24),
+		},
+		".mb-negative-12": {
+			"margin-bottom": px(-size.spacing_12),
 		},
 		".mr-negative-8": {
 			"margin-right": px(-size.spacing_8),
@@ -936,7 +939,7 @@ styles.registerStyle("main", () => {
 		},
 		"*": {
 			"scrollbar-color": `${theme.on_surface_variant} transparent`,
-			"scrollbar-width": "thin",
+			"scrollbar-width": !client.isMobileDevice() ? "thin" : "none",
 		},
 		"::-webkit-scrollbar": !client.isMobileDevice()
 			? {
@@ -1118,6 +1121,9 @@ styles.registerStyle("main", () => {
 		//TODO: migrate to col-reverse
 		".col-reverse": {
 			"flex-direction": "column-reverse",
+		},
+		".row-reverse": {
+			"flex-direction": "row-reverse",
 		},
 		".grid": {
 			display: "grid",
@@ -1315,11 +1321,14 @@ styles.registerStyle("main", () => {
 		".border-radius-4": {
 			"border-radius": px(size.radius_4),
 		},
+		".border-radius-8": {
+			"border-radius": px(size.radius_8),
+		},
 		".border-radius-12": {
 			"border-radius": px(size.radius_12),
 		},
-		".border-radius-8": {
-			"border-radius": px(size.radius_8),
+		".border-radius-16": {
+			"border-radius": px(size.radius_16),
 		},
 		".border-radius-top-left-8": {
 			"border-top-left-radius": px(size.radius_8),
@@ -1479,6 +1488,12 @@ styles.registerStyle("main", () => {
 			"max-width": px(component_size.button_height),
 			"max-height": px(component_size.button_height),
 		},
+		".wizard-page": {
+			transition: `opacity ${DefaultAnimationTime}ms ease-out`,
+		},
+		".wizard-page-transition": {
+			opacity: 0,
+		},
 		".wizard-next-button": {
 			"margin-top": "auto",
 			"margin-bottom": px(size.spacing_16),
@@ -1518,6 +1533,46 @@ styles.registerStyle("main", () => {
 			"border-top": `3px solid ${theme.primary}`,
 			height: 0,
 			transition: `border-top-color ${DefaultAnimationTime}ms ease-out`,
+		},
+		".wizard-progress": {
+			border: `1px solid ${theme.outline}`,
+			color: "inherit",
+			width: px(component_size.button_icon_bg_size),
+			height: px(component_size.button_icon_bg_size),
+			"border-radius": px(component_size.button_icon_bg_size),
+			"min-width": px(component_size.button_icon_bg_size),
+			display: "flex",
+			"justify-content": "center",
+			"align-items": "center",
+		},
+		".wizard-progress-active": {
+			border: `2px solid ${theme.primary}`,
+			color: theme.primary,
+		},
+		".wizard-progress-previous": {
+			border: `1px solid ${theme.primary}`,
+			"background-color": theme.primary,
+		},
+		".wizard-progress-wrap:not(:last-child)": {
+			height: "100%",
+			position: "relative",
+		},
+		".wizard-progress:after": {
+			content: '""',
+			"border-left": `3px dotted ${theme.outline_variant}`,
+			width: 0,
+			position: "absolute",
+			height: `calc(100% - ${px(component_size.button_icon_bg_size)} - ${px(16)})`,
+			bottom: px(8),
+		},
+		".wizard-progress-previous:after": {
+			"border-left": `3px solid ${theme.primary}`,
+		},
+		".wizard-progress-active:after": {
+			"border-left": `3px dotted ${theme.primary}`,
+		},
+		".wizard-progress-wrap:last-child > .wizard-progress:after": {
+			display: "none",
 		},
 		".compact": {
 			width: `${component_size.button_height_compact}px !important`,
@@ -2074,10 +2129,6 @@ styles.registerStyle("main", () => {
 			"border-top-right-radius": px(size.radius_8),
 			"border-right": `1px solid ${theme.outline_variant}`,
 		},
-		".payment-logo": {
-			// that's the size of the SVG and it seems to be a good size
-			width: "124px",
-		},
 		".onboarding-logo, .onboarding-logo > svg": {
 			width: "fit-content",
 			height: px(160),
@@ -2215,8 +2266,8 @@ styles.registerStyle("main", () => {
 			border: `1px solid ${theme.primary}`,
 		},
 		".buyOptionBox.highlighted": {
-			border: `2px solid ${theme.primary}`,
-			padding: px(9),
+			border: `5px solid ${theme.primary}`,
+			padding: px(6),
 		},
 		".info-badge": {
 			"border-radius": px(8),
@@ -2346,6 +2397,8 @@ styles.registerStyle("main", () => {
 			display: "block",
 			width: px(component_size.checkbox_size),
 			height: px(component_size.checkbox_size),
+			"min-width": px(component_size.checkbox_size),
+			"min-height": px(component_size.checkbox_size),
 			border: `${px(component_size.checkbox_border_size)} solid ${theme.outline}`,
 			"border-radius": "3px",
 			position: "relative",
@@ -2555,8 +2608,6 @@ styles.registerStyle("main", () => {
 			"border-top": "9px solid transparent",
 			"border-bottom": "9px solid transparent",
 			"border-left": "6px solid green",
-			"margin-top": px(1),
-			"margin-bottom": px(1),
 		},
 		".time-field": {
 			width: "80px",
@@ -2754,7 +2805,6 @@ styles.registerStyle("main", () => {
 			".print": {
 				color: "black",
 				"background-color": "white",
-				display: "block",
 			},
 			"html, body": {
 				position: "initial",
@@ -2792,7 +2842,7 @@ styles.registerStyle("main", () => {
 			},
 			'.mail-viewer, [data-testid="collapsed-mail-view"]': {
 				color: `${lightTheme.on_surface} !important`,
-				"background-color": `${lightTheme.on_surface}`,
+				"background-color": `${lightTheme.surface}`,
 			},
 			"#mail-body": {
 				overflow: "visible",
@@ -3019,6 +3069,7 @@ styles.registerStyle("main", () => {
 			"border-radius": px(size.radius_8),
 			padding: px(size.radius_8),
 			"text-align": "center",
+			"border-color": theme.outline_variant,
 		},
 		".unstyled-list": {
 			"list-style": "none",
@@ -3070,6 +3121,8 @@ styles.registerStyle("main", () => {
 			width: "20px",
 			"min-width": "20px",
 			height: "20px",
+			/* The accent must be selected to work with a white background, since the native radio buttons have a white background regardless of the theme. */
+			"accent-color": isLightTheme() ? theme.primary : theme.primary_container,
 		},
 		".outlined": {
 			border: `2px solid ${theme.outline}`,
@@ -3168,6 +3221,124 @@ styles.registerStyle("main", () => {
 		".interactable-cell:hover": {
 			background: theme.surface_container,
 			cursor: "pointer",
+		},
+		".dynamic-color-svg-wrapper > svg": {
+			width: "100%",
+			height: "100%",
+			"--primary": theme.primary,
+			"--on-primary": theme.on_primary,
+			"--primary-container": theme.primary_container,
+			"--on-primary-container": theme.on_primary_container,
+			"--secondary": theme.secondary,
+			"--on-secondary": theme.on_secondary,
+			"--secondary-container": theme.secondary_container,
+			"--on-secondary-container": theme.on_secondary_container,
+			"--tertiary": theme.tertiary,
+			"--on-tertiary": theme.on_tertiary,
+			"--tertiary-container": theme.tertiary_container,
+			"--on-tertiary-container": theme.on_tertiary_container,
+			"--surface": theme.surface,
+			"--on-surface": theme.on_surface,
+			"--surface-container": theme.surface_container,
+			"--surface-container-high": theme.surface_container_high,
+			"--surface-container-highest": theme.surface_container_highest,
+			"--on-surface-variant": theme.on_surface_variant,
+			"--outline": theme.outline,
+			"--outline-variant": theme.outline_variant,
+			"--scrim": theme.scrim,
+			"--error": theme.error,
+			"--on-error": theme.on_error,
+			"--error-container": theme.error_container,
+			"--on-error-container": theme.on_error_container,
+			"--warning": theme.warning,
+			"--on-warning": theme.on_warning,
+			"--warning-container": theme.warning_container,
+			"--on-warning-container": theme.on_warning_container,
+			"--success": theme.success,
+			"--on-success": theme.on_success,
+			"--success-container": theme.success_container,
+			"--on-success-container": theme.on_success_container,
+			"--primary-fixed": theme.primary_fixed,
+			"--on-primary-fixed": theme.on_primary_fixed,
+			"--primary-fixed-dim": theme.primary_fixed_dim,
+			"--on-primary-fixed-variant": theme.on_primary_fixed_variant,
+			"--secondary-fixed": theme.secondary_fixed,
+			"--on-secondary-fixed": theme.on_secondary_fixed,
+			"--secondary-fixed-dim": theme.secondary_fixed_dim,
+			"--on-secondary-fixed-variant": theme.on_secondary_fixed_variant,
+			"--tertiary-fixed": theme.tertiary_fixed,
+			"--on-tertiary-fixed": theme.on_tertiary_fixed,
+			"--tertiary-fixed-dim": theme.tertiary_fixed_dim,
+			"--on-tertiary-fixed-variant": theme.on_tertiary_fixed_variant,
+			"--il-outline": theme.il_outline,
+			"--il-ne-outline": theme.il_ne_outline,
+			"--il-highlight": theme.il_highlight,
+		},
+		".svg-fill-primary_container": {
+			fill: theme.primary_container,
+		},
+		".svg-fill-secondary_container": {
+			fill: theme.secondary_container,
+		},
+		".svg-fill-outline_variant": {
+			fill: theme.outline_variant,
+		},
+		".svg-fill-on_surface": {
+			fill: theme.on_surface,
+		},
+		".svg-fill-success": {
+			fill: theme.success,
+		},
+		".svg-fill-surface": {
+			fill: theme.surface,
+		},
+		".base-button-sm": {
+			"padding-inline": px(12),
+			height: px(component_size.button_height_sm),
+			"border-radius": px(size.radius_8),
+			"text-align": "center",
+		},
+		".base-button-md": {
+			"padding-inline": px(16),
+			height: px(component_size.button_height),
+			"border-radius": px(size.radius_8),
+			"text-align": "center",
+		},
+		".base-button-lg": {
+			"padding-inline": px(24),
+			height: px(component_size.button_height_lg),
+			"border-radius": px(size.radius_8),
+			"text-align": "center",
+		},
+		".tutaui-button-ghost": {
+			"background-color": "transparent",
+			color: theme.on_surface,
+			"border-radius": px(size.radius_8),
+		},
+		".tutaui-button-ghost:hover, .tutaui-button-ghost:focus-visible": {
+			"background-color": theme.state_bg_hover,
+		},
+		".tutaui-button-ghost:active": {
+			"background-color": theme.state_bg_active,
+		},
+		".login-textfield": {
+			"background-color": theme.surface_container_high,
+			"transition-property": "border-radius, background-color",
+			"transition-duration": `${DefaultAnimationTime / 2}ms`,
+			"transition-timing-function": "ease-out",
+		},
+		".login-textfield:hover:has(input):not(:has(input:focus))": {
+			"background-color": theme.state_bg_focus,
+		},
+		".snackbar": {
+			"background-color": theme.surface_container_high,
+			"border-radius": px(size.radius_8),
+			color: theme.on_surface,
+			"padding-top": px(size.spacing_8),
+			"padding-bottom": px(size.spacing_8),
+			display: "flex",
+			"justify-content": "space-between",
+			"min-height": px(component_size.button_height_lg),
 		},
 	}
 })

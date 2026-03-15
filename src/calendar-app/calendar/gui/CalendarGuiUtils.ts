@@ -91,6 +91,7 @@ import { getStartOfTheWeekOffset } from "../../../common/misc/weekOffset"
 import { EventInviteEmailType } from "../view/CalendarNotificationSender.js"
 import { Key } from "../../../common/misc/KeyManager.js"
 import { isAppleDevice } from "../../../common/api/common/Env.js"
+import { IcsCalendarEvent } from "../../../common/calendar/gui/ImportExportUtils.js"
 
 export interface IntervalOption {
 	value: number
@@ -714,7 +715,7 @@ export const createCustomRepeatRuleUnitValues = (): SelectorItemList<AlarmInterv
 		},
 	]
 }
-export const CALENDAR_EVENT_HEIGHT: number = layout_size.calendar_line_height + 2
+export const CALENDAR_EVENT_HEIGHT: number = layout_size.calendar_line_height + 2 // height + border
 export const TEMPORARY_EVENT_OPACITY = 0.7
 
 export const enum EventLayoutMode {
@@ -850,7 +851,7 @@ function getCalculationEvent(event: CalendarEvent, zone: string, eventLayoutMode
  * There could be a case where they are flipped vertically, but we don't have them because earlier events will be always first. so the "left" top edge will
  * always be "above" the "right" top edge.
  */
-export function collidesWith(a: CalendarEvent, b: CalendarEvent): boolean {
+export function collidesWith(a: CalendarEvent | IcsCalendarEvent, b: CalendarEvent | IcsCalendarEvent): boolean {
 	return a.endTime.getTime() > b.startTime.getTime() && a.startTime.getTime() < b.endTime.getTime()
 }
 
@@ -867,26 +868,6 @@ function visuallyOverlaps(firstEventStart: Date, firstEventEnd: Date, secondEven
 	const eventDurationHours = eventDurationMs / (1000 * 60 * 60)
 	const height = eventDurationHours * layout_size.calendar_hour_height - layout_size.calendar_event_border
 	return firstEventEnd.getTime() === secondEventStart.getTime() && height < layout_size.calendar_line_height
-}
-
-export function expandEvent(ev: CalendarEvent, columnIndex: number, columns: Array<Array<EventWrapper>>): number {
-	let colSpan = 1
-
-	for (let i = columnIndex + 1; i < columns.length; i++) {
-		let col = columns[i]
-
-		for (let j = 0; j < col.length; j++) {
-			let ev1 = col[j]
-
-			if (collidesWith(ev, ev1.event) || visuallyOverlaps(ev.startTime, ev.endTime, ev1.event.startTime)) {
-				return colSpan
-			}
-		}
-
-		colSpan++
-	}
-
-	return colSpan
 }
 
 export function getEventColor(event: CalendarEvent, groupColors: GroupColors, isGhost: boolean = false): string {

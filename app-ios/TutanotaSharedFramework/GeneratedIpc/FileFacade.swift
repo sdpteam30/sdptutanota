@@ -66,7 +66,8 @@ public protocol FileFacade {
 	func download(
 		_ sourceUrl: String,
 		_ filename: String,
-		_ headers: [String : String]
+		_ headers: [String : String],
+		_ fileId: String
 	) async throws -> DownloadTaskResponse
 	/**
 	 * Calculates specified file hash (with SHA-256). Returns first 6 bytes of it as Base64.
@@ -109,6 +110,12 @@ public protocol FileFacade {
 	func readFromAppDir(
 		_ path: String
 	) async throws -> DataWrapper
+	/**
+	 * Delete file from given path relative to app data folder
+	 */
+	func deleteFromAppDir(
+		_ path: String
+	) async throws -> Void
 	/**
 	 * read the file at the given location into a DataFile. Returns null if reading fails for any reason.
 	 */

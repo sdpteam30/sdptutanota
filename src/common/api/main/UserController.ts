@@ -13,7 +13,6 @@ import { CloseSessionService, PlanService } from "../entities/sys/Services"
 import {
 	AccountingInfo,
 	AccountingInfoTypeRef,
-	createCloseSessionServicePost,
 	Customer,
 	CustomerInfo,
 	CustomerInfoTypeRef,
@@ -64,6 +63,7 @@ export class UserController {
 		public readonly loginUsername: string,
 		private readonly entityClient: EntityClient,
 		private readonly serviceExecutor: IServiceExecutor,
+		private customer: Customer | null,
 	) {
 		this.planConfig = null
 	}
@@ -112,17 +112,25 @@ export class UserController {
 		return isInternalUser(this.user)
 	}
 
-	loadCustomer(cacheMode: CacheMode = CacheMode.ReadAndWrite): Promise<Customer> {
+	reloadCustomer(cacheMode: CacheMode = CacheMode.ReadAndWrite): Promise<Customer> {
 		return this.entityClient.load(CustomerTypeRef, assertNotNull(this.user.customer), { cacheMode })
 	}
 
+	/**
+	 * External users are not allowed to load customer
+	 * @returns {Customer} if the user is internal, otherwise null
+	 */
+	getCustomer(): Customer | null {
+		return this.customer
+	}
+
 	async loadCustomerInfo(): Promise<CustomerInfo> {
-		const customer = await this.loadCustomer()
+		const customer = await this.reloadCustomer()
 		return await this.entityClient.load(CustomerInfoTypeRef, customer.customerInfo)
 	}
 
 	async loadCustomerProperties(): Promise<CustomerProperties> {
-		const customer = await this.loadCustomer()
+		const customer = await this.reloadCustomer()
 		return await this.entityClient.load(CustomerPropertiesTypeRef, assertNotNull(customer.properties))
 	}
 
@@ -158,7 +166,7 @@ export class UserController {
 	 * Checks if the current plan allows adding users and groups.
 	 */
 	async canHaveUsers(): Promise<boolean> {
-		const customer = await this.loadCustomer()
+		const customer = await this.reloadCustomer()
 		const planType = await this.getPlanType()
 		const planConfig = await this.getPlanConfig()
 
@@ -234,6 +242,9 @@ export class UserController {
 				}
 				// cached plan config might be outdated now
 				this.planConfig = null
+			} else if (isUpdateForTypeRef(CustomerTypeRef, update)) {
+				// offline cache might still be outdated, so we're playing it safe with WriteOnly
+				this.customer = await this.reloadCustomer(CacheMode.WriteOnly).catch(() => this.customer)
 			}
 		}
 	}
@@ -256,27 +267,28 @@ export class UserController {
 	}
 
 	deleteSessionSync(): Promise<void> {
-		return newPromise((resolve, reject) => {
+		return newPromise(async (resolve, reject) => {
 			const sendBeacon = navigator.sendBeacon // Save sendBeacon to variable to satisfy type checker
 
 			if (sendBeacon) {
 				try {
 					const apiUrl = new URL(getApiBaseUrl(locator.domainConfigProvider().getCurrentDomainConfig()))
-					apiUrl.pathname += `/rest/sys/${CloseSessionService.name.toLowerCase()}`
-					const requestObject = createCloseSessionServicePost({
-						accessToken: this.accessToken,
-						sessionId: this.sessionId,
+					apiUrl.pathname += `rest/sys/${CloseSessionService.name.toLowerCase()}`
+					apiUrl.searchParams.append("v", sysTypeModels[SessionTypeRef.typeId].version)
+					apiUrl.searchParams.append("cv", env.versionNumber)
+					// atleast in the iOS WebView, we _have_ to use a http(s) URL to sendBeacon to not error out.
+					// our apiUrl is a api(s):// url on iOS, so we just replace the protocol in that case.
+					if (apiUrl.protocol.startsWith("api")) {
+						apiUrl.protocol = apiUrl.protocol.replace("api", "http")
+					}
+					const requestObject = JSON.stringify({
+						[1596]: "0", // _format
+						[1597]: this.accessToken, // accessToken
+						[1598]: [this.sessionId], // sessionId
 					})
-					delete downcast(requestObject)["_type"] // Remove extra field which is not part of the data model
 
 					// Send as Blob to be able to set content type otherwise sends 'text/plain'
-					const queued = sendBeacon.call(
-						navigator,
-						apiUrl,
-						new Blob([JSON.stringify(requestObject)], {
-							type: MediaType.Json,
-						}),
-					)
+					const queued = sendBeacon.call(navigator, apiUrl, new Blob([requestObject], { type: MediaType.Json }))
 					console.log("queued closing session: ", queued)
 					resolve()
 				} catch (e) {
@@ -292,6 +304,7 @@ export class UserController {
 
 				xhr.setRequestHeader("accessToken", this.accessToken)
 				xhr.setRequestHeader("v", sysTypeModels[SessionTypeRef.typeId].version)
+				xhr.setRequestHeader("cv", env.versionNumber)
 
 				xhr.onload = function () {
 					// XMLHttpRequestProgressEvent, but not needed
@@ -380,7 +393,7 @@ export async function initUserController({
 	loginUsername,
 }: UserControllerInitData): Promise<UserController> {
 	const entityClient = locator.entityClient
-	const [props, userSettingsGroupRoot] = await Promise.all([
+	const [props, userSettingsGroupRoot, customer] = await Promise.all([
 		entityClient.loadRoot(TutanotaPropertiesTypeRef, user.userGroup.group),
 		entityClient.load(UserSettingsGroupRootTypeRef, user.userGroup.group).catch(
 			ofClass(NotFoundError, () =>
@@ -399,6 +412,8 @@ export async function initUserController({
 					.then(() => entityClient.load(UserSettingsGroupRootTypeRef, user.userGroup.group)),
 			),
 		),
+		// External users is not allowed to load Customer
+		isInternalUser(user) ? entityClient.load(CustomerTypeRef, assertNotNull(user.customer)) : null,
 	])
 	return new UserController(
 		user,
@@ -411,5 +426,6 @@ export async function initUserController({
 		loginUsername,
 		entityClient,
 		locator.serviceExecutor,
+		customer,
 	)
 }

@@ -21,6 +21,8 @@ export const enum ButtonColor {
 	DrawerNav = "drawernav",
 	Fab = "fab",
 	Dialog = "dialog",
+	Primary = "primary",
+	MailTextEditor = "mailtexteditor",
 }
 
 export function getColors(buttonColors: ButtonColor | null | undefined): {
@@ -55,6 +57,16 @@ export function getColors(buttonColors: ButtonColor | null | undefined): {
 		case ButtonColor.Dialog:
 			return {
 				button: theme.on_surface,
+				border: theme.outline,
+			}
+		case ButtonColor.Primary:
+			return {
+				button: theme.primary,
+				border: theme.primary,
+			}
+		case ButtonColor.MailTextEditor:
+			return {
+				button: theme.outline,
 				border: theme.outline,
 			}
 		case ButtonColor.Content:

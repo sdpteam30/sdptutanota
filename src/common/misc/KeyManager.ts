@@ -36,8 +36,10 @@ export type Key = {
 export function keyboardEventToKeyPress(event: KeyboardEvent): KeyPress {
 	const ctrlOrCmd = isAppleDevice() ? event.metaKey : event.ctrlKey
 
+	let key = fixWaylandKeyIssue(event)
+
 	return {
-		key: event.key,
+		key,
 		ctrlOrCmd,
 		shift: event.shiftKey,
 		alt: event.altKey,
@@ -47,6 +49,17 @@ export function keyboardEventToKeyPress(event: KeyboardEvent): KeyPress {
 		ctrl: !ctrlOrCmd && event.ctrlKey,
 		meta: !ctrlOrCmd && event.metaKey,
 	}
+}
+
+/**
+ * XWayland can sometimes lose the keycode-to-string mapping, resulting in "Unidentified" keys
+ */
+function fixWaylandKeyIssue(event: KeyboardEvent) {
+	let key = event.key
+	if (event.key === "Unidentified" && event.keyCode) {
+		key = String.fromCharCode(event.keyCode)
+	}
+	return key
 }
 
 /**
@@ -205,13 +218,12 @@ class KeyManager {
 	}
 
 	private handleKeydown(e: KeyboardEvent): void {
-		// If we get a keyboard event while in a composition system (such as an input method editor),
-		// it should be ignored (since the system should be handling key commands for that).
 		if (!e.isComposing) {
+			// If we get a keyboard event while in a composition system (such as an input method editor),
+			// it should be ignored (since the system should be handling key commands for that).
 			const keysToShortcuts = this.keyToModalShortcut.size > 1 ? this.keyToModalShortcut : this.keyToShortcut
 			const keyPress = keyboardEventToKeyPress(e)
-			const shortcut = keyPress.key ? keysToShortcuts.get(createKeyIdentifier(e.key.toLowerCase(), keyPress)) : null
-
+			const shortcut = keyPress.key ? keysToShortcuts.get(createKeyIdentifier(keyPress.key.toLowerCase(), keyPress)) : null
 			if (shortcut != null && (shortcut.enabled == null || shortcut.enabled())) {
 				if (shortcut.exec(keyPress) !== true) {
 					e.preventDefault()

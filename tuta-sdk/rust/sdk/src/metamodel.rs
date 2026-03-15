@@ -41,16 +41,15 @@ pub enum ValueType {
 }
 
 impl ValueType {
-	pub fn get_default(&self) -> ElementValue {
+	pub const fn get_default(&self) -> ElementValue {
 		match self {
 			ValueType::String | ValueType::CompressedString => ElementValue::String(String::new()),
 			ValueType::Number => ElementValue::Number(0),
 			ValueType::Bytes => ElementValue::Bytes(Vec::new()),
-			ValueType::Date => ElementValue::Date(DateTime::default()),
+			ValueType::Date => ElementValue::Date(DateTime::from_millis(0)),
 			ValueType::Boolean => ElementValue::Bool(false),
-			ValueType::GeneratedId | ValueType::CustomId => {
-				panic!("Can not have default value: {self:?}")
-			},
+			ValueType::GeneratedId => panic!("Can not have default value for GeneratedId"),
+			ValueType::CustomId => panic!("Can not have default value for CustomId"),
 		}
 	}
 }
@@ -305,6 +304,7 @@ impl TypeModel {
 pub enum AppName {
 	Accounting,
 	Base,
+	Drive,
 	Gossip,
 	Monitor,
 	Storage,
@@ -315,6 +315,8 @@ pub enum AppName {
 	Test,
 	#[cfg(test)]
 	EntityClientTestApp,
+	#[serde(other)]
+	Unknown,
 }
 
 impl TryFrom<&str> for AppName {
@@ -323,6 +325,7 @@ impl TryFrom<&str> for AppName {
 		match value {
 			"accounting" => Ok(AppName::Accounting),
 			"base" => Ok(AppName::Base),
+			"drive" => Ok(AppName::Drive),
 			"gossip" => Ok(AppName::Gossip),
 			"monitor" => Ok(AppName::Monitor),
 			"storage" => Ok(AppName::Storage),
@@ -343,12 +346,14 @@ impl Display for AppName {
 		match self {
 			AppName::Accounting => write!(f, "accounting"),
 			AppName::Base => write!(f, "base"),
+			AppName::Drive => write!(f, "drive"),
 			AppName::Gossip => write!(f, "gossip"),
 			AppName::Monitor => write!(f, "monitor"),
 			AppName::Storage => write!(f, "storage"),
 			AppName::Sys => write!(f, "sys"),
 			AppName::Tutanota => write!(f, "tutanota"),
 			AppName::Usage => write!(f, "usage"),
+			AppName::Unknown => write!(f, "unknown"),
 			#[cfg(test)]
 			AppName::Test => write!(f, "test"),
 			#[cfg(test)]

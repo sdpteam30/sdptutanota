@@ -1,10 +1,16 @@
 import { ListElementListModel } from "../../../common/misc/ListElementListModel.js"
 import { SearchResultListEntry } from "./SearchListView.js"
 import { SearchRestriction, SearchResult } from "../../../common/api/worker/search/SearchTypes.js"
-import { EntityEventsListener, EventController } from "../../../common/api/main/EventController.js"
+import { EventController } from "../../../common/api/main/EventController.js"
 import { CalendarEvent, CalendarEventTypeRef, Contact, ContactTypeRef, Mail, MailSet, MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { ListElementEntity } from "../../../common/api/common/EntityTypes.js"
-import { FULL_INDEXED_TIMESTAMP, MailSetKind, NOTHING_INDEXED_TIMESTAMP, OperationType } from "../../../common/api/common/TutanotaConstants.js"
+import {
+	FULL_INDEXED_TIMESTAMP,
+	isPermanentDeleteAllowedForFolder,
+	MailSetKind,
+	NOTHING_INDEXED_TIMESTAMP,
+	OperationType,
+} from "../../../common/api/common/TutanotaConstants.js"
 import {
 	assertIsEntity,
 	assertIsEntity2,
@@ -55,7 +61,12 @@ import { LoginController } from "../../../common/api/main/LoginController.js"
 import { EntityClient, loadMultipleFromLists } from "../../../common/api/common/EntityClient.js"
 import { SearchRouter } from "../../../common/search/view/SearchRouter.js"
 import { MailOpenedListener } from "../../mail/view/MailViewModel.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js"
+import {
+	EntityEventsListener,
+	EntityUpdateData,
+	isUpdateForTypeRef,
+	OnEntityUpdateReceivedPriority,
+} from "../../../common/api/common/utils/EntityUpdateUtils.js"
 import { CalendarInfoBase, CalendarModel, isBirthdayCalendarInfo, isCalendarInfo } from "../../../calendar-app/calendar/model/CalendarModel.js"
 import { CalendarFacade } from "../../../common/api/worker/facades/lazy/CalendarFacade.js"
 import { ProgrammingError } from "../../../common/api/common/error/ProgrammingError.js"
@@ -73,6 +84,7 @@ import { Indexer } from "../../workerUtils/index/Indexer"
 import { SearchFacade } from "../../workerUtils/index/SearchFacade"
 import { isOfflineStorageAvailable } from "../../../common/api/common/Env"
 import { SearchToken } from "../../../common/api/common/utils/QueryTokenUtils"
+import { isMailDeletable } from "../../mail/model/MailChecks"
 
 const SEARCH_PAGE_SIZE = 100
 
@@ -271,10 +283,13 @@ export class SearchViewModel {
 		return mailLocator.mailModel.isExportingMailsAllowed() && !client.isMobileDevice()
 	}
 
-	private readonly entityEventsListener: EntityEventsListener = async (updates) => {
-		for (const update of updates) {
-			await this.entityEventReceived(update)
-		}
+	private readonly entityEventsListener: EntityEventsListener = {
+		onEntityUpdatesReceived: async (updates) => {
+			for (const update of updates) {
+				await this.entityEventReceived(update)
+			}
+		},
+		priority: OnEntityUpdateReceivedPriority.NORMAL,
 	}
 
 	onNewUrl(args: Record<string, any>, requestedPath: string) {
@@ -815,12 +830,16 @@ export class SearchViewModel {
 		},
 	)
 
-	readonly areMailsDeletable: () => boolean = memoizedWithHiddenArgument(
+	readonly isPermanentDeleteAllowed: () => boolean = memoizedWithHiddenArgument(
 		() => this.getSelectedMails(),
 		(selectedMails) => {
 			return selectedMails.every((mail) => {
+				if (!isMailDeletable(mail)) {
+					return false
+				}
+
 				const folder = mailLocator.mailModel.getMailFolderForMail(mail)
-				return folder != null && (folder.folderType === MailSetKind.TRASH || folder.folderType === MailSetKind.SPAM)
+				return folder != null && isPermanentDeleteAllowedForFolder(folder)
 			})
 		},
 	)

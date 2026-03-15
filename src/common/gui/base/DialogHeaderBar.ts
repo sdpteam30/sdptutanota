@@ -5,9 +5,12 @@ import type { lazy, MaybeLazy } from "@tutao/tutanota-utils"
 import { resolveMaybeLazy } from "@tutao/tutanota-utils"
 import { lang, MaybeTranslation } from "../../misc/LanguageViewModel.js"
 
+//If there is left/right Children it will override left/right
 export type DialogHeaderBarAttrs = {
 	left?: MaybeLazy<Array<ButtonAttrs>>
+	leftChildren?: MaybeLazy<Children>
 	right?: MaybeLazy<Array<ButtonAttrs>>
+	rightChildren?: MaybeLazy<Children>
 	middle?: MaybeTranslation
 	create?: (dom: HTMLElement) => void
 	remove?: () => void
@@ -28,7 +31,7 @@ export class DialogHeaderBar implements Component<DialogHeaderBarAttrs> {
 			},
 			vnode.attrs,
 		)
-		let columnClass = a.middle ? ".flex-third.overflow-hidden" : ".flex-half.overflow-hidden"
+		let columnClass = a.middle ? ".flex-third" : ".flex-half"
 		return m(
 			".dialog-header.plr-24.flex-space-between.dialog-header-line-height",
 			{
@@ -41,10 +44,7 @@ export class DialogHeaderBar implements Component<DialogHeaderBarAttrs> {
 				class: vnode.attrs.class,
 			},
 			[
-				m(
-					columnClass + ".ml-negative-8",
-					resolveMaybeLazy(a.left).map((a) => m(Button, a)),
-				), // ellipsis is not working if the text is directly in the flex element, so create a child div for it
+				m(columnClass + ".ml-negative-8", a.leftChildren ? resolveMaybeLazy(a.leftChildren) : resolveMaybeLazy(a.left).map((a) => m(Button, a))), // ellipsis is not working if the text is directly in the flex element, so create a child div for it
 				a.middle
 					? m(
 							"#dialog-title.flex-third-middle.overflow-hidden.flex.justify-center.items-center.b",
@@ -56,7 +56,7 @@ export class DialogHeaderBar implements Component<DialogHeaderBarAttrs> {
 					: null,
 				m(
 					columnClass + ".mr-negative-8.flex.justify-end",
-					resolveMaybeLazy(a.right).map((a) => m(Button, a)),
+					a.rightChildren ? resolveMaybeLazy(a.rightChildren) : resolveMaybeLazy(a.right).map((a) => m(Button, a)),
 				),
 			],
 		)

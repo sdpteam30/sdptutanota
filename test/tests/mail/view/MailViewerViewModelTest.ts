@@ -46,6 +46,7 @@ import { UndoModel } from "../../../../src/mail-app/UndoModel"
 import { isBrowser } from "../../../../src/common/api/common/Env"
 import { CommonSystemFacade } from "../../../../src/common/native/common/generatedipc/CommonSystemFacade"
 import { unsubscribe } from "../../../../src/mail-app/mail/view/MailViewerUtils"
+import { TransferProgressDispatcher } from "../../../../src/common/api/main/TransferProgressDispatcher"
 
 o.spec("MailViewerViewModel", function () {
 	let mail: Mail
@@ -69,6 +70,7 @@ o.spec("MailViewerViewModel", function () {
 	let contactImporter: ContactImporter
 	let eventsRepository: CalendarEventsRepository
 	let undoModel: UndoModel
+	let transferProgressDispatcher: TransferProgressDispatcher
 
 	function makeViewModelWithHeaders(headers: string) {
 		entityClient = object()
@@ -89,6 +91,7 @@ o.spec("MailViewerViewModel", function () {
 		eventsRepository = object()
 		prepareMailWithHeaders(mailFacade, headers)
 		undoModel = object()
+		transferProgressDispatcher = object()
 
 		return new MailViewerViewModel(
 			mail,
@@ -110,6 +113,7 @@ o.spec("MailViewerViewModel", function () {
 			[],
 			eventsRepository,
 			undoModel,
+			transferProgressDispatcher,
 		)
 	}
 
@@ -176,6 +180,10 @@ o.spec("MailViewerViewModel", function () {
 
 			o("no banner", async function () {
 				o(FailureBannerType.None).equals(viewModel.mustRenderFailureBanner())
+
+				mailDetails.authStatus = MailAuthenticationStatus.AUTHENTICATED
+				viewModel.mail.encryptionAuthStatus = EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED
+				o(FailureBannerType.None).equals(viewModel.mustRenderFailureBanner())
 			})
 
 			o("is phishing", async function () {
@@ -209,10 +217,6 @@ o.spec("MailViewerViewModel", function () {
 				o(FailureBannerType.MailAuthenticationHardFail).equals(viewModel.mustRenderFailureBanner())
 
 				mailDetails.authStatus = MailAuthenticationStatus.MISSING_MAIL_FROM
-				o(FailureBannerType.MailAuthenticationHardFail).equals(viewModel.mustRenderFailureBanner())
-
-				mailDetails.authStatus = MailAuthenticationStatus.AUTHENTICATED
-				viewModel.mail.encryptionAuthStatus = EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED
 				o(FailureBannerType.MailAuthenticationHardFail).equals(viewModel.mustRenderFailureBanner())
 			})
 
@@ -402,9 +406,10 @@ o.spec("MailViewerViewModel", function () {
 			o(viewModel.didErrorsOccur()).deepEquals(true)
 		})
 
-		o("changind sent mail from mail details draft to mail details blob", async function () {
+		o("changing sent mail from mail details draft to mail details blob", async function () {
 			const viewModel = makeViewModelWithHeaders("")
 			mail.mailDetailsDraft = ["draftListId", "draftId"]
+			mail.state = MailState.DRAFT
 
 			const mailDetailsBlob = mail.mailDetails
 			mail.mailDetails = null
@@ -416,6 +421,7 @@ o.spec("MailViewerViewModel", function () {
 			o(viewModel.didErrorsOccur()).deepEquals(true)
 
 			mail.mailDetailsDraft = null
+			mail.state = MailState.RECEIVED
 			mail.mailDetails = mailDetailsBlob
 			await viewModel.loadAll(Promise.resolve())
 

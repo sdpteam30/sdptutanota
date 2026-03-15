@@ -33,6 +33,7 @@ import { UserTypeRef } from "../api/entities/sys/TypeRefs.js"
 import { isOfflineError } from "../api/common/utils/ErrorUtils.js"
 import { showRequestPasswordDialog } from "./passwords/PasswordRequestDialog.js"
 import { ServerModelsUnavailableError } from "../api/common/error/ServerModelsUnavailableError"
+import { InvalidModelError } from "../api/common/error/InvalidModelError"
 
 assertMainOrNode()
 
@@ -82,16 +83,20 @@ export async function handleUncaughtErrorImpl(e: Error) {
 		}
 	} else if (e instanceof SessionExpiredError) {
 		reloginForExpiredSession()
-	} else if (e instanceof OutOfSyncError) {
+	} else if (e instanceof OutOfSyncError || e instanceof InvalidModelError) {
 		const isOffline = isOfflineStorageAvailable() && logins.isUserLoggedIn() && logins.getUserController().sessionType === SessionType.Persistent
 
-		await Dialog.message("outOfSync_label", lang.get(isOffline ? "dataExpiredOfflineDb_msg" : "dataExpired_msg"))
+		if (e instanceof InvalidModelError) {
+			await Dialog.message("dataOutOfSync_label", lang.get(isOffline ? "dataOutOfSyncOfflineDb_msg" : "dataOutOfSync_msg"))
+		} else {
+			await Dialog.message("dataExpired_label", lang.get(isOffline ? "dataExpiredOfflineDb_msg" : "dataExpired_msg"))
+		}
 
 		const { userId } = logins.getUserController()
 		if (isDesktop()) {
 			await interWindowEventSender?.localUserDataInvalidated(userId)
-			await worker.getWorkerInterface().cacheStorage.purgeStorage()
 		}
+		await worker.getWorkerInterface().cacheStorage.purgeStorage()
 		await logins.logout(false)
 		await windowFacade.reload({ noAutoLogin: true })
 	} else if (e instanceof InsufficientStorageError) {

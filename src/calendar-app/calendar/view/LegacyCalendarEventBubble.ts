@@ -2,13 +2,15 @@ import m, { Child, Children, Component, Vnode } from "mithril"
 import { layout_size, px } from "../../../common/gui/size"
 import { Icon } from "../../../common/gui/base/Icon"
 import { Icons } from "../../../common/gui/base/icons/Icons"
-import { ClickHandler, colorForBg } from "../../../common/gui/base/GuiUtils"
+import { ClickHandler, colorForBg, normalizeColorHex } from "../../../common/gui/base/GuiUtils"
 import { TabIndex } from "../../../common/api/common/TutanotaConstants.js"
 
 export type LegacyCalendarEventBubbleAttrs = {
 	text: string
 	secondLineText?: string | null
+	backgroundColor: string
 	color: string
+	border: string
 	hasAlarm: boolean
 	isAltered: boolean
 	isBirthday: boolean
@@ -41,6 +43,9 @@ export class LegacyCalendarEventBubble implements Component<LegacyCalendarEventB
 		// Reapplying the animation to the element will cause it to trigger instantly, so we don't want to do that
 		const doFadeIn = !this.hasFinishedInitialRender && attrs.fadeIn
 		const enablePointerEvents = attrs.enablePointerEvents
+
+		const normalizedBackgroundColor = normalizeColorHex(attrs.backgroundColor)
+
 		return m(
 			".calendar-event.small.overflow-hidden.flex.cursor-pointer" +
 				(doFadeIn ? ".fade-in" : "") +
@@ -48,8 +53,11 @@ export class LegacyCalendarEventBubble implements Component<LegacyCalendarEventB
 				(attrs.noBorderRight ? ".event-continues-right" : ""),
 			{
 				style: {
-					background: "#" + attrs.color,
-					color: colorForBg("#" + attrs.color),
+					border: attrs.border,
+					borderLeft: attrs.noBorderLeft ? "none" : undefined,
+					borderRight: attrs.noBorderRight ? "none" : undefined,
+					background: attrs.backgroundColor,
+					color: attrs.color,
 					minHeight: lineHeightPx,
 					height: px(attrs.height ? Math.max(attrs.height, 0) : lineHeight),
 					"padding-top": px(attrs.verticalPadding || 0),
@@ -70,7 +78,7 @@ export class LegacyCalendarEventBubble implements Component<LegacyCalendarEventB
 					? m(Icon, {
 							icon: Icons.Notifications,
 							style: {
-								fill: colorForBg("#" + attrs.color),
+								fill: colorForBg(normalizedBackgroundColor),
 								"padding-top": "2px",
 								"padding-right": "2px",
 							},
@@ -81,7 +89,7 @@ export class LegacyCalendarEventBubble implements Component<LegacyCalendarEventB
 					? m(Icon, {
 							icon: Icons.Edit,
 							style: {
-								fill: colorForBg("#" + attrs.color),
+								fill: colorForBg(normalizedBackgroundColor),
 								"padding-top": "2px",
 								"padding-right": "2px",
 							},
@@ -92,7 +100,7 @@ export class LegacyCalendarEventBubble implements Component<LegacyCalendarEventB
 					? m(Icon, {
 							icon: Icons.Gift,
 							style: {
-								fill: colorForBg("#" + attrs.color),
+								fill: colorForBg(normalizedBackgroundColor),
 								"padding-top": "2px",
 								"padding-right": "2px",
 							},
@@ -113,7 +121,7 @@ export class LegacyCalendarEventBubble implements Component<LegacyCalendarEventB
 		)
 	}
 
-	private static renderContent({ height: maybeHeight, text, secondLineText, color }: LegacyCalendarEventBubbleAttrs): Children {
+	private static renderContent({ height: maybeHeight, text, secondLineText, backgroundColor }: LegacyCalendarEventBubbleAttrs): Children {
 		// If the bubble has 2 or more lines worth of vertical space, then we will render the text + the secondLineText on separate lines
 		// Otherwise we will combine them onto a single line
 		const height = maybeHeight ?? lineHeight
@@ -152,7 +160,7 @@ export class LegacyCalendarEventBubble implements Component<LegacyCalendarEventB
 							m(Icon, {
 								icon: Icons.Time,
 								style: {
-									fill: colorForBg("#" + color),
+									fill: colorForBg(normalizeColorHex(backgroundColor)),
 									"padding-top": "2px",
 									"padding-right": "2px",
 									"vertical-align": "text-top",

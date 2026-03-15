@@ -62,7 +62,7 @@ import type { EventDragHandlerCallbacks } from "./EventDragHandler"
 import { ProgrammingError } from "../../../common/api/common/error/ProgrammingError.js"
 import { CalendarEventsRepository, DaysToEvents } from "../../../common/calendar/date/CalendarEventsRepository.js"
 import { CalendarEventPreviewViewModel } from "../gui/eventpopup/CalendarEventPreviewViewModel.js"
-import { EntityUpdateData, isUpdateFor, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js"
+import { EntityUpdateData, isUpdateFor, isUpdateForTypeRef, OnEntityUpdateReceivedPriority } from "../../../common/api/common/utils/EntityUpdateUtils.js"
 import { MailboxModel } from "../../../common/mailFunctionality/MailboxModel.js"
 import { getEnabledMailAddressesWithUser } from "../../../common/mailFunctionality/SharedMailUtils.js"
 import { ContactModel } from "../../../common/contactsFunctionality/ContactModel.js"
@@ -164,7 +164,7 @@ export type DraggedEventContainer = {
 export type MouseOrPointerEvent = MouseEvent | PointerEvent
 export type CalendarEventBubbleClickHandler = (arg0: CalendarEvent, arg1: MouseOrPointerEvent) => unknown
 export type CalendarEventBubbleKeyDownHandler = (arg0: CalendarEvent, arg1: KeyboardEvent) => unknown
-export type CalendarEventEditModelsFactory = (mode: CalendarOperation, event: CalendarEvent) => Promise<CalendarEventModel | null>
+export type CalendarEventModelFactory = (mode: CalendarOperation, event: CalendarEvent) => Promise<CalendarEventModel | null>
 
 export type CalendarEventPreviewModelFactory = (
 	selectedEvent: CalendarEvent,
@@ -223,7 +223,7 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 
 	constructor(
 		private readonly logins: LoginController,
-		private readonly createCalendarEventEditModel: CalendarEventEditModelsFactory,
+		private readonly createCalendarEventModel: CalendarEventModelFactory,
 		private readonly createCalendarEventPreviewModel: CalendarEventPreviewModelFactory,
 		private readonly createCalendarContactPreviewModel: CalendarContactPreviewModelFactory,
 		private readonly calendarModel: CalendarModel,
@@ -272,11 +272,14 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 			this.preloadMonthsAroundSelectedDate()
 		})
 
-		eventController.addEntityListener((updates) => this.entityEventReceived(updates))
+		eventController.addEntityListener({
+			onEntityUpdatesReceived: (updates) => this.entityEventReceived(updates),
+			priority: OnEntityUpdateReceivedPriority.NORMAL,
+		})
 
 		calendarInvitationsModel.init()
 
-		this.eventsRepository.getEventsForMonths().map(() => {
+		this.eventsRepository.getDaysToEvents().map(() => {
 			this.doRedraw()
 		})
 
@@ -415,7 +418,7 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 	}
 
 	get eventsForDays(): DaysToEvents {
-		return this.eventsRepository.getEventsForMonths()()
+		return this.eventsRepository.getDaysToEvents()()
 	}
 
 	get redraw(): Stream<void> {
@@ -428,7 +431,7 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 
 	// visibleForTesting
 	allowDrag(eventWrapper: EventWrapper): boolean {
-		return !eventWrapper.flags?.isGhost || this.canFullyEditEvent(eventWrapper.event)
+		return this.canFullyEditEvent(eventWrapper.event)
 	}
 
 	/**
@@ -510,25 +513,25 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 	}
 
 	async duplicateEvent(event: CalendarEvent, timeToMoveBy: number) {
-		const editModel = await this.createCalendarEventEditModel(CalendarOperation.Create, event)
-		if (!editModel) {
-			throw new Error("Failed to duplicate event ${event._id} - Failed to instantiate editModel")
+		const calendarEventModel = await this.createCalendarEventModel(CalendarOperation.Create, event)
+		if (!calendarEventModel) {
+			throw new Error("Failed to duplicate event ${event._id} - Failed to instantiate calendarEventModel")
 		}
 
-		editModel.editModels.summary.content = lang.get("copyOf_title", {
-			"{title}": editModel.editModels.summary.content,
+		calendarEventModel.editModels.summary.content = lang.get("copyOf_title", {
+			"{title}": calendarEventModel.editModels.summary.content,
 		})
-		editModel.editModels.whenModel.rescheduleEvent({ millisecond: timeToMoveBy })
-		editModel.editModels.whenModel.deleteExcludedDates()
-		editModel.editModels.whoModel.resetGuestsStatus()
+		calendarEventModel.editModels.whenModel.shiftEvent({ millisecond: timeToMoveBy })
+		calendarEventModel.editModels.whenModel.deleteExcludedDates()
+		calendarEventModel.editModels.whoModel.resetGuestsStatus()
 
-		await editModel.editModels.alarmModel.removeCalendarDefaultAlarms(
+		await calendarEventModel.editModels.alarmModel.removeCalendarDefaultAlarms(
 			event._ownerGroup,
 			this.logins.getUserController().userSettingsGroupRoot.groupSettings,
 		)
 
 		const dialog = new EventEditorDialog()
-		return await dialog.showNewCalendarEventEditDialog(editModel)
+		return await dialog.showNewCalendarEventEditDialog(calendarEventModel)
 	}
 
 	onDragCancel() {
@@ -579,7 +582,7 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 
 		for (const day of days) {
 			const shortEventsForDay: EventWrapper[] = []
-			const eventsForDay: ReadonlyArray<EventWrapper> = this.eventsRepository.getEventsForMonths()().get(day.getTime()) || []
+			const eventsForDay: ReadonlyArray<EventWrapper> = this.eventsRepository.getDaysToEvents()().get(day.getTime()) || []
 
 			for (const eventWrapper of eventsForDay) {
 				if (transientEventUidsByCalendar.get(getListId(eventWrapper.event))?.has(eventWrapper.event.uid)) {
@@ -638,7 +641,7 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 			throw new ProgrammingError("called moveEvent for an event without uid")
 		}
 
-		const editModel = await this.createCalendarEventEditModel(mode, event)
+		const editModel = await this.createCalendarEventModel(mode, event)
 		if (editModel == null) {
 			return EventSaveResult.Failed
 		}
@@ -646,12 +649,13 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 		// Passing only the milliseconds doesn't handle daylight saving times
 		// but by passing the object with days, hours and minutes forces luxon to handle it for us
 		const days = millisToDays(diff)
-		editModel.editModels.whenModel.rescheduleEvent({ days })
+		editModel.editModels.whenModel.shiftEvent({ days })
 
 		if (getNonOrganizerAttendees(event).length > 0) {
 			const response = await askIfShouldSendCalendarUpdatesToAttendees()
 			if (response === "yes") {
 				editModel.editModels.whoModel.shouldSendUpdates = true
+				editModel.editModels.whoModel.resetGuestsStatus() // reset guest status if time has changed, so they must reconfirm
 			} else if (response === "cancel") {
 				return EventSaveResult.Failed
 			}
@@ -671,8 +675,8 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 			return await this.moveEvent(event, diff, CalendarOperation.EditAll)
 		}
 
-		const progenitorModel = await this.createCalendarEventEditModel(CalendarOperation.StopSeriesAtDate, progenitor)
-		const newEventModel = await this.createCalendarEventEditModel(CalendarOperation.Create, event)
+		const progenitorModel = await this.createCalendarEventModel(CalendarOperation.StopSeriesAtDate, progenitor)
+		const newEventModel = await this.createCalendarEventModel(CalendarOperation.Create, event)
 
 		if (!newEventModel) {
 			throw new Error("Failed to split original series and instantiate a new event model.")
@@ -684,7 +688,7 @@ export class CalendarViewModel implements EventDragHandlerCallbacks {
 
 		newEventModel.editModels.whenModel.deleteExcludedDates()
 		newEventModel.editModels.whoModel.resetGuestsStatus()
-		newEventModel.editModels.whenModel.rescheduleEvent({ millisecond: diff })
+		newEventModel.editModels.whenModel.shiftEvent({ millisecond: diff })
 		if (newEventModel.editModels.whenModel.repeatEndType === EndType.Count) {
 			const generationRange: CalendarTimeRange = {
 				start: progenitor.startTime.getTime(),

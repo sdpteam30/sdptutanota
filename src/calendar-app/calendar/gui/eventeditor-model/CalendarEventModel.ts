@@ -76,7 +76,7 @@ import {
 	parseAlarmInterval,
 } from "../../../../common/calendar/date/CalendarUtils.js"
 import { arrayEqualsWithPredicate, assertNonNull, assertNotNull, identity, lazy, Require } from "@tutao/tutanota-utils"
-import { cleanMailAddress } from "../../../../common/api/common/utils/CommonCalendarUtils.js"
+import { cleanMailAddress, makeEmptyCalendarEvent } from "../../../../common/api/common/utils/CommonCalendarUtils.js"
 import { assertEventValidity, CalendarInfo, CalendarModel } from "../../model/CalendarModel.js"
 import { NotFoundError, PayloadTooLargeError } from "../../../../common/api/common/error/RestError.js"
 import { CalendarNotificationSender } from "../../view/CalendarNotificationSender.js"
@@ -101,6 +101,7 @@ import { SimpleTextViewModel } from "../../../../common/misc/SimpleTextViewModel
 import { AlarmInfoTemplate } from "../../../../common/api/worker/facades/lazy/CalendarFacade.js"
 import { getEventType } from "../CalendarGuiUtils.js"
 import { getDefaultSender } from "../../../../common/mailFunctionality/SharedMailUtils.js"
+import { CalendarInviteHandler } from "../../view/CalendarInvites"
 
 /** the type of the event determines which edit operations are available to us. */
 export const enum EventType {
@@ -178,6 +179,7 @@ export async function makeCalendarEventModel(
 	notificationSender: CalendarNotificationSender,
 	entityClient: EntityClient,
 	responseTo: Mail | null,
+	calendarInviteHandler: CalendarInviteHandler,
 	zone: string = getTimeZone(),
 	showProgress: ShowProgressCallback = identity,
 	uiUpdateCallback: () => void = m.redraw,
@@ -192,9 +194,8 @@ export async function makeCalendarEventModel(
 		}
 	}
 
-	const user = logins.getUserController().user
 	const [alarms, calendars] = await Promise.all([
-		resolveAlarmsForEvent(initialValues.alarmInfos ?? [], calendarModel, user),
+		resolveAlarmsForEvent(initialValues.alarmInfos ?? [], calendarModel, logins.getUserController().user),
 		calendarModel.getCalendarInfos(),
 	])
 	const selectedCalendar = getPreselectedCalendar(calendars, initialValues)
@@ -235,7 +236,16 @@ export async function makeCalendarEventModel(
 	const recurrenceIds = async (uid?: string) =>
 		uid == null ? [] : ((await calendarModel.getEventsByUid(uid))?.alteredInstances.map((i) => i.recurrenceId) ?? [])
 	const notificationModel = new CalendarNotificationModel(notificationSender, logins)
-	const applyStrategies = new CalendarEventApplyStrategies(calendarModel, logins, notificationModel, recurrenceIds, showProgress, zone)
+	const applyStrategies = new CalendarEventApplyStrategies(
+		calendarModel,
+		logins,
+		notificationModel,
+		makeEditModels,
+		recurrenceIds,
+		showProgress,
+		zone,
+		calendarInviteHandler,
+	)
 	const initialOrDefaultValues = Object.assign(makeEmptyCalendarEvent(), initialValues)
 	const cleanInitialValues = cleanupInitialValuesForEditing(initialOrDefaultValues)
 	const progenitor = () => calendarModel.resolveCalendarEventProgenitor(cleanInitialValues)
@@ -283,7 +293,7 @@ async function selectStrategy(
 			mayRequireSendingUpdates = () => true
 			editModels = makeEditModels(cleanInitialValues)
 		} else {
-			editModels = makeEditModels(cleanInitialValues)
+			editModels = makeEditModels(existingInstanceIdentity)
 			apply = () => applyStrategies.saveExistingAlteredInstance(editModels, existingInstanceIdentity)
 			mayRequireSendingUpdates = () => assembleEditResultAndAssignFromExisting(existingInstanceIdentity, editModels, operation).hasUpdateWorthyChanges
 		}
@@ -298,7 +308,7 @@ async function selectStrategy(
 			mayRequireSendingUpdates = () => true
 		} else {
 			editModels = makeEditModels(cleanInitialValues)
-			apply = () => applyStrategies.deleteAlteredInstance(editModels, existingInstanceIdentity)
+			apply = () => applyStrategies.handleDeleteAlteredInstance(editModels, existingInstanceIdentity)
 			mayRequireSendingUpdates = () => true
 		}
 	} else if (operation === CalendarOperation.EditAll) {
@@ -306,7 +316,7 @@ async function selectStrategy(
 		if (progenitor == null) {
 			return null
 		}
-		editModels = makeEditModels(cleanInitialValues)
+		editModels = makeEditModels(progenitor)
 		apply = () => applyStrategies.saveEntireExistingEvent(editModels, progenitor)
 		mayRequireSendingUpdates = () => assembleEditResultAndAssignFromExisting(existingInstanceIdentity, editModels, operation).hasUpdateWorthyChanges
 	} else if (operation === CalendarOperation.DeleteAll) {
@@ -500,6 +510,8 @@ export function assembleCalendarEventEditResult(models: CalendarEventEditModels)
 			// fields related to the event instance's identity are excluded.
 			// reminders. will be set up separately.
 			alarmInfos: [],
+			pendingInvitation: null,
+			sender: null,
 		},
 		newAlarms: alarmResult.alarms,
 		sendModels: whoResult,
@@ -520,6 +532,10 @@ export function assembleEditResultAndAssignFromExisting(existingEvent: CalendarE
 		sequence: incrementSequence(oldSequence),
 		recurrenceId: operation === CalendarOperation.EditThis && recurrenceId == null ? existingEvent.startTime : recurrenceId,
 	})
+
+	if (editModels.whoModel.canModifyGuests && newEvent.startTime.getTime() !== existingEvent.startTime.getTime()) {
+		editModels.whoModel.resetGuestsStatus()
+	}
 
 	assertEventValidity(newEvent)
 
@@ -554,25 +570,6 @@ export function assignEventIdentity(values: CalendarEventValues, identity: Requi
 async function resolveAlarmsForEvent(alarms: CalendarEvent["alarmInfos"], calendarModel: CalendarModel, user: User): Promise<Array<AlarmInterval>> {
 	const alarmInfos = await calendarModel.loadAlarms(alarms, user)
 	return alarmInfos.map(({ alarmInfo }) => parseAlarmInterval(alarmInfo.trigger))
-}
-
-function makeEmptyCalendarEvent(): StrippedEntity<CalendarEvent> {
-	return {
-		alarmInfos: [],
-		invitedConfidentially: null,
-		hashedUid: null,
-		uid: null,
-		recurrenceId: null,
-		endTime: new Date(),
-		summary: "",
-		startTime: new Date(),
-		location: "",
-		repeatRule: null,
-		description: "",
-		attendees: [],
-		organizer: null,
-		sequence: "",
-	}
 }
 
 function cleanupInitialValuesForEditing(initialValues: StrippedEntity<CalendarEvent>): CalendarEvent {

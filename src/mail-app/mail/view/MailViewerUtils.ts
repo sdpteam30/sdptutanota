@@ -47,7 +47,9 @@ export type MailViewerMoreActions = {
 	showImagesAction?: () => void
 	unsubscribeAction?: () => void
 	printAction?: () => void
+	reapplyInboxRulesAction?: (() => void) | null
 	reportSpamAction?: () => void
+	reportNotSpamAction?: () => void
 	reportPhishingAction?: () => void
 }
 
@@ -288,20 +290,6 @@ export function multipleMailViewerMoreActions(exportAction: (() => void) | null,
 
 export function singleMailViewerMoreActions(viewModel: MailViewerViewModel, moreActions: MailViewerMoreActions): Array<DropdownButtonAttrs> {
 	const moreButtons: Array<DropdownButtonAttrs> = []
-	if (viewModel.isUnread()) {
-		moreButtons.push({
-			label: "markRead_action",
-			click: () => viewModel.setUnread(false),
-			icon: Icons.Eye,
-		})
-	} else {
-		moreButtons.push({
-			label: "markUnread_action",
-			click: () => viewModel.setUnread(true),
-			icon: Icons.NoEye,
-		})
-	}
-
 	if (!client.isMobileDevice() && viewModel.canExport()) {
 		moreButtons.push({
 			label: "export_action",
@@ -344,10 +332,14 @@ export function getMailViewerMoreActions({
 	reportSpam,
 	print,
 	reportPhishing,
+	reapplyInboxRules,
+	reportNotSpam,
 }: {
 	viewModel: MailViewerViewModel
 	print: (() => unknown) | null
+	reapplyInboxRules: (() => unknown) | null
 	reportSpam: (() => unknown) | null
+	reportNotSpam: (() => unknown) | null
 	reportPhishing: (() => unknown) | null
 }): MailViewerMoreActions {
 	const actions: MailViewerMoreActions = {}
@@ -376,6 +368,14 @@ export function getMailViewerMoreActions({
 		actions.reportPhishingAction = reportPhishing
 	}
 
+	if (reapplyInboxRules) {
+		actions.reapplyInboxRulesAction = reapplyInboxRules
+	}
+
+	if (reportNotSpam) {
+		actions.reportNotSpamAction = reportNotSpam
+	}
+
 	return actions
 }
 
@@ -384,7 +384,9 @@ function mailViewerMoreActions({
 	showImagesAction,
 	unsubscribeAction,
 	printAction,
+	reapplyInboxRulesAction,
 	reportSpamAction,
+	reportNotSpamAction,
 	reportPhishingAction,
 }: MailViewerMoreActions): Array<DropdownButtonAttrs> {
 	const moreButtons: Array<DropdownButtonAttrs> = []
@@ -421,11 +423,27 @@ function mailViewerMoreActions({
 		})
 	}
 
+	if (reapplyInboxRulesAction != null) {
+		moreButtons.push({
+			label: "reapplyInboxRules_action",
+			click: reapplyInboxRulesAction,
+			icon: Icons.Redo,
+		})
+	}
+
 	if (reportSpamAction != null) {
 		moreButtons.push({
-			label: "spam_move_action",
+			label: "reportSpam_action",
 			click: reportSpamAction,
 			icon: Icons.Spam,
+		})
+	}
+
+	if (reportNotSpamAction != null) {
+		moreButtons.push({
+			label: "reportNotSpam_action",
+			click: reportNotSpamAction,
+			icon: Icons.NotBug,
 		})
 	}
 

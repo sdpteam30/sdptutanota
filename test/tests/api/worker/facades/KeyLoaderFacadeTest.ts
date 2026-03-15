@@ -327,6 +327,25 @@ o.spec("KeyLoaderFacadeTest", function () {
 			)
 			verify(cacheManagementFacade.refreshKeyCache(matchers.anything()), { times: 0 })
 		})
+
+		o("reloading in case of outdated range cache works", async function () {
+			const groupKey: VersionedKey = { object: formerKeysDecrypted[1], version: 1 }
+			const requestedVersion: KeyVersion = 0
+			when(
+				entityClient.loadRange(
+					GroupKeyTypeRef,
+					group.formerGroupKeys.list,
+					stringToCustomId(groupKey.version.toString()),
+					groupKey.version - requestedVersion,
+					true,
+				),
+			).thenResolve([], [formerKeys[0]])
+
+			const result = await keyLoaderFacade.loadSymGroupKey(group._id, requestedVersion, groupKey)
+
+			o(result).deepEquals(formerKeysDecrypted[0])
+			verify(entityClient.loadMultiple(GroupKeyTypeRef, group.formerGroupKeys.list, [stringToCustomId(requestedVersion.toString())]))
+		})
 	})
 
 	o.spec("loadSymUserGroupKey", function () {
@@ -358,7 +377,7 @@ o.spec("KeyLoaderFacadeTest", function () {
 			})
 		})
 
-		o.spec("updates the user if out-of-date", function () {
+		o.spec("updates the user and group if out-of-date", function () {
 			let user: User
 			o.beforeEach(function () {
 				when(userFacade.getMembership(group._id)).thenReturn(outOfDateMembership)
@@ -390,7 +409,20 @@ o.spec("KeyLoaderFacadeTest", function () {
 				verify(cacheManagementFacade.refreshKeyCache(group._id), { times: 1 })
 			})
 
-			o("loadKeyPair", async function () {
+			o("loadKeyPair - user out-of-date", async function () {
+				const loadedKeyPair = await keyLoaderFacade.loadKeypair(group._id, parseKeyVersion(membership.groupKeyVersion))
+
+				o(loadedKeyPair).deepEquals(currentKeyPair)
+				verify(cacheManagementFacade.refreshKeyCache(group._id), { times: 1 })
+			})
+
+			o("loadKeyPair - group out-of-date ", async function () {
+				// make sure the user is up-to-date
+				when(userFacade.getMembership(group._id)).thenReturn(membership)
+
+				const outOfDateGroup = createTestEntity(GroupTypeRef, { ...group, groupKeyVersion: String(parseKeyVersion(group.groupKeyVersion) - 1) })
+				when(entityClient.load(GroupTypeRef, group._id)).thenResolve(outOfDateGroup)
+
 				const loadedKeyPair = await keyLoaderFacade.loadKeypair(group._id, parseKeyVersion(membership.groupKeyVersion))
 
 				o(loadedKeyPair).deepEquals(currentKeyPair)

@@ -27,6 +27,8 @@ export interface MailViewerToolbarAttrs {
 	forwardAction: (() => void) | null
 	mailViewerMoreActions: MailViewerMoreActions | null
 	reportSpamAction: (() => void) | null
+	unscheduleMailAction: (() => void) | null
+	reportNotSpamAction: (() => void) | null
 }
 
 // Note: this is only used for non-mobile views. Please also update MobileMailMultiselectionActionBar or MobileMailActionBar
@@ -49,6 +51,7 @@ export class MailViewerActions implements Component<MailViewerToolbarAttrs> {
 				this.renderLabelButton(attrs),
 				this.renderReadButton(attrs),
 				this.renderReportSpamButton(attrs),
+				this.renderReportNotSpamButton(attrs),
 				this.renderExtraButtons(attrs.exportAction, attrs.mailViewerMoreActions),
 			]
 		}
@@ -58,12 +61,17 @@ export class MailViewerActions implements Component<MailViewerToolbarAttrs> {
 	 * Actions that can only be taken on a single mail (reply, forward, edit, assign)
 	 */
 	private renderSingleMailActions(attrs: MailViewerToolbarAttrs): Children {
-		const { editDraftAction, replyAction, replyAllAction, forwardAction } = attrs
+		const { editDraftAction, replyAction, replyAllAction, forwardAction, reportNotSpamAction } = attrs
 		if (editDraftAction == null && replyAction == null && replyAllAction == null && forwardAction == null) {
 			return null
 		}
 
-		return [this.renderEditButton(editDraftAction), this.renderReplyButton(replyAction, replyAllAction), this.renderForwardButton(forwardAction)]
+		const isShowReportNotSpamAction = reportNotSpamAction != null
+		if (!isShowReportNotSpamAction) {
+			return [this.renderEditButton(editDraftAction), this.renderReplyButton(replyAction, replyAllAction), this.renderForwardButton(forwardAction)]
+		} else {
+			return []
+		}
 	}
 
 	private renderTrashButton({ trashMailsAction }: MailViewerToolbarAttrs): Children {
@@ -92,9 +100,20 @@ export class MailViewerActions implements Component<MailViewerToolbarAttrs> {
 		return (
 			reportSpamAction &&
 			m(IconButton, {
-				title: "spam_move_action",
+				title: "reportSpam_action",
 				click: reportSpamAction,
 				icon: Icons.Spam,
+			})
+		)
+	}
+
+	private renderReportNotSpamButton({ reportNotSpamAction }: MailViewerToolbarAttrs): Children {
+		return (
+			reportNotSpamAction &&
+			m(IconButton, {
+				title: "reportNotSpam_action",
+				click: reportNotSpamAction,
+				icon: Icons.NotBug,
 			})
 		)
 	}

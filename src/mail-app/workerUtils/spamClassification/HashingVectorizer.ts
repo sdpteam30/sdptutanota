@@ -1,6 +1,7 @@
 import { arrayHashUnsigned, downcast, promiseMap, stringToUtf8Uint8Array } from "@tutao/tutanota-utils"
 import { env, PlatformStub, stringToHashBucketFast, tensor1d } from "./tensorflow-custom"
-import { MAX_WORD_FREQUENCY } from "../../../common/api/common/utils/spamClassificationUtils/SpamMailProcessor"
+import { BYTES_FOR_SERVER_CLASSIFICATION_DATA } from "../../../common/api/common/utils/spamClassificationUtils/SpamMailProcessor"
+import { MAX_WORD_FREQUENCY } from "../../../common/api/common/TutanotaConstants"
 
 export class HashingVectorizer {
 	private readonly hasher: (tokens: Array<string>) => Promise<Array<number>> = this.tensorHash
@@ -20,6 +21,7 @@ export class HashingVectorizer {
 		return vector
 	}
 
+	// visibleForTesting
 	public async transform(preprocessedMails: Array<ReadonlyArray<string>>): Promise<number[][]> {
 		return await promiseMap(preprocessedMails, (preprocessedMail) => this.vectorize(preprocessedMail), { concurrency: 1 })
 	}

@@ -72,7 +72,6 @@ o.spec("EventBusEventCoordinatorTest", () => {
 		teamGroupIds = ["team"]
 		when(groupManagementFacade.loadTeamGroupIds()).thenResolve(teamGroupIds)
 		eventBusEventCoordinator = new EventBusEventCoordinator(
-			object(),
 			lazyMailFacade,
 			userFacade,
 			entityClient,
@@ -215,7 +214,7 @@ o.spec("EventBusEventCoordinatorTest", () => {
 
 		verify(userFacade.updateUser(user))
 		verify(cacheManagementFacade.tryUpdatingUserGroupKey())
-		verify(eventController.onEntityUpdateReceived(updates, "groupId"))
+		verify(eventController.onEntityUpdateReceived(updates, "groupId", undefined))
 		verify(mailFacade.entityEventsReceived(updates))
 	})
 
@@ -236,7 +235,7 @@ o.spec("EventBusEventCoordinatorTest", () => {
 
 		verify(userFacade.updateUser(user))
 		verify(cacheManagementFacade.tryUpdatingUserGroupKey(), { times: 0 })
-		verify(eventController.onEntityUpdateReceived(updates, "groupId"))
+		verify(eventController.onEntityUpdateReceived(updates, "groupId", undefined))
 		verify(mailFacade.entityEventsReceived(updates))
 	})
 
@@ -260,7 +259,7 @@ o.spec("EventBusEventCoordinatorTest", () => {
 		verify(keyRotationFacadeMock.updateGroupMembershipsInOneList([[instanceListId, instanceId]]))
 		verify(userFacade.updateUser(user), { times: 0 })
 		verify(cacheManagementFacade.tryUpdatingUserGroupKey(), { times: 0 })
-		verify(eventController.onEntityUpdateReceived(updates, "groupId"))
+		verify(eventController.onEntityUpdateReceived(updates, "groupId", undefined))
 		verify(mailFacade.entityEventsReceived(updates))
 	})
 })

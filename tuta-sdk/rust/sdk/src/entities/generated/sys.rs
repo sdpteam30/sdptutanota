@@ -135,8 +135,6 @@ pub struct GroupInfo {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for GroupInfo {
@@ -660,8 +658,6 @@ pub struct AccountingInfo {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for AccountingInfo {
@@ -720,6 +716,8 @@ pub struct CustomerInfo {
 	pub perUserAliasCount: i64,
 	#[serde(rename = "2098")]
 	pub plan: i64,
+	#[serde(rename = "2682")]
+	pub promotionId: Option<String>,
 	#[serde(rename = "158")]
 	pub customer: GeneratedId,
 	#[serde(rename = "159")]
@@ -740,6 +738,10 @@ pub struct CustomerInfo {
 	pub customPlan: Option<PlanConfiguration>,
 	#[serde(rename = "2197")]
 	pub supportInfo: Option<GeneratedId>,
+	#[serde(rename = "2681")]
+	pub managedByPartner: Option<GeneratedId>,
+	#[serde(rename = "2683")]
+	pub partnerManagedCustomers: Option<GeneratedId>,
 }
 
 impl Entity for CustomerInfo {
@@ -1258,8 +1260,6 @@ pub struct EntityUpdate {
 	pub _id: Option<CustomId>,
 	#[serde(rename = "464")]
 	pub application: String,
-	#[serde(rename = "465")]
-	pub r#type: String,
 	#[serde(rename = "466")]
 	pub instanceListId: String,
 	#[serde(rename = "467")]
@@ -1267,7 +1267,7 @@ pub struct EntityUpdate {
 	#[serde(rename = "624")]
 	pub operation: i64,
 	#[serde(rename = "2556")]
-	pub typeId: Option<i64>,
+	pub typeId: i64,
 	#[serde(rename = "2617")]
 	pub instance: Option<String>,
 	#[serde(rename = "2618")]
@@ -1565,8 +1565,6 @@ pub struct PushIdentifier {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for PushIdentifier {
@@ -2114,8 +2112,6 @@ pub struct PaymentDataServicePutData {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for PaymentDataServicePutData {
@@ -2328,8 +2324,6 @@ pub struct EmailSenderListElement {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for EmailSenderListElement {
@@ -2366,8 +2360,6 @@ pub struct CustomerServerProperties {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CustomerServerProperties {
@@ -2509,8 +2501,6 @@ pub struct AuditLogEntry {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for AuditLogEntry {
@@ -2788,8 +2778,6 @@ pub struct Session {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for Session {
@@ -3017,8 +3005,6 @@ pub struct WhitelabelChild {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for WhitelabelChild {
@@ -3086,8 +3072,6 @@ pub struct CreditCard {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CreditCard {
@@ -3146,8 +3130,6 @@ pub struct OrderProcessingAgreement {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for OrderProcessingAgreement {
@@ -3590,8 +3572,6 @@ pub struct AlarmInfo {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for AlarmInfo {
@@ -3624,8 +3604,6 @@ pub struct UserAlarmInfo {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for UserAlarmInfo {
@@ -3698,8 +3676,6 @@ pub struct RepeatRule {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for RepeatRule {
@@ -3735,8 +3711,6 @@ pub struct AlarmNotification {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for AlarmNotification {
@@ -3758,8 +3732,6 @@ pub struct AlarmServicePost {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for AlarmServicePost {
@@ -3897,8 +3869,6 @@ pub struct ReceivedGroupInvitation {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ReceivedGroupInvitation {
@@ -3982,8 +3952,6 @@ pub struct InvoiceItem {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for InvoiceItem {
@@ -4046,8 +4014,6 @@ pub struct Invoice {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for Invoice {
@@ -4084,8 +4050,6 @@ pub struct MissedNotification {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for MissedNotification {
@@ -4258,8 +4222,6 @@ pub struct GiftCard {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for GiftCard {
@@ -4349,8 +4311,6 @@ pub struct GiftCardCreateData {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for GiftCardCreateData {
@@ -4435,8 +4395,6 @@ pub struct GiftCardRedeemGetReturn {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for GiftCardRedeemGetReturn {
@@ -4925,8 +4883,6 @@ pub struct DateWrapper {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for DateWrapper {
@@ -4983,6 +4939,8 @@ pub struct PlanConfiguration {
 	pub contactList: bool,
 	#[serde(rename = "2526")]
 	pub maxLabels: i64,
+	#[serde(rename = "2662")]
+	pub scheduledMails: bool,
 }
 
 impl Entity for PlanConfiguration {
@@ -5532,8 +5490,6 @@ pub struct GroupKeyUpdate {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for GroupKeyUpdate {
@@ -5870,8 +5826,6 @@ pub struct CalendarAdvancedRepeatRule {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CalendarAdvancedRepeatRule {
@@ -6278,6 +6232,38 @@ impl Entity for AbuseInfo {
 		TypeRef {
 			app: AppName::Sys,
 			type_id: TypeId::from(2650),
+		}
+	}
+}
+
+#[derive(uniffi::Record, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "testing"), derive(PartialEq, Debug))]
+pub struct PartnerManagedCustomer {
+	#[serde(rename = "2674")]
+	pub _id: Option<IdTupleGenerated>,
+	#[serde(rename = "2675")]
+	pub _permissions: GeneratedId,
+	#[serde(rename = "2676")]
+	pub _format: i64,
+	#[serde(rename = "2677")]
+	pub _ownerGroup: Option<GeneratedId>,
+	#[serde(rename = "2678")]
+	#[serde(with = "serde_bytes")]
+	pub _ownerEncSessionKey: Option<Vec<u8>>,
+	#[serde(rename = "2679")]
+	pub _ownerKeyVersion: Option<i64>,
+	#[serde(rename = "2680")]
+	pub customerInfo: IdTupleGenerated,
+
+	#[serde(default)]
+	pub _errors: Errors,
+}
+
+impl Entity for PartnerManagedCustomer {
+	fn type_ref() -> TypeRef {
+		TypeRef {
+			app: AppName::Sys,
+			type_id: TypeId::from(2672),
 		}
 	}
 }

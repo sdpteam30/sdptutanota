@@ -67,7 +67,7 @@ export async function computePatches(
 ): Promise<Patch[]> {
 	let patches: Patch[] = []
 	for (const [valueIdStr, modelValue] of Object.entries(typeModel.values)) {
-		if (IDENTITY_FIELDS.includes(modelValue.name)) {
+		if (IDENTITY_FIELDS.includes(modelValue.name) || modelValue.final) {
 			continue
 		}
 		const attributeId = parseInt(valueIdStr)
@@ -117,8 +117,9 @@ export async function computePatches(
 				(instance) => instance[assertNotNull(AttributeModel.getAttributeId(aggregateTypeModel, "_id"))] as Id,
 			)
 			if (!isDistinctAggregateIds(modifiedAggregateIds)) {
+				const modifiedInstanceId: IdTuple | Id = AttributeModel.getAttribute(modifiedInstance, "_id", typeModel)
 				throw new ProgrammingError(
-					"Duplicate aggregate ids in the modified instance: " + AttributeModel.getAttribute(modifiedInstance, "_id", typeModel),
+					`Duplicate aggregate ids of aggregate ${appName}/${typeId} in modified instance ${typeModel.app}/${typeModel.id} :  ${modifiedInstanceId}`,
 				)
 			}
 			const addedItems = modifiedAggregatedUntypedEntities.filter(
