@@ -982,7 +982,7 @@ export class MailViewerViewModel {
 		await this.updateMailPhishingStatus(MailPhishingStatus.WHITELISTED)
 	}
 
-	async reportMail(reportType: MailReportType): Promise<void> {
+	async reportSpamForMail(reportType: MailReportType): Promise<void> {
 		if (reportType === MailReportType.PHISHING) {
 			console.log(`🔒 MOBYPHISH_LOG: Report phishing button clicked...`)
 		}
@@ -1020,9 +1020,10 @@ export class MailViewerViewModel {
 			const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
 
 			if (reportType === MailReportType.PHISHING) {
-				await this.markAsPhishing()
+				// Only move to spam - no Tutanota API calls (markAsPhishing or reportMails)
+				// Phishing is only reported to MobyPhish trusted-senders-backend above
 				await this.mailModel.moveMails([this.mail._id], spamFolder, MoveMode.Mails)
-				await this.mailModel.reportMails(MailReportType.PHISHING, [this.mail])
+				console.log(`🔒 MOBYPHISH_LOG: Mail moved to spam folder (no Tutanota phishing report)`)
 			} else {
 				await moveMails({
 					mailboxModel: this.mailboxModel,
@@ -1299,7 +1300,7 @@ export class MailViewerViewModel {
 	/** @return list of inline referenced cid */
 	private async loadAndProcessAdditionalMailInfo(mail: Mail, delayBodyRenderingUntil: Promise<unknown>): Promise<string[]> {
 		console.log(
-			`🔒 MOBYPHISH_LOG: loadAndProcessAdditionalMailInfo called - mailId="${mail._id[1]}", confidential=${mail.confidential}, isTutanotaTeamMail=${isTutanotaTeamMail(mail)}, senderStatus="${this.senderStatus}"`,
+			`🔒 MOBYPHISH_LOG: loadAndProcessAdditionalMailInfo called - mailId="${mail._id[1]}", confidential=${mail.confidential}, isTutanotaTeamMail=${isTutaTeamMail(mail)}, senderStatus="${this.senderStatus}"`,
 		)
 		// If the mail is a non-draft and we have loaded it before, we don't need to reload it because it cannot have been edited, so we return early
 		// drafts however can be edited, and we want to receive the changes, so for drafts we will always reload
@@ -1378,7 +1379,7 @@ export class MailViewerViewModel {
 
 		const shouldBlockImages = this.isBlockingExternalImages()
 		const senderEmail = getDisplayedSenderWithDomainReplacement(mail).address
-		const isTutanotaMail = isTutanotaTeamMail(mail)
+		const isTutanotaMail = isTutaTeamMail(mail)
 		console.log(
 			`🔒 MOBYPHISH_LOG: About to sanitize mail body - sender="${senderEmail}", isTutanotaMail=${isTutanotaMail}, senderStatus="${this.senderStatus}", contentBlockingStatus="${this.contentBlockingStatus}", shouldBlockImages=${shouldBlockImages}`,
 		)
@@ -1696,7 +1697,7 @@ export class MailViewerViewModel {
 			return rawBody
 		})
 
-		const isTutanotaMail = isTutanotaTeamMail(mail)
+		const isTutanotaMail = isTutaTeamMail(mail)
 
 		// YOUR logging (keep this)
 		console.log(
