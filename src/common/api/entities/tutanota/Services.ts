@@ -1,7 +1,7 @@
 import { ApplyLabelServicePostInTypeRef } from "./TypeRefs.js"
 import { UserAreaGroupPostDataTypeRef } from "./TypeRefs.js"
 import { CreateGroupPostReturnTypeRef } from "./TypeRefs.js"
-import { CalendarDeleteDataTypeRef } from "./TypeRefs.js"
+import { CalendarDeleteInTypeRef } from "./TypeRefs.js"
 import { ChangePrimaryAddressServicePutInTypeRef } from "./TypeRefs.js"
 import { ClientClassifierResultPostInTypeRef } from "./TypeRefs.js"
 import { UserAreaGroupDeleteDataTypeRef } from "./TypeRefs.js"
@@ -46,6 +46,7 @@ import { ResolveConversationsServiceGetInTypeRef } from "./TypeRefs.js"
 import { ResolveConversationsServiceGetOutTypeRef } from "./TypeRefs.js"
 import { SendDraftDataTypeRef } from "./TypeRefs.js"
 import { SendDraftReturnTypeRef } from "./TypeRefs.js"
+import { SendDraftDeleteInTypeRef } from "./TypeRefs.js"
 import { SimpleMoveMailPostInTypeRef } from "./TypeRefs.js"
 import { TranslationGetInTypeRef } from "./TypeRefs.js"
 import { TranslationGetOutTypeRef } from "./TypeRefs.js"
@@ -68,7 +69,7 @@ export const CalendarService = Object.freeze({
 	get: null,
 	post: { data: UserAreaGroupPostDataTypeRef, return: CreateGroupPostReturnTypeRef },
 	put: null,
-	delete: { data: CalendarDeleteDataTypeRef, return: null },
+	delete: { data: CalendarDeleteInTypeRef, return: null },
 } as const)
 
 export const ChangePrimaryAddressService = Object.freeze({
@@ -284,7 +285,7 @@ export const SendDraftService = Object.freeze({
 	get: null,
 	post: { data: SendDraftDataTypeRef, return: SendDraftReturnTypeRef },
 	put: null,
-	delete: null,
+	delete: { data: SendDraftDeleteInTypeRef, return: null },
 } as const)
 
 export const SimpleMoveMailService = Object.freeze({

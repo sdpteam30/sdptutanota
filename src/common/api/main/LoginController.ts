@@ -15,6 +15,7 @@ import { UnencryptedCredentials } from "../../native/common/generatedipc/Unencry
 import { PageContextLoginListener } from "./PageContextLoginListener.js"
 import { CacheMode } from "../worker/rest/EntityRestClient.js"
 import { CustomerFacade } from "../worker/facades/lazy/CustomerFacade"
+import { InvalidModelError } from "../common/error/InvalidModelError"
 
 assertMainOrNodeBoot()
 
@@ -189,10 +190,16 @@ export class LoginController {
 					SessionType.Persistent,
 				)
 			} catch (e) {
-				// Some parts of initialization can fail and we should reset the state, both on this side and the worker
-				// side, otherwise login cannot be attempted again
-				console.log("Error finishing login, logging out now!", e)
-				await this.logout(false)
+				console.log("Error finishing login", e)
+				// An InvalidModelError can occur when logging in with a new server model if a mapped instance is not yet synced.
+				// In such cases, the cache will be purged by the error handler, which we cannot do if logged out
+				if (!(e instanceof InvalidModelError)) {
+					// Some parts of initialization can fail and we should reset the state, both on this side and the worker
+					// side, otherwise login cannot be attempted again
+					console.log("logging out now!")
+					await this.logout(false)
+				}
+
 				throw e
 			}
 

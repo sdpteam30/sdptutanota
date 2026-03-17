@@ -55,8 +55,6 @@ pub struct TutanotaFile {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for TutanotaFile {
@@ -89,8 +87,6 @@ pub struct FileSystem {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for FileSystem {
@@ -116,8 +112,6 @@ pub struct ContactMailAddress {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactMailAddress {
@@ -143,8 +137,6 @@ pub struct ContactPhoneNumber {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactPhoneNumber {
@@ -170,8 +162,6 @@ pub struct ContactAddress {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactAddress {
@@ -197,8 +187,6 @@ pub struct ContactSocialId {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactSocialId {
@@ -283,8 +271,6 @@ pub struct Contact {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for Contact {
@@ -340,8 +326,6 @@ pub struct MailAddress {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for MailAddress {
@@ -403,6 +387,10 @@ pub struct Mail {
 	pub processingState: i64,
 	#[serde(rename = "1769")]
 	pub processNeeded: bool,
+	#[serde(rename = "1784")]
+	pub sendAt: Option<DateTime>,
+	#[serde(rename = "1814")]
+	pub serverClassificationData: Option<String>,
 	#[serde(rename = "111")]
 	pub sender: MailAddress,
 	#[serde(rename = "115")]
@@ -424,8 +412,6 @@ pub struct Mail {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for Mail {
@@ -482,8 +468,6 @@ pub struct MailBox {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for MailBox {
@@ -593,8 +577,6 @@ pub struct ContactList {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactList {
@@ -754,8 +736,6 @@ pub struct TutanotaProperties {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for TutanotaProperties {
@@ -842,8 +822,6 @@ pub struct MailSet {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for MailSet {
@@ -916,8 +894,6 @@ pub struct CreateMailFolderData {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CreateMailFolderData {
@@ -939,8 +915,6 @@ pub struct CreateMailFolderReturn {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CreateMailFolderReturn {
@@ -962,8 +936,6 @@ pub struct DeleteMailFolderData {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for DeleteMailFolderData {
@@ -1010,8 +982,6 @@ pub struct DraftRecipient {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for DraftRecipient {
@@ -1109,8 +1079,6 @@ pub struct DraftData {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for DraftData {
@@ -1141,8 +1109,6 @@ pub struct DraftCreateData {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for DraftCreateData {
@@ -1184,8 +1150,6 @@ pub struct DraftUpdateData {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for DraftUpdateData {
@@ -1207,8 +1171,6 @@ pub struct DraftUpdateReturn {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for DraftUpdateReturn {
@@ -1332,6 +1294,10 @@ pub struct SendDraftData {
 	#[serde(rename = "1444")]
 	#[serde(with = "serde_bytes")]
 	pub sessionEncEncryptionAuthStatus: Option<Vec<u8>>,
+	#[serde(rename = "1809")]
+	pub sendAt: Option<DateTime>,
+	#[serde(rename = "1822")]
+	pub allowUndo: bool,
 	#[serde(rename = "553")]
 	pub internalRecipientKeyData: Vec<InternalRecipientKeyData>,
 	#[serde(rename = "554")]
@@ -1342,6 +1308,8 @@ pub struct SendDraftData {
 	pub mail: IdTupleGenerated,
 	#[serde(rename = "1353")]
 	pub symEncInternalRecipientKeyData: Vec<SymEncInternalRecipientKeyData>,
+	#[serde(rename = "1810")]
+	pub parameters: Option<SendDraftParameters>,
 }
 
 impl Entity for SendDraftData {
@@ -1366,6 +1334,8 @@ pub struct SendDraftReturn {
 	pub notifications: Vec<NotificationMail>,
 	#[serde(rename = "562")]
 	pub sentMail: IdTupleGenerated,
+	#[serde(rename = "1823")]
+	pub sendJob: Option<IdTupleGenerated>,
 }
 
 impl Entity for SendDraftReturn {
@@ -1404,13 +1374,13 @@ pub struct InboxRule {
 	pub r#type: String,
 	#[serde(rename = "576")]
 	pub value: String,
+	#[serde(rename = "1783")]
+	pub excludeFromSpamFilter: Option<bool>,
 	#[serde(rename = "577")]
 	pub targetFolder: IdTupleGenerated,
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for InboxRule {
@@ -1434,8 +1404,6 @@ pub struct EncryptedMailAddress {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for EncryptedMailAddress {
@@ -1833,8 +1801,6 @@ pub struct CalendarRepeatRule {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CalendarRepeatRule {
@@ -1883,6 +1849,10 @@ pub struct CalendarEvent {
 	pub recurrenceId: Option<DateTime>,
 	#[serde(rename = "1401")]
 	pub _ownerKeyVersion: Option<i64>,
+	#[serde(rename = "1812")]
+	pub sender: Option<String>,
+	#[serde(rename = "1813")]
+	pub pendingInvitation: Option<bool>,
 	#[serde(rename = "945")]
 	pub repeatRule: Option<CalendarRepeatRule>,
 	#[serde(rename = "946")]
@@ -1894,8 +1864,6 @@ pub struct CalendarEvent {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CalendarEvent {
@@ -1932,8 +1900,6 @@ pub struct CalendarGroupRoot {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CalendarGroupRoot {
@@ -2020,8 +1986,6 @@ pub struct GroupSettings {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for GroupSettings {
@@ -2062,8 +2026,6 @@ pub struct UserSettingsGroupRoot {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for UserSettingsGroupRoot {
@@ -2077,14 +2039,14 @@ impl Entity for UserSettingsGroupRoot {
 
 #[derive(uniffi::Record, Clone, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "testing"), derive(PartialEq, Debug))]
-pub struct CalendarDeleteData {
+pub struct CalendarDeleteIn {
 	#[serde(rename = "983")]
 	pub _format: i64,
 	#[serde(rename = "984")]
 	pub groupRootId: GeneratedId,
 }
 
-impl Entity for CalendarDeleteData {
+impl Entity for CalendarDeleteIn {
 	fn type_ref() -> TypeRef {
 		TypeRef {
 			app: AppName::Tutanota,
@@ -2103,8 +2065,6 @@ pub struct CreateGroupPostReturn {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CreateGroupPostReturn {
@@ -2323,8 +2283,6 @@ pub struct CalendarEventAttendee {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CalendarEventAttendee {
@@ -2403,8 +2361,6 @@ pub struct CalendarEventUpdate {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for CalendarEventUpdate {
@@ -2559,8 +2515,6 @@ pub struct EmailTemplateContent {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for EmailTemplateContent {
@@ -2597,8 +2551,6 @@ pub struct EmailTemplate {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for EmailTemplate {
@@ -2620,8 +2572,6 @@ pub struct KnowledgeBaseEntryKeyword {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for KnowledgeBaseEntryKeyword {
@@ -2658,8 +2608,6 @@ pub struct KnowledgeBaseEntry {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for KnowledgeBaseEntry {
@@ -2694,8 +2642,6 @@ pub struct TemplateGroupRoot {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for TemplateGroupRoot {
@@ -2748,8 +2694,6 @@ pub struct MailboxProperties {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for MailboxProperties {
@@ -2847,8 +2791,6 @@ pub struct MailAddressProperties {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for MailAddressProperties {
@@ -2872,8 +2814,6 @@ pub struct Header {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for Header {
@@ -2897,8 +2837,6 @@ pub struct Body {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for Body {
@@ -2981,8 +2919,6 @@ pub struct MailDetailsDraft {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for MailDetailsDraft {
@@ -3015,8 +2951,6 @@ pub struct MailDetailsBlob {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for MailDetailsBlob {
@@ -3087,8 +3021,6 @@ pub struct ContactListEntry {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactListEntry {
@@ -3121,8 +3053,6 @@ pub struct ContactListGroupRoot {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactListGroupRoot {
@@ -3173,8 +3103,6 @@ pub struct ContactCustomDate {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactCustomDate {
@@ -3200,8 +3128,6 @@ pub struct ContactWebsite {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactWebsite {
@@ -3227,8 +3153,6 @@ pub struct ContactRelationship {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactRelationship {
@@ -3254,8 +3178,6 @@ pub struct ContactMessengerHandle {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactMessengerHandle {
@@ -3279,8 +3201,6 @@ pub struct ContactPronouns {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ContactPronouns {
@@ -3340,8 +3260,6 @@ pub struct DefaultAlarmInfo {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for DefaultAlarmInfo {
@@ -3449,8 +3367,6 @@ pub struct ManageLabelServiceLabelData {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ManageLabelServiceLabelData {
@@ -3479,8 +3395,6 @@ pub struct ManageLabelServicePostIn {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ManageLabelServicePostIn {
@@ -3657,8 +3571,6 @@ pub struct ImportMailData {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ImportMailData {
@@ -3785,8 +3697,6 @@ pub struct ImportMailGetIn {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ImportMailGetIn {
@@ -3810,8 +3720,6 @@ pub struct AdvancedRepeatRule {
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for AdvancedRepeatRule {
@@ -4173,12 +4081,13 @@ pub struct ClientSpamTrainingDatum {
 	pub spamDecision: i64,
 	#[serde(rename = "1746")]
 	#[serde(with = "serde_bytes")]
-	pub vector: Vec<u8>,
+	pub vectorLegacy: Vec<u8>,
+	#[serde(rename = "1817")]
+	#[serde(with = "serde_bytes")]
+	pub vectorWithServerClassifiers: Option<Vec<u8>>,
 
 	#[serde(default)]
 	pub _errors: Errors,
-	#[serde(default)]
-	pub _finalIvs: HashMap<String, Option<FinalIv>>,
 }
 
 impl Entity for ClientSpamTrainingDatum {
@@ -4228,11 +4137,16 @@ pub struct ProcessInboxDatum {
 	pub classifierType: Option<i64>,
 	#[serde(rename = "1763")]
 	#[serde(with = "serde_bytes")]
-	pub encVector: Vec<u8>,
+	pub encVectorLegacy: Vec<u8>,
+	#[serde(rename = "1815")]
+	#[serde(with = "serde_bytes")]
+	pub encVectorWithServerClassifiers: Option<Vec<u8>>,
 	#[serde(rename = "1760")]
 	pub mailId: IdTupleGenerated,
 	#[serde(rename = "1761")]
 	pub targetMoveFolder: IdTupleGenerated,
+	#[serde(rename = "1811")]
+	pub ownerEncMailSessionKeys: Vec<super::sys::InstanceSessionKey>,
 }
 
 impl Entity for ProcessInboxDatum {
@@ -4252,7 +4166,7 @@ pub struct ProcessInboxPostIn {
 	#[serde(rename = "1766")]
 	pub mailOwnerGroup: GeneratedId,
 	#[serde(rename = "1767")]
-	pub processInboxDatum: Vec<ProcessInboxDatum>,
+	pub processInboxData: Vec<ProcessInboxDatum>,
 }
 
 impl Entity for ProcessInboxPostIn {
@@ -4280,7 +4194,10 @@ pub struct PopulateClientSpamTrainingDatum {
 	pub confidence: i64,
 	#[serde(rename = "1777")]
 	#[serde(with = "serde_bytes")]
-	pub encVector: Vec<u8>,
+	pub encVectorLegacy: Vec<u8>,
+	#[serde(rename = "1816")]
+	#[serde(with = "serde_bytes")]
+	pub encVectorWithServerClassifiers: Option<Vec<u8>>,
 	#[serde(rename = "1774")]
 	pub mailId: IdTupleGenerated,
 }
@@ -4302,7 +4219,7 @@ pub struct PopulateClientSpamTrainingDataPostIn {
 	#[serde(rename = "1780")]
 	pub mailOwnerGroup: GeneratedId,
 	#[serde(rename = "1781")]
-	pub populateClientSpamTrainingDatum: Vec<PopulateClientSpamTrainingDatum>,
+	pub populateClientSpamTrainingData: Vec<PopulateClientSpamTrainingDatum>,
 }
 
 impl Entity for PopulateClientSpamTrainingDataPostIn {
@@ -4310,6 +4227,69 @@ impl Entity for PopulateClientSpamTrainingDataPostIn {
 		TypeRef {
 			app: AppName::Tutanota,
 			type_id: TypeId::from(1778),
+		}
+	}
+}
+
+#[derive(uniffi::Record, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "testing"), derive(PartialEq, Debug))]
+pub struct SendDraftDeleteIn {
+	#[serde(rename = "1786")]
+	pub _format: i64,
+	#[serde(rename = "1787")]
+	pub mail: IdTupleGenerated,
+	#[serde(rename = "1824")]
+	pub sendJob: Option<IdTupleGenerated>,
+}
+
+impl Entity for SendDraftDeleteIn {
+	fn type_ref() -> TypeRef {
+		TypeRef {
+			app: AppName::Tutanota,
+			type_id: TypeId::from(1785),
+		}
+	}
+}
+
+#[derive(uniffi::Record, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "testing"), derive(PartialEq, Debug))]
+pub struct SendDraftParameters {
+	#[serde(rename = "1789")]
+	pub _id: Option<CustomId>,
+	#[serde(rename = "1791")]
+	pub language: String,
+	#[serde(rename = "1792")]
+	#[serde(with = "serde_bytes")]
+	pub mailSessionKey: Option<Vec<u8>>,
+	#[serde(rename = "1793")]
+	#[serde(with = "serde_bytes")]
+	pub bucketEncMailSessionKey: Option<Vec<u8>>,
+	#[serde(rename = "1794")]
+	pub senderNameUnencrypted: Option<String>,
+	#[serde(rename = "1795")]
+	pub plaintext: bool,
+	#[serde(rename = "1796")]
+	pub calendarMethod: bool,
+	#[serde(rename = "1801")]
+	#[serde(with = "serde_bytes")]
+	pub sessionEncEncryptionAuthStatus: Option<Vec<u8>>,
+	#[serde(rename = "1790")]
+	pub mail: IdTupleGenerated,
+	#[serde(rename = "1797")]
+	pub internalRecipientKeyData: Vec<InternalRecipientKeyData>,
+	#[serde(rename = "1798")]
+	pub secureExternalRecipientKeyData: Vec<SecureExternalRecipientKeyData>,
+	#[serde(rename = "1799")]
+	pub symEncInternalRecipientKeyData: Vec<SymEncInternalRecipientKeyData>,
+	#[serde(rename = "1800")]
+	pub attachmentKeyData: Vec<AttachmentKeyData>,
+}
+
+impl Entity for SendDraftParameters {
+	fn type_ref() -> TypeRef {
+		TypeRef {
+			app: AppName::Tutanota,
+			type_id: TypeId::from(1788),
 		}
 	}
 }

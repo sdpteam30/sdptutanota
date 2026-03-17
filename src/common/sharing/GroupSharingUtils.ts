@@ -5,7 +5,7 @@ import { showProgressDialog } from "../gui/dialogs/ProgressDialog"
 import type { GroupSharingTexts } from "./GroupGuiUtils"
 import { getDefaultGroupName, getInvitationGroupType, getSharedGroupName } from "./GroupUtils"
 import { PartialRecipient, Recipients } from "../api/common/recipients/Recipient"
-import { getDefaultSender, getEnabledMailAddressesWithUser, getSenderNameForUser } from "../mailFunctionality/SharedMailUtils.js"
+import { getDefaultSender, getSenderNameForUser, isAliasEnabledWithUser } from "../mailFunctionality/SharedMailUtils.js"
 
 export function sendShareNotificationEmail(sharedGroupInfo: GroupInfo, recipients: Array<PartialRecipient>, texts: GroupSharingTexts) {
 	locator.mailboxModel.getUserMailboxDetails().then((mailboxDetails) => {
@@ -89,7 +89,7 @@ function _sendNotificationEmail(recipients: Recipients, subject: string, body: s
 			usePlaceholderForInlineImages: false,
 		}).html
 		locator.mailboxModel.getUserMailboxDetails().then(async (mailboxDetails) => {
-			const sender = getEnabledMailAddressesWithUser(mailboxDetails, locator.logins.getUserController().userGroupInfo).includes(senderMailAddress)
+			const sender = isAliasEnabledWithUser(mailboxDetails, locator.logins.getUserController().userGroupInfo, senderMailAddress)
 				? senderMailAddress
 				: getDefaultSender(locator.logins, mailboxDetails)
 
@@ -99,7 +99,7 @@ function _sendNotificationEmail(recipients: Recipients, subject: string, body: s
 			const mailboxProperties = await locator.mailboxModel.getMailboxProperties(mailboxDetails.mailboxGroupRoot)
 			const model = await locator.sendMailModel(mailboxDetails, mailboxProperties)
 			await model.initWithTemplate(recipients, subject, sanitizedBody, [], true, sender)
-			await model.send(MailMethod.NONE, confirm, wait, "tooManyMailsAuto_msg")
+			await model.send(MailMethod.NONE, confirm, wait, null, "tooManyMailsAuto_msg")
 		})
 	})
 }

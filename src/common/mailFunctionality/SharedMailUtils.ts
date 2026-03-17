@@ -2,7 +2,7 @@ import { assertMainOrNode } from "../api/common/Env.js"
 import { CustomerPropertiesTypeRef, GroupInfo, User } from "../api/entities/sys/TypeRefs.js"
 import { Contact, createContact, createContactMailAddress, Mail } from "../api/entities/tutanota/TypeRefs.js"
 import { fullNameToFirstAndLastName, mailAddressToFirstAndLastName } from "../misc/parsing/MailAddressParser.js"
-import { assertNotNull, contains, neverNull, uint8ArrayToBase64 } from "@tutao/tutanota-utils"
+import { assertNotNull, endsWith, neverNull, uint8ArrayToBase64 } from "@tutao/tutanota-utils"
 import {
 	ALLOWED_IMAGE_FORMATS,
 	ContactAddressType,
@@ -16,7 +16,7 @@ import {
 	TUTA_MAIL_ADDRESS_DOMAINS,
 } from "../api/common/TutanotaConstants.js"
 import { UserController } from "../api/main/UserController.js"
-import { getEnabledMailAddressesForGroupInfo, getGroupInfoDisplayName } from "../api/common/utils/GroupUtils.js"
+import { getEnabledMailAddressesForGroupInfo, getGroupInfoDisplayName, isAliasEnabledForGroupInfo } from "../api/common/utils/GroupUtils.js"
 import { lang, Language, TranslationKey } from "../misc/LanguageViewModel.js"
 import { MailboxDetail } from "./MailboxModel.js"
 import { LoginController } from "../api/main/LoginController.js"
@@ -99,13 +99,19 @@ export function getEnabledMailAddressesWithUser(mailboxDetail: MailboxDetail, us
 	}
 }
 
+export function isAliasEnabledWithUser(mailboxDetail: MailboxDetail, userGroupInfo: GroupInfo, aliasAddress: string): boolean {
+	if (isUserMailbox(mailboxDetail)) {
+		return isAliasEnabledForGroupInfo(userGroupInfo, aliasAddress)
+	} else {
+		return isAliasEnabledForGroupInfo(mailboxDetail.mailGroupInfo, aliasAddress)
+	}
+}
+
 /**
  * @return {string} default mail address
  */
 export function getDefaultSenderFromUser({ props, userGroupInfo }: UserController): string {
-	return props.defaultSender && contains(getEnabledMailAddressesForGroupInfo(userGroupInfo), props.defaultSender)
-		? props.defaultSender
-		: neverNull(userGroupInfo.mailAddress)
+	return props.defaultSender && isAliasEnabledForGroupInfo(userGroupInfo, props.defaultSender) ? props.defaultSender : neverNull(userGroupInfo.mailAddress)
 }
 
 export function isUserMailbox(mailboxDetails: MailboxDetail): boolean {
@@ -123,7 +129,7 @@ export function getDefaultSender(logins: LoginController, mailboxDetails: Mailbo
 export function isUserEmail(logins: LoginController, mailboxDetails: MailboxDetail, address: string): boolean {
 	if (isUserMailbox(mailboxDetails)) {
 		return (
-			contains(getEnabledMailAddressesWithUser(mailboxDetails, logins.getUserController().userGroupInfo), address) ||
+			isAliasEnabledWithUser(mailboxDetails, logins.getUserController().userGroupInfo, address) ||
 			logins.getUserController().userGroupInfo.mailAddress === address
 		)
 	} else {
@@ -162,7 +168,7 @@ export function getTemplateLanguages(sortedLanguages: Array<Language>, entityCli
 
 	return loginController
 		.getUserController()
-		.loadCustomer()
+		.reloadCustomer()
 		.then((customer) => entityClient.load(CustomerPropertiesTypeRef, neverNull(customer.properties)))
 		.then((customerProperties) => {
 			return sortedLanguages.filter((sL) => customerProperties.notificationMailTemplates.find((nmt) => nmt.language === sL.code))
@@ -245,6 +251,27 @@ export function hasValidEncryptionAuthForTeamOrSystemMail({ encryptionAuthStatus
 			// we have to be able to handle future cases, to be safe we say that they are not valid encryptionAuth
 			return false
 	}
+}
+
+/**
+ * NOTE: DOES NOT VERIFY IF THE MESSAGE IS AUTHENTIC - DO NOT USE THIS OUTSIDE OF THIS FILE OR FOR TESTING
+ * @VisibleForTesting
+ */
+export function isTutanotaTeamAddress(address: string): boolean {
+	return endsWith(address, "@tutao.de") || address === "no-reply@tutanota.de"
+}
+
+/**
+ * Is this a tutao team member email or a system notification
+ */
+export function isTutaTeamMail(mail: Mail): boolean {
+	const { confidential, sender, state } = mail
+	return (
+		confidential &&
+		state === MailState.RECEIVED &&
+		hasValidEncryptionAuthForTeamOrSystemMail(mail) &&
+		(sender.address === SYSTEM_GROUP_MAIL_ADDRESS || isTutanotaTeamAddress(sender.address))
+	)
 }
 
 /**

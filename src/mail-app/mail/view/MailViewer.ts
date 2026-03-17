@@ -1,4 +1,4 @@
-import { component_size, font_size, px, size } from "../../../common/gui/size"
+import { component_size, font_size, px } from "../../../common/gui/size"
 import m, { Children, Component, Vnode } from "mithril"
 import stream from "mithril/stream"
 import { windowFacade, windowSizeListener } from "../../../common/misc/WindowFacade"
@@ -16,7 +16,7 @@ import { isDarkTheme, theme } from "../../../common/gui/theme"
 import { client } from "../../../common/misc/ClientDetector"
 import { styles } from "../../../common/gui/styles"
 import { DropdownButtonAttrs, showDropdownAtPosition } from "../../../common/gui/base/Dropdown.js"
-import { applyDarkThemeFix, isTutanotaTeamMail, replaceCidsWithInlineImages } from "./MailGuiUtils"
+import { applyDarkThemeFix, replaceCidsWithInlineImages } from "./MailGuiUtils"
 import { getCoordsOfMouseOrTouchEvent } from "../../../common/gui/base/GuiUtils"
 import { copyToClipboard } from "../../../common/misc/ClipboardUtils"
 import { ContentBlockingStatus, MailViewerViewModel } from "./MailViewerViewModel"
@@ -31,7 +31,7 @@ import { locator } from "../../../common/api/main/CommonLocator.js"
 import { PinchZoom } from "../../../common/gui/PinchZoom.js"
 import { responsiveCardHMargin, responsiveCardHPadding } from "../../../common/gui/cards.js"
 import { Dialog } from "../../../common/gui/base/Dialog.js"
-import { createNewContact } from "../../../common/mailFunctionality/SharedMailUtils.js"
+import { createNewContact, isTutaTeamMail } from "../../../common/mailFunctionality/SharedMailUtils.js"
 import { getExistingRuleForType } from "../model/MailUtils.js"
 import { SearchToken } from "../../../common/api/common/utils/QueryTokenUtils"
 import { highlightTextInQueryAsChildren } from "../../../common/gui/TextHighlightViewUtils"
@@ -370,7 +370,10 @@ export class MailViewer implements Component<MailViewerAttrs> {
 		this.pinchZoomable?.remove()
 
 		this.pinchZoomable = new PinchZoom(zoomable, viewport, true, (e, target) => {
-			this.handleAnchorClick(e, target, true)
+			if (!this.handleAnchorClick(e, target, true)) {
+				// dispatch a synthetic click event if not already handled as anchor click, so stuff like expanding <details> work on mobile
+				target?.dispatchEvent(new MouseEvent("click"))
+			}
 		})
 	}
 
@@ -548,7 +551,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 		return [
 			{
 				key: Keys.E,
-				enabled: () => this.viewModel.isDraftMail(),
+				enabled: () => this.viewModel.isEditableDraft(),
 				exec: () => {
 					editDraft(this.viewModel)
 				},
@@ -638,28 +641,38 @@ export class MailViewer implements Component<MailViewerAttrs> {
 				}
 			}
 
-			if (defaultInboxRuleField && !locator.logins.isEnabled(FeatureType.InternalCommunication)) {
-				const rule = getExistingRuleForType(locator.logins.getUserController().props, mailAddress.address.trim().toLowerCase(), defaultInboxRuleField)
-				buttons.push({
-					label: rule ? "editInboxRule_action" : "addInboxRule_action",
-					click: async () => {
-						const mailboxDetails = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
-						if (mailboxDetails == null) {
-							return
-						}
-						const { show, createInboxRuleTemplate } = await import("../../settings/AddInboxRuleDialog")
-						const newRule = rule ?? createInboxRuleTemplate(defaultInboxRuleField, mailAddress.address.trim().toLowerCase())
+			const mailboxDetails = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
 
-						show(mailboxDetails, newRule)
-					},
-				})
-			}
+			if (mailboxDetails && mailboxDetails.mailGroup.user) {
+				// Only allow the addition of inbox and spam rules if it is not a shared mailbox
+				// Shared mailboxes currently do not support inbox rules
+				if (defaultInboxRuleField && !locator.logins.isEnabled(FeatureType.InternalCommunication)) {
+					const rule = getExistingRuleForType(
+						locator.logins.getUserController().props,
+						mailAddress.address.trim().toLowerCase(),
+						defaultInboxRuleField,
+					)
+					buttons.push({
+						label: rule ? "editInboxRule_action" : "addInboxRule_action",
+						click: async () => {
+							const mailboxDetails = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
+							if (mailboxDetails == null) {
+								return
+							}
+							const { show, createInboxRuleTemplate } = await import("../../settings/AddInboxRuleDialog")
+							const newRule = rule ?? createInboxRuleTemplate(defaultInboxRuleField, mailAddress.address.trim().toLowerCase())
 
-			if (this.viewModel.canCreateSpamRule()) {
-				buttons.push({
-					label: "addSpamRule_action",
-					click: () => this.addSpamRule(defaultInboxRuleField, mailAddress.address),
-				})
+							show(mailboxDetails, newRule)
+						},
+					})
+				}
+
+				if (this.viewModel.canCreateSpamRule()) {
+					buttons.push({
+						label: "addSpamRule_action",
+						click: () => this.addSpamRule(defaultInboxRuleField, mailAddress.address),
+					})
+				}
 			}
 		}
 
@@ -703,7 +716,8 @@ export class MailViewer implements Component<MailViewerAttrs> {
 		})
 	}
 
-	private handleAnchorClick(event: Event, eventTarget: EventTarget | null, shouldDispatchSyntheticClick: boolean): void {
+	private handleAnchorClick(event: Event, eventTarget: EventTarget | null, shouldDispatchSyntheticClick: boolean): boolean {
+		let handled = false
 		const anchorElement = (eventTarget as Element | null)?.closest("a")
 		const href = anchorElement?.getAttribute("href") ?? null
 		const draftHref = anchorElement?.getAttribute("draft-href") ?? null
@@ -713,7 +727,7 @@ export class MailViewer implements Component<MailViewerAttrs> {
 			event.preventDefault()
 			console.log("🔒 Blocked link click prevented:", draftHref)
 			// Link is blocked - prevent any navigation
-			return
+			return true
 		}
 
 		if (href) {
@@ -728,11 +742,13 @@ export class MailViewer implements Component<MailViewerAttrs> {
 							.catch(ofClass(CancelledError, noOp))
 					})
 				}
+				handled = true
 			} else if (isSettingsLink(href, this.viewModel.mail)) {
 				// Navigate to the settings menu if they are linked within an email.
 				const newRoute = href.substring(href.indexOf("/settings/"))
 				m.route.set(newRoute)
 				event.preventDefault()
+				handled = true
 			} else if (shouldDispatchSyntheticClick) {
 				const syntheticTag = document.createElement("a")
 				syntheticTag.setAttribute("href", href)
@@ -740,8 +756,11 @@ export class MailViewer implements Component<MailViewerAttrs> {
 				syntheticTag.setAttribute("rel", "noopener noreferrer")
 				const newClickEvent = new MouseEvent("click")
 				syntheticTag.dispatchEvent(newClickEvent)
+				handled = true
 			}
 		}
+
+		return handled
 	}
 
 	/**
@@ -785,5 +804,5 @@ export type CreateMailViewerOptions = {
  * we don't want normal mails to be able to link places in the app, though.
  * */
 function isSettingsLink(href: string, mail: Mail): boolean {
-	return (href.startsWith("/settings/") ?? false) && isTutanotaTeamMail(mail)
+	return (href.startsWith("/settings/") ?? false) && isTutaTeamMail(mail)
 }

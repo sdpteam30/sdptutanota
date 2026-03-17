@@ -4,7 +4,6 @@ import {
 	TestAggregate,
 	testAggregateModel,
 	TestAggregateOnAggregate,
-	testAggregateOnAggregateModel,
 	TestAggregateOnAggregateRef,
 	TestAggregateRef,
 	TestEntity,
@@ -69,6 +68,25 @@ o.spec("computePatches", function () {
 				patchOperation: PatchOperationType.REPLACE,
 			}),
 		])
+	})
+
+	o("computePatches returns empty for final values", async function () {
+		const testEntity = await createFilledTestEntity()
+		testEntity.testFinalBoolean = false
+
+		let sk = aes256RandomKey()
+		const originalParsedInstance = await dummyInstancePipeline.modelMapper.mapToClientModelParsedInstance(TestTypeRef, assertNotNull(testEntity._original))
+		const currentParsedInstance = await dummyInstancePipeline.modelMapper.mapToClientModelParsedInstance(TestTypeRef, testEntity)
+		const currentUntypedInstance = await dummyInstancePipeline.mapAndEncrypt(TestTypeRef, testEntity, sk)
+		const objectDiff = await computePatches(
+			originalParsedInstance,
+			currentParsedInstance,
+			currentUntypedInstance,
+			testTypeModel,
+			dummyTypeReferenceResolver,
+			false,
+		)
+		o(objectDiff).deepEquals([])
 	})
 
 	o("computePatches works when setting values to null", async function () {
@@ -639,24 +657,20 @@ o.spec("computePatches", function () {
 	async function createFilledTestEntity(): Promise<TestEntity> {
 		return await createTestEntityWithOriginal({
 			_type: TestTypeRef,
-			_finalIvs: {},
 			testAssociation: [
 				{
 					_type: TestAggregateRef,
-					_finalIvs: {},
 					_id: "aggId",
 					testNumber: "123456",
 					testSecondLevelAssociation: [
 						{
 							_type: TestAggregateOnAggregateRef,
-							_finalIvs: {},
 							_id: "aggOnAggId",
 							testBytes: null,
 						} as TestAggregateOnAggregate,
 					],
 					testZeroOrOneAggregation: {
 						_type: TestAggregateOnAggregateRef,
-						_finalIvs: {},
 						_id: "aggOnAggId",
 						testBytes: null,
 					} as TestAggregateOnAggregate,
@@ -670,6 +684,7 @@ o.spec("computePatches", function () {
 			testValue: "some encrypted string",
 			testGeneratedId: GENERATED_MIN_ID,
 			_id: [GENERATED_MIN_ID, GENERATED_MIN_ID],
+			testFinalBoolean: true,
 		})
 	}
 })

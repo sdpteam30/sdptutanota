@@ -1,9 +1,7 @@
 import o from "@tutao/otest"
 import { AccountType, CalendarAttendeeStatus, EndType, RepeatPeriod } from "../../../../src/common/api/common/TutanotaConstants.js"
 import { func, matchers, object, verify, when } from "testdouble"
-import { UserController } from "../../../../src/common/api/main/UserController.js"
 import {
-	CalendarEventEditModels,
 	CalendarOperation,
 	eventHasChanged,
 	EventSaveResult,
@@ -41,6 +39,7 @@ import { createTestEntity } from "../../TestUtils.js"
 import { areExcludedDatesEqual, areRepeatRulesEqual } from "../../../../src/common/calendar/date/CalendarUtils.js"
 import { SendMailModel } from "../../../../src/common/mailFunctionality/SendMailModel.js"
 import { MailboxDetail } from "../../../../src/common/mailFunctionality/MailboxModel.js"
+import { CalendarInviteHandler } from "../../../../src/calendar-app/calendar/view/CalendarInvites"
 
 o.spec("CalendarEventModel", function () {
 	let distributor: CalendarNotificationSender
@@ -93,8 +92,10 @@ o.spec("CalendarEventModel", function () {
 			const recipientsModel: RecipientsModel = object()
 			const logins: LoginController = object()
 			const userSettingsGroupRoot = createTestEntity(UserSettingsGroupRootTypeRef, { groupSettings: [] })
+
 			const userController = makeUserController([ownerAlias.address], AccountType.PAID, ownerMailAddress, true, false, undefined, userSettingsGroupRoot)
 			when(logins.getUserController()).thenReturn(userController)
+
 			when(calendarModel.loadAlarms(event.alarmInfos, userController.user)).thenResolve([
 				createTestEntity(UserAlarmInfoTypeRef, {
 					_id: event.alarmInfos[0],
@@ -110,13 +111,17 @@ o.spec("CalendarEventModel", function () {
 			])
 			when(calendarModel.getCalendarInfos()).thenResolve(calendars)
 			when(calendarModel.resolveCalendarEventProgenitor(matchers.anything())).thenResolve(event)
+
 			const resolvableOwner: ResolvableRecipient = object()
 			when(resolvableOwner.resolve()).thenResolve(ownerAddress)
+
 			const resolvableRecipient: ResolvableRecipient = object()
 			when(resolvableRecipient.resolve()).thenResolve(otherAddress)
 			const resolvables = [resolvableOwner, resolvableRecipient, resolvableOwner]
+
 			let tryCount = 0
 			when(recipientsModel.initialize(matchers.anything())).thenDo(() => resolvables[tryCount++])
+
 			const mailboxDetail: MailboxDetail = {
 				mailbox: createTestEntity(MailBoxTypeRef),
 				mailGroupInfo: createTestEntity(GroupInfoTypeRef),
@@ -127,6 +132,8 @@ o.spec("CalendarEventModel", function () {
 			}
 			const mailboxProperties: MailboxProperties = createTestEntity(MailboxPropertiesTypeRef, {})
 			const sendModelFac: () => SendMailModel = func<() => SendMailModel>()
+			const mockCalendarInviteHandler: CalendarInviteHandler = object()
+
 			const model = await makeCalendarEventModel(
 				CalendarOperation.EditAll,
 				event,
@@ -139,11 +146,14 @@ o.spec("CalendarEventModel", function () {
 				distributor,
 				entityClient,
 				null,
+				mockCalendarInviteHandler,
 				"Europe/Berlin",
 				identity,
 				noOp,
 			)
+
 			const result = await model?.apply()
+
 			o(result).equals(EventSaveResult.Saved)
 			verify(
 				calendarModel.updateEvent(
@@ -153,7 +163,7 @@ o.spec("CalendarEventModel", function () {
 						alarmInfos: [],
 						repeatRule: {
 							...event.repeatRule,
-							_id: null,
+							timeZone: "Europe/Berlin",
 						},
 					}),
 					matchers.argThat((n) => n.length === 1 && n[0].trigger === "5M"),

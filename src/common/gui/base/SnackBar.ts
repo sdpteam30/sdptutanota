@@ -1,30 +1,38 @@
 import m, { Component, Vnode } from "mithril"
 import { layout_size, px, size } from "../size"
 import { DefaultAnimationTime } from "../animation/Animations"
-import { displayOverlay } from "./Overlay"
+import { displayOverlay, PositionRect } from "./Overlay"
 import type { ButtonAttrs } from "./Button.js"
 import { Button, ButtonType } from "./Button.js"
-import { lang, MaybeTranslation } from "../../misc/LanguageViewModel"
+import { lang, MaybeTranslation, TranslationKey } from "../../misc/LanguageViewModel"
 import { styles } from "../styles"
 import { LayerType } from "../../../RootView"
 import type { ClickHandler } from "./GuiUtils"
 import { assertMainOrNode } from "../../api/common/Env"
-import { isNotEmpty, remove } from "@tutao/tutanota-utils"
+import { isNotEmpty, remove, secondsToMillis } from "@tutao/tutanota-utils"
 import { IconButton, IconButtonAttrs } from "./IconButton"
+import { AllIcons, Icon, IconSize } from "./Icon"
+import { theme } from "../theme"
+import { Icons } from "./icons/Icons"
 
 assertMainOrNode()
-const SNACKBAR_SHOW_TIME = 6000 // ms
-const SNACKBAR_HIDE_DELAY_TIME = 1500 // ms
+
+const SNACKBAR_SHOW_TIME = secondsToMillis(6)
+const SNACKBAR_HIDE_DELAY_TIME = secondsToMillis(1.5)
+const INFO_SNACKBAR_SHOW_TIME = secondsToMillis(10)
 const MAX_SNACKBAR_WIDTH = 400
 export type SnackBarButtonAttrs = {
 	label: MaybeTranslation
 	click: ClickHandler
+	isVisible?: () => boolean
 }
 type SnackBarAttrs = {
 	message: MaybeTranslation
 	button: ButtonAttrs | null
+	isSnackbarButtonVisible: () => boolean
 	dismissButton?: IconButtonAttrs
 	onHoverChange: (hovered: boolean) => void
+	leadingIcon?: AllIcons
 }
 type QueueItem = Omit<SnackBarAttrs, "onHoverChange"> & {
 	onClose: ((timedOut: boolean) => unknown) | null
@@ -39,22 +47,43 @@ let cancelCurrentSnackbar: (() => unknown) | null = null
 
 class SnackBar implements Component<SnackBarAttrs> {
 	view(vnode: Vnode<SnackBarAttrs>) {
+		const a = vnode.attrs
+		const actionButton = a.button
+			? m(
+					".flex-end.center-vertically",
+					{
+						class: a.isSnackbarButtonVisible() ? "" : "hidden",
+					},
+					m(Button, a.button),
+				)
+			: null
+		const dismissButton = a.dismissButton ? m(".flex.items-center.justify-right", [m(IconButton, a.dismissButton)]) : null
+
 		// use same padding as MinimizedEditor
 		return m(
-			".snackbar-content.flex.flex-space-between.border-radius.pb-4.pt-4",
+			".snackbar",
 			{
-				class: vnode.attrs.dismissButton ? "pl-12" : "plr-12",
+				class: a.dismissButton ? "pl-16" : "plr-16",
 				onmouseenter: () => {
-					vnode.attrs.onHoverChange(true)
+					a.onHoverChange(true)
 				},
 				onmouseleave: () => {
-					vnode.attrs.onHoverChange(false)
+					a.onHoverChange(false)
 				},
 			},
 			[
-				m(".flex.center-vertically.smaller", lang.getTranslationText(vnode.attrs.message)),
-				vnode.attrs.button ? m(".flex-end.center-vertically.pl-12", m(Button, vnode.attrs.button)) : null,
-				vnode.attrs.dismissButton ? m(".flex.items-center.justify-right", [m(IconButton, vnode.attrs.dismissButton)]) : null,
+				m(".flex.gap-8.items-center", [
+					a.leadingIcon &&
+						m(Icon, {
+							size: IconSize.PX20,
+							icon: a.leadingIcon,
+							style: {
+								fill: theme.on_surface_variant,
+							},
+						}),
+					m(".flex.center-vertically.smaller", lang.getTranslationText(a.message)),
+				]),
+				actionButton || dismissButton ? m(".flex.gap-8.items-center.pl-12", [actionButton, dismissButton]) : null,
 			],
 		)
 	}
@@ -66,6 +95,22 @@ function makeButtonAttrsForSnackBar(button: SnackBarButtonAttrs): ButtonAttrs {
 		click: button.click,
 		type: ButtonType.Secondary,
 	}
+}
+
+// A snackbar with only a message and dismiss button, shows for 10 seconds
+export function showInfoSnackbar(message: TranslationKey) {
+	let cancelSnackbar: () => void
+
+	cancelSnackbar = showSnackBar({
+		message,
+		dismissButton: {
+			title: "close_alt",
+			click: () => cancelSnackbar(),
+			icon: Icons.Cancel,
+		},
+		showingTime: INFO_SNACKBAR_SHOW_TIME,
+		replace: true,
+	})
 }
 
 /**
@@ -82,15 +127,16 @@ function makeButtonAttrsForSnackBar(button: SnackBarButtonAttrs): ButtonAttrs {
  */
 export function showSnackBar(args: {
 	message: MaybeTranslation
-	button: SnackBarButtonAttrs
+	button?: SnackBarButtonAttrs
 	dismissButton?: IconButtonAttrs
 	onShow?: () => unknown
 	onClose?: (timedOut: boolean) => unknown
 	waitingTime?: number
 	showingTime?: number
 	replace?: boolean
+	leadingIcon?: AllIcons
 }): () => void {
-	const { message, button, dismissButton, onClose, onShow, waitingTime, showingTime = SNACKBAR_SHOW_TIME, replace = false } = args
+	const { message, button, dismissButton, onClose, onShow, waitingTime, showingTime = SNACKBAR_SHOW_TIME, leadingIcon, replace = false } = args
 
 	const doCancel = {
 		/** cancel will be overwritten in {@link showNextNotification } once the snackbar  is shown */
@@ -99,7 +145,7 @@ export function showSnackBar(args: {
 		},
 	}
 
-	const buttonAttrs = makeButtonAttrsForSnackBar(button)
+	const buttonAttrs = button ? makeButtonAttrsForSnackBar(button) : null
 
 	const queueEntry: QueueItem = {
 		message: message,
@@ -107,8 +153,10 @@ export function showSnackBar(args: {
 		dismissButton: dismissButton,
 		onClose: onClose ?? null,
 		onShow: onShow ?? null,
+		isSnackbarButtonVisible: button?.isVisible ?? (() => true),
 		doCancel,
 		showingTime,
+		leadingIcon,
 	}
 
 	let currentSnackbarTimeout: TimeoutID | null = null
@@ -155,17 +203,23 @@ function getSnackBarPosition() {
 	const snackBarMargin = styles.isUsingBottomNavigation() ? size.spacing_12 : size.spacing_24
 	const leftOffset = styles.isDesktopLayout() ? layout_size.drawer_menu_width : 0
 	const snackBarWidth = Math.min(window.innerWidth - leftOffset - 2 * snackBarMargin, MAX_SNACKBAR_WIDTH)
-	return {
+	let result: PositionRect = {
 		bottom: px(snackBarMargin),
-		// The SnackBar is only shown at the right in single column layout
-		left: styles.isSingleColumnLayout() ? px(window.innerWidth - snackBarMargin - snackBarWidth) : px(leftOffset + snackBarMargin),
-		width: px(snackBarWidth),
-		zIndex: LayerType.Overlay,
+		"max-width": px(snackBarWidth),
+		zIndex: LayerType.Modal,
 	}
+
+	// The SnackBar is only shown at the right in single column layout
+	if (styles.isSingleColumnLayout()) {
+		result.right = px(leftOffset + snackBarMargin)
+	} else {
+		result.left = px(leftOffset + snackBarMargin)
+	}
+	return result
 }
 
 function showNextNotification() {
-	const { message, button, dismissButton, onClose, onShow, doCancel, showingTime } = notificationQueue[0] //we shift later because it is still shown
+	const { message, button, dismissButton, onClose, onShow, doCancel, showingTime, leadingIcon, isSnackbarButtonVisible } = notificationQueue[0] //we shift later because it is still shown
 	clearTimeout(currentAnimationTimeout)
 	currentAnimationTimeout = null
 
@@ -178,16 +232,18 @@ function showNextNotification() {
 			view: () =>
 				m(SnackBar, {
 					message,
-					button,
 					dismissButton: dismissButton,
 					onHoverChange: (isHovered) => {
 						hovered = isHovered
 					},
+					leadingIcon,
+					button,
+					isSnackbarButtonVisible,
 				}),
 		},
 		"slide-bottom",
 		undefined,
-		"minimized-shadow",
+		"",
 	)
 
 	let closed = false

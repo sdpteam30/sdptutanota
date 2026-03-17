@@ -67,12 +67,11 @@ import { KeyLoaderFacade, parseKeyVersion } from "../KeyLoaderFacade.js"
 import { RecoverCodeFacade } from "./RecoverCodeFacade.js"
 import { _encryptKeyWithVersionedKey, CryptoWrapper, VersionedEncryptedKey, VersionedKey } from "../../crypto/CryptoWrapper.js"
 import { AsymmetricCryptoFacade } from "../../crypto/AsymmetricCryptoFacade.js"
-import { XRechnungInvoiceGenerator } from "../../invoicegen/XRechnungInvoiceGenerator.js"
 import { PublicEncryptionKeyProvider } from "../PublicEncryptionKeyProvider"
 import { isInternalUser } from "../../../common/utils/UserUtils"
 import { CacheMode } from "../../rest/EntityRestClient"
 import { SubscriptionApp } from "../../../../subscription/utils/SubscriptionUtils"
-import { bitArrayToUint8Array, hexToRsaPublicKey, PQKeyPairs } from "@tutao/tutanota-crypto"
+import { hexToRsaPublicKey, keyToUint8Array, PQKeyPairs } from "@tutao/tutanota-crypto"
 
 assertWorkerOrNode()
 
@@ -295,7 +294,7 @@ export class CustomerFacade {
 
 		if (pubRsaKey) {
 			const rsaPublicKey = hexToRsaPublicKey(uint8ArrayToHex(pubRsaKey))
-			const systemAdminPubEncAccountingInfoSessionKeyBytes = await this.rsa.encrypt(rsaPublicKey, bitArrayToUint8Array(accountingInfoSessionKey))
+			const systemAdminPubEncAccountingInfoSessionKeyBytes = await this.rsa.encrypt(rsaPublicKey, keyToUint8Array(accountingInfoSessionKey))
 			systemAdminPubEncAccountingInfoSessionKey = {
 				key: systemAdminPubEncAccountingInfoSessionKeyBytes,
 				encryptingKeyVersion: parseKeyVersion(keyData.systemAdminPubKeyVersion),
@@ -432,6 +431,23 @@ export class CustomerFacade {
 		}
 	}
 
+	async generatePdfRecoveryDocument(recoveryCode: string, email: string): Promise<DataFile> {
+		const writer = await this.pdfWriter()
+		const { PdfRecoveryDocumentGenerator } = await import("../../recoveryDocumentGenerator/RecoveryDocumentGenerator.js")
+		const pdfGenerator = new PdfRecoveryDocumentGenerator(writer, recoveryCode, email)
+		const pdfFile = await pdfGenerator.generate()
+
+		const simplifiedMailString = simplifyMailAddress(email)
+		return {
+			_type: "DataFile",
+			name: `tuta_recovery_kit_${simplifiedMailString}.pdf`,
+			mimeType: "application/pdf",
+			data: pdfFile,
+			size: pdfFile.byteLength,
+			id: undefined,
+		}
+	}
+
 	async generateXRechnungInvoice(invoiceNumber: string): Promise<DataFile> {
 		const customer = await this.entityClient.load(CustomerTypeRef, assertNotNull(this.userFacade.getUser()?.customer))
 		const customerInfo = await this.entityClient.load(CustomerInfoTypeRef, customer.customerInfo)
@@ -478,4 +494,12 @@ export class CustomerFacade {
 	async getUser(): Promise<Nullable<User>> {
 		return this.userFacade.getUser()
 	}
+}
+
+/**
+ * makes the given mail address more suitable to be used in a file name since some platforms
+ * restrict the valid characters.
+ */
+export function simplifyMailAddress(address: string): string {
+	return address.replace("@", "_at_").replace(/[^a-z0-9_]/gi, "_")
 }

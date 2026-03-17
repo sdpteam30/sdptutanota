@@ -14,6 +14,7 @@ export type PositionRect = {
 	width?: string | null
 	bottom?: string | null
 	height?: string | null
+	"max-width"?: string | null
 	zIndex?: LayerType
 }
 type OverlayAttrs = {
@@ -80,7 +81,6 @@ export const overlay: Component<OverlayParentAttrs> = {
 			{
 				inert: !visible,
 				style: {
-					display: visible ? "" : "none",
 					"margin-top": "env(safe-area-inset-top)", // insets for iPhone X
 					// keep the bottom nav bar clear & inset for iOS
 					"margin-bottom": styles.isUsingBottomNavigation() ? px(component_size.bottom_nav_bar + getSafeAreaInsetBottom()) : "unset",
@@ -111,6 +111,7 @@ export const overlay: Component<OverlayParentAttrs> = {
 							right: position.right,
 							left: position.left,
 							height: position.height,
+							"max-width": position["max-width"],
 							zIndex,
 						},
 						onbeforeremove: (vnode: VnodeDOM) => {

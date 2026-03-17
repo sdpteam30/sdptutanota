@@ -6,7 +6,7 @@ import { EntityClient } from "../common/api/common/EntityClient.js"
 import { ProgressTracker } from "../common/api/main/ProgressTracker.js"
 import { CredentialsProvider } from "../common/misc/credentials/CredentialsProvider.js"
 import { bootstrapWorker, WorkerClient } from "../common/api/main/WorkerClient.js"
-import { CALENDAR_MIME_TYPE, FileController, guiDownload } from "../common/file/FileController.js"
+import { CALENDAR_MIME_TYPE, FileController } from "../common/file/FileController.js"
 import { SecondFactorHandler } from "../common/misc/2fa/SecondFactorHandler.js"
 import { WebauthnClient } from "../common/misc/2fa/webauthn/WebauthnClient.js"
 import { LoginFacade } from "../common/api/worker/facades/LoginFacade.js"
@@ -101,7 +101,6 @@ import { CalendarSearchModel } from "./calendar/search/model/CalendarSearchModel
 import { SearchIndexStateInfo } from "../common/api/worker/search/SearchTypes.js"
 import { CALENDAR_PREFIX } from "../common/misc/RouteChange.js"
 import { AppType } from "../common/misc/ClientConstants.js"
-import type { ParsedEvent } from "../common/calendar/gui/CalendarImporter.js"
 import { ExternalCalendarFacade } from "../common/native/common/generatedipc/ExternalCalendarFacade.js"
 import { WorkerRandomizer } from "../common/api/worker/workerInterfaces.js"
 import type { CalendarContactPreviewViewModel } from "./calendar/gui/eventpopup/CalendarContactPreviewViewModel.js"
@@ -119,6 +118,10 @@ import { PublicIdentityKeyProvider } from "../common/api/worker/facades/PublicId
 import { WhitelabelThemeGenerator } from "../common/gui/WhitelabelThemeGenerator"
 import type { AutosaveFacade, LocalAutosavedDraftData } from "../common/api/worker/facades/lazy/AutosaveFacade"
 import { lang } from "../common/misc/LanguageViewModel.js"
+import { DriveFacade } from "../common/api/worker/facades/lazy/DriveFacade"
+import { TransferProgressDispatcher } from "../common/api/main/TransferProgressDispatcher"
+import { CalendarEventUpdateCoordinator } from "./calendar/model/CalendarEventUpdateCoordinator"
+import { ParsedEvent } from "../common/calendar/gui/ImportExportUtils"
 
 assertMainOrNode()
 
@@ -177,6 +180,8 @@ class CalendarLocator implements CommonLocator {
 	syncTracker!: SyncTracker
 	identityKeyCreator!: IdentityKeyCreator
 	whitelabelThemeGenerator!: WhitelabelThemeGenerator
+	driveFacade!: DriveFacade
+	transferProgressDispatcher!: TransferProgressDispatcher
 
 	private nativeInterfaces: NativeInterfaces | null = null
 	private entropyFacade!: EntropyFacade
@@ -335,6 +340,7 @@ class CalendarLocator implements CommonLocator {
 					return false
 				},
 				this.syncTracker,
+				null,
 			)
 	}
 
@@ -365,8 +371,8 @@ class CalendarLocator implements CommonLocator {
 			calendarNotificationSender,
 			this.entityClient,
 			responseTo,
+			await this.calendarInviteHandler(),
 			getTimeZone(),
-			showProgress,
 		)
 	}
 
@@ -584,6 +590,7 @@ class CalendarLocator implements CommonLocator {
 			sqlCipherFacade,
 			contactFacade,
 			identityKeyCreator,
+			driveFacade,
 		} = this.worker.getWorkerInterface()
 		this.loginFacade = loginFacade
 		this.customerFacade = customerFacade
@@ -603,6 +610,7 @@ class CalendarLocator implements CommonLocator {
 		this.userManagementFacade = userManagementFacade
 		this.recoverCodeFacade = recoverCodeFacade
 		this.contactFacade = contactFacade
+		this.driveFacade = driveFacade
 		this.serviceExecutor = serviceExecutor
 		this.sqlCipherFacade = sqlCipherFacade
 		this.identityKeyCreator = identityKeyCreator
@@ -671,6 +679,8 @@ class CalendarLocator implements CommonLocator {
 			const { OpenSettingsHandler } = await import("../common/native/main/OpenSettingsHandler.js")
 			const openSettingsHandler = new OpenSettingsHandler(this.logins)
 
+			this.transferProgressDispatcher = new TransferProgressDispatcher()
+
 			this.webMobileFacade = new WebMobileFacade(this.connectivityModel, CALENDAR_PREFIX)
 			this.nativeInterfaces = createNativeInterfaces(
 				this.webMobileFacade,
@@ -687,6 +697,7 @@ class CalendarLocator implements CommonLocator {
 					(userId, action, date, eventId) => openCalendarHandler.openCalendar(userId, action, date, eventId),
 					AppType.Calendar,
 					(path) => openSettingsHandler.openSettings(path),
+					this.blobFacade,
 				),
 				cryptoFacade,
 				calendarFacade,
@@ -765,9 +776,7 @@ class CalendarLocator implements CommonLocator {
 		})
 
 		this.fileController =
-			this.nativeInterfaces == null
-				? new FileControllerBrowser(blobFacade, guiDownload)
-				: new FileControllerNative(blobFacade, guiDownload, this.nativeInterfaces.fileApp)
+			this.nativeInterfaces == null ? new FileControllerBrowser(blobFacade) : new FileControllerNative(blobFacade, this.nativeInterfaces.fileApp)
 
 		const { ContactModel } = await import("../common/contactsFunctionality/ContactModel.js")
 		this.contactModel = new ContactModel(this.entityClient, this.logins, this.eventController, null)
@@ -841,6 +850,7 @@ class CalendarLocator implements CommonLocator {
 			this.mailboxModel,
 			this.calendarFacade,
 			this.fileController,
+			this.contactModel,
 			timeZone,
 			!isBrowser() ? this.externalCalendarFacade : null,
 			deviceConfig,
@@ -858,6 +868,20 @@ class CalendarLocator implements CommonLocator {
 		const { calendarNotificationSender } = await import("./calendar/view/CalendarNotificationSender.js")
 		return new CalendarInviteHandler(this.mailboxModel, await this.calendarModel(), this.logins, calendarNotificationSender, (...arg) =>
 			this.sendMailModel(...arg),
+		)
+	})
+
+	readonly calendarEventUpdateCoordinator: () => Promise<CalendarEventUpdateCoordinator> = lazyMemoized(async () => {
+		const { CalendarEventUpdateCoordinator } = await import("./calendar/model/CalendarEventUpdateCoordinator")
+		const calendarModel = await this.calendarModel()
+		const connectivityModel: WebsocketConnectivityModel = this.connectivityModel
+		return new CalendarEventUpdateCoordinator(
+			connectivityModel,
+			calendarModel,
+			this.eventController,
+			this.entityClient,
+			this.mailboxModel,
+			this.syncTracker,
 		)
 	})
 
@@ -887,7 +911,7 @@ class CalendarLocator implements CommonLocator {
 		const mailboxProperties = await this.mailboxModel.getMailboxProperties(mailboxDetails.mailboxGroupRoot)
 
 		const userController = this.logins.getUserController()
-		const customer = await userController.loadCustomer()
+		const customer = await userController.reloadCustomer()
 		const ownMailAddresses = getEnabledMailAddressesWithUser(mailboxDetails, userController.userGroupInfo)
 		const ownAttendee: CalendarEventAttendee | null = findAttendeeInAddresses(selectedEvent.attendees, ownMailAddresses)
 		const eventType = getEventType(selectedEvent, calendars, ownMailAddresses, userController)
@@ -901,6 +925,7 @@ class CalendarLocator implements CommonLocator {
 			ownAttendee,
 			lazyIndexEntry,
 			async (mode: CalendarOperation, event: CalendarEvent) => this.calendarEventModel(mode, event, mailboxDetails, mailboxProperties, null),
+			this.calendarInviteHandler,
 			highlightedTokens,
 		)
 

@@ -1,10 +1,9 @@
 import { OperationType } from "../TutanotaConstants.js"
 import { EntityUpdate, Patch } from "../../entities/sys/TypeRefs.js"
 import { BlobElementEntity, ListElementEntity, ServerModelParsedInstance, SomeEntity } from "../EntityTypes.js"
-import { AppName, getTypeString, isSameTypeRef, TypeRef } from "@tutao/tutanota-utils"
+import { AppName, getTypeString, isSameTypeRef, Nullable, TypeRef } from "@tutao/tutanota-utils"
 import { isSameId } from "./EntityUtils.js"
-import { ClientTypeModelResolver } from "../EntityFunctions"
-import { Nullable } from "@tutao/tutanota-utils"
+import { ProgressMonitorId } from "./ProgressMonitor"
 
 /**
  * A type similar to {@link EntityUpdate} but mapped to make it easier to work with.
@@ -31,18 +30,14 @@ export enum PrefetchStatus {
 }
 
 export async function entityUpdateToUpdateData<T extends SomeEntity>(
-	clientTypeModelResolver: ClientTypeModelResolver,
 	update: EntityUpdate,
 	instance: Nullable<ServerModelParsedInstance> = null,
 	prefetchStatus: PrefetchStatus = PrefetchStatus.NotPrefetched,
 ): Promise<EntityUpdateData<T>> {
-	const typeId = update.typeId ? parseInt(update.typeId) : null
-	const typeIdOfEntityUpdateType = typeId
-		? new TypeRef<SomeEntity>(update.application as AppName, typeId)
-		: clientTypeModelResolver.resolveTypeRefFromAppAndTypeNameLegacy(update.application as AppName, update.type)
-
+	const typeId = parseInt(update.typeId)
+	const typeRefOfEntityUpdateType = new TypeRef<T>(update.application as AppName, typeId)
 	return {
-		typeRef: typeIdOfEntityUpdateType,
+		typeRef: typeRefOfEntityUpdateType,
 		instanceListId: (update.instanceListId === "" ? null : update.instanceListId) as EntityUpdateData<T>["instanceListId"],
 		instanceId: update.instanceId,
 		operation: update.operation as OperationType,
@@ -74,4 +69,18 @@ export function getLogStringForPatches(patches: Array<Patch>) {
 		message += "Patch Operation: " + patch.patchOperation + " Patched Attribute: " + patch.attributePath + " ;"
 	}
 	return message
+}
+export enum OnEntityUpdateReceivedPriority {
+	LOW = 1,
+	NORMAL = 2,
+	HIGH = 3,
+}
+
+export type EntityEventsListener = {
+	onEntityUpdatesReceived: (
+		updates: ReadonlyArray<EntityUpdateData>,
+		eventOwnerGroupId: Id,
+		eventQueueProgressMonitorId: Nullable<ProgressMonitorId>,
+	) => Promise<unknown>
+	priority: OnEntityUpdateReceivedPriority
 }

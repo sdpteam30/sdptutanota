@@ -15,10 +15,15 @@ import {
 import type { ModelArtifacts } from "@tensorflow/tfjs-core/dist/io/types"
 import type { ModelFitArgs } from "@tensorflow/tfjs-layers"
 import type { Tensor } from "@tensorflow/tfjs-core"
-import { DEFAULT_PREPROCESS_CONFIGURATION, SpamMailDatum, SpamMailProcessor } from "../../../common/api/common/utils/spamClassificationUtils/SpamMailProcessor"
+import {
+	createSpamMailDatum,
+	DEFAULT_PREPROCESS_CONFIGURATION,
+	SpamMailProcessor,
+} from "../../../common/api/common/utils/spamClassificationUtils/SpamMailProcessor"
 import { SparseVectorCompressor } from "../../../common/api/common/utils/spamClassificationUtils/SparseVectorCompressor"
 import { SpamDecision } from "../../../common/api/common/TutanotaConstants"
 import { SpamClassifierStorageFacade } from "../../../common/api/worker/facades/lazy/SpamClassifierStorageFacade"
+import { Mail, MailDetails } from "../../../common/api/entities/tutanota/TypeRefs"
 
 export type SpamClassificationModelMetaData = {
 	hamCount: number
@@ -124,10 +129,34 @@ export class SpamClassifier {
 	// visibleForTesting
 	public async initialTraining(ownerGroup: Id, trainingDataset: TrainingDataset): Promise<void> {
 		const { trainingData: clientSpamTrainingData, hamCount, spamCount } = trainingDataset
+		const metaData: SpamClassificationModelMetaData = {
+			hamCount,
+			spamCount,
+			lastTrainedFromScratchTime: Date.now(),
+			lastTrainingDataIndexId: trainingDataset.lastTrainingDataIndexId,
+		}
+
 		const trainingInput = await promiseMap(
 			clientSpamTrainingData,
-			(d) => {
-				const vector = this.sparseVectorCompressor.binaryToVector(d.vector)
+			async (d) => {
+				/**
+				 * TODO: we should also use confidence in initialTraining
+				 *
+				 * // initialTraining: m1: confidence(4) <- initial training here
+				 * // new email: m2: confidence(1) <- updated model here ( user received a mail but have  not moved yet)
+				 * //
+				 * // another email: m3: <- currently classifying
+				 *
+				 * ====
+				 * in this case, m1 should have more influence while classifying on m3.
+				 * Currently since we dont use confidence, m1 & m2 will have equal influence
+				 */
+				const vector = await this.spamMailProcessor.processClientSpamTrainingDatum(
+					d,
+					await this.spamMailProcessor.getVectorDimension(),
+					this.spamMailProcessor.byteForServerClassificationData,
+				)
+
 				const label = d.spamDecision === SpamDecision.BLACKLIST ? 1 : 0
 				return { vector, label }
 			},
@@ -138,10 +167,10 @@ export class SpamClassifier {
 		const vectors = trainingInput.map((input) => input.vector)
 		const labels = trainingInput.map((input) => input.label)
 
-		const xs = tensor2d(vectors, [trainingInput.length, this.sparseVectorCompressor.dimension], undefined)
+		const xs = tensor2d(vectors, [trainingInput.length, await this.spamMailProcessor.getModelInputSize()], undefined)
 		const ys = tensor1d(labels, undefined)
 
-		const layersModel = this.buildModel(this.sparseVectorCompressor.dimension)
+		const layersModel = this.buildModel(await this.spamMailProcessor.getModelInputSize())
 
 		const trainingStart = performance.now()
 		await layersModel.fit(xs, ys, {
@@ -164,12 +193,7 @@ export class SpamClassifier {
 		ys.dispose()
 
 		const threshold = this.calculateThreshold(trainingDataset.hamCount, trainingDataset.spamCount)
-		const metaData: SpamClassificationModelMetaData = {
-			hamCount,
-			spamCount,
-			lastTrainedFromScratchTime: Date.now(),
-			lastTrainingDataIndexId: trainingDataset.lastTrainingDataIndexId,
-		}
+
 		const classifier: Classifier = {
 			layersModel: layersModel,
 			metaData,
@@ -221,11 +245,16 @@ export class SpamClassifier {
 			console.log(`no new spam classification training data for mailbox ${ownerGroup} since last update`)
 			return
 		}
+		const classifierToUpdate = assertNotNull(this.classifierByMailGroup.get(ownerGroup))
 
 		const trainingInput = await promiseMap(
 			trainingDataset.trainingData,
-			(d) => {
-				const vector = this.sparseVectorCompressor.binaryToVector(d.vector)
+			async (d) => {
+				const vector = await this.spamMailProcessor.processClientSpamTrainingDatum(
+					d,
+					await this.spamMailProcessor.getVectorDimension(),
+					this.spamMailProcessor.byteForServerClassificationData,
+				)
 				const label = d.spamDecision === SpamDecision.BLACKLIST ? 1 : 0
 				const isSpamConfidence = Number(d.confidence)
 				return { vector, label, isSpamConfidence }
@@ -243,8 +272,6 @@ export class SpamClassifier {
 			},
 		)
 
-		const classifierToUpdate = assertNotNull(this.classifierByMailGroup.get(ownerGroup))
-
 		// we clone the layersModel to allow predictions while retraining is in progress
 		const layersModelToUpdate = await this.cloneLayersModel(classifierToUpdate)
 
@@ -254,7 +281,8 @@ export class SpamClassifier {
 				const vectors = trainingInput.map((input) => input.vector)
 				const labels = trainingInput.map((input) => input.label)
 
-				const xs = tensor2d(vectors, [vectors.length, this.sparseVectorCompressor.dimension], "int32")
+				const inputSize = await this.spamMailProcessor.getModelInputSize()
+				const xs = tensor2d(vectors, [vectors.length, inputSize], "int32")
 				const ys = tensor1d(labels, "int32")
 
 				// We need a way to put weight on a specific email, an ideal way would be to pass sampleWeight to modelFitArgs,
@@ -286,8 +314,8 @@ export class SpamClassifier {
 			classifierToUpdate.metaData = {
 				hamCount: classifierToUpdate.metaData.hamCount + trainingDataset.hamCount,
 				spamCount: classifierToUpdate.metaData.spamCount + trainingDataset.spamCount,
-				lastTrainingDataIndexId: trainingDataset.lastTrainingDataIndexId,
 				// lastTrainedFromScratchTime update only happens on full training
+				lastTrainingDataIndexId: trainingDataset.lastTrainingDataIndexId,
 				lastTrainedFromScratchTime: classifierToUpdate.metaData.lastTrainedFromScratchTime,
 			}
 			classifierToUpdate.layersModel = layersModelToUpdate
@@ -309,7 +337,8 @@ export class SpamClassifier {
 		}
 
 		const vectors = [vector]
-		const xs = tensor2d(vectors, [vectors.length, this.sparseVectorCompressor.dimension], "int32")
+		const inputSize = await this.spamMailProcessor.getModelInputSize()
+		const xs = tensor2d(vectors, [vectors.length, inputSize], "int32")
 
 		const predictionTensor = classifier.layersModel.predict(xs) as Tensor
 		const predictionData = await predictionTensor.data()
@@ -362,12 +391,12 @@ export class SpamClassifier {
 		return model
 	}
 
-	public async vectorizeAndCompress(mailDatum: SpamMailDatum) {
-		return await this.spamMailProcessor.vectorizeAndCompress(mailDatum)
-	}
+	public async createModelInputAndUploadVector(mail: Mail, mailDetails: MailDetails) {
+		const datum = createSpamMailDatum(mail, mailDetails)
+		const modelInput = await this.spamMailProcessor.processSpamMailDatum(datum)
+		const { uploadableVectorLegacy, uploadableVector } = await this.spamMailProcessor.makeUploadableVectors(datum)
 
-	public async vectorize(mailDatum: SpamMailDatum) {
-		return await this.spamMailProcessor.vectorize(mailDatum)
+		return { modelInput, uploadableVectorLegacy, uploadableVector }
 	}
 
 	// visibleForTesting
@@ -376,6 +405,15 @@ export class SpamClassifier {
 		if (spamClassificationModel) {
 			const modelTopology = JSON.parse(spamClassificationModel.modelTopology)
 			const weightSpecs = JSON.parse(spamClassificationModel.weightSpecs)
+			const oldVectorDimensionSize: number = weightSpecs[0].shape[0]
+			const newVectorDimensionSize = await this.spamMailProcessor.getModelInputSize()
+			if (newVectorDimensionSize !== oldVectorDimensionSize) {
+				console.log(
+					`removing spam classification model for mailbox ${ownerGroup} as it is incompatible with the current model input size. Old dimension size: ${oldVectorDimensionSize}, new dimension size: ${newVectorDimensionSize}`,
+				)
+				await this.spamClassifierStorageFacade.deleteSpamClassificationModel(ownerGroup)
+				return null
+			}
 			const weightData = spamClassificationModel.weightData.buffer.slice(
 				spamClassificationModel.weightData.byteOffset,
 				spamClassificationModel.weightData.byteOffset + spamClassificationModel.weightData.byteLength,
@@ -455,7 +493,7 @@ export class SpamClassifier {
 	}
 
 	private async getModelArtifacts(classifier: Classifier) {
-		return await new Promise<ModelArtifacts>((resolve) => {
+		return await new Promise<ModelArtifacts>((resolve, reject) => {
 			const saveInfo = withSaveHandler(async (artifacts: any) => {
 				resolve(artifacts)
 				return {
@@ -465,7 +503,9 @@ export class SpamClassifier {
 					},
 				}
 			})
-			classifier.layersModel.save(saveInfo, undefined)
+			classifier.layersModel.save(saveInfo, undefined).catch((err) => {
+				reject(err)
+			})
 		})
 	}
 }

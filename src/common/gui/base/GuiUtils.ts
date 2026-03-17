@@ -4,8 +4,7 @@ import type { InfoLink, MaybeTranslation, TranslationKey } from "../../misc/Lang
 import { lang } from "../../misc/LanguageViewModel"
 import { ButtonColor } from "./Button.js"
 import { Icons } from "./icons/Icons"
-import type { DropdownChildAttrs } from "./Dropdown.js"
-import { createAsyncDropdown } from "./Dropdown.js"
+import { createAsyncDropdown, DomRectReadOnlyPolyfilled, DropdownChildAttrs, PosRect } from "./Dropdown.js"
 import type { $Promisable, lazy, MaybeLazy } from "@tutao/tutanota-utils"
 import { assertNotNull, lazyMemoized, resolveMaybeLazy } from "@tutao/tutanota-utils"
 import { Dialog } from "./Dialog"
@@ -16,12 +15,16 @@ import { IconButtonAttrs } from "./IconButton.js"
 import { LoginController } from "../../api/main/LoginController.js"
 import { client } from "../../misc/ClientDetector.js"
 import type { Contact } from "../../api/entities/tutanota/TypeRefs.js"
-import { isColorLight } from "./Color.js"
+import { isColorLight, isValidCSSHexColor } from "./Color.js"
+import { DropDownSelectorNew, DropDownSelectorNewAttrs } from "./DropDownSelectorNew"
+import { theme } from "../theme"
+import { size } from "../size"
 
 export const enum DropType {
 	ExternalFile = "ExternalFile",
 	Mail = "Mail",
 	Folder = "Folder",
+	DriveItems = "DriveItems",
 }
 
 export type MailDropData = {
@@ -58,16 +61,35 @@ export function renderCountryDropdown(params: {
 	return m(DropDownSelector, {
 		label: params.label ?? "invoiceCountry_label",
 		helpLabel: params.helpLabel,
+		items: [...dropdownCountries(), { value: null, name: lang.get("choose_label"), selectable: false }],
+		selectedValue: params.selectedCountry,
+		selectionChangedHandler: params.onSelectionChanged,
+	})
+}
+
+export function renderCountryDropdownNew(params: {
+	selectedCountry: Country | null
+	onSelectionChanged: (country: Country | null) => void
+	helpLabel?: lazy<string>
+	label?: MaybeTranslation
+}): Children {
+	return m(DropDownSelectorNew, {
+		label: params.label ?? "invoiceCountry_label",
+		helpLabel: params.helpLabel,
 		items: [
 			...dropdownCountries(),
 			{
 				value: null,
-				name: lang.get("choose_label"),
+				name: "",
 			},
 		],
 		selectedValue: params.selectedCountry,
 		selectionChangedHandler: params.onSelectionChanged,
-	})
+		icon: {
+			icon: Icons.Pin,
+			color: theme.on_surface_variant,
+		},
+	} satisfies DropDownSelectorNewAttrs<Country | null>)
 }
 
 export function createMoreActionButtonAttrs(
@@ -268,8 +290,35 @@ export function getContactTitle(contact: Contact) {
 	return (title + fullName + suffix).trim()
 }
 
-export function colorForBg(color: string): string {
-	return isColorLight(color) ? "black" : "white"
+/**
+ * Chooses light or dark color for text based on the background it will be displayed on.
+ *
+ * @param bgColor - Background color of the element containing text
+ * @returns Color for the text
+ */
+export function colorForBg(bgColor: string): string {
+	return isColorLight(bgColor) ? "black" : "white"
+}
+
+/**
+ * Adds a # to the beginning of a string if there is none.  Returns the string unmodified if it already has a #.
+ *
+ * For use in situations when we are processing color hexes from multiple sources that may or may not
+ * already have a # at the beginning.
+ *
+ * Use this liberally because failure to do so can, in some situations, cause serious bugs.
+ *
+ * @param colorHex
+ */
+export function normalizeColorHex(colorHex: string) {
+	const normalized = colorHex.includes("#") ? colorHex : `#${colorHex}`
+
+	if (isValidCSSHexColor(normalized)) {
+		return normalized
+	}
+
+	console.warn("Trying to normalize a non-hex-color, this could be unintended...")
+	return colorHex
 }
 
 /**
@@ -405,4 +454,9 @@ export function transformTouchEvent(event: TouchEvent): MouseEvent | undefined {
 		button: 0,
 		relatedTarget: null,
 	})
+}
+
+export function getDetachedDropdownBounds(): PosRect {
+	// just putting the move mail dropdown in the left side of the viewport with a bit of margin
+	return new DomRectReadOnlyPolyfilled(size.spacing_24, size.spacing_32, 0, 0)
 }

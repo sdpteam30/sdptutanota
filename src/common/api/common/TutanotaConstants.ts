@@ -32,11 +32,117 @@ export const SYSTEM_GROUP_MAIL_ADDRESS = "system@tutanota.de"
 export const getMailFolderType = (folder: MailSet): MailSetKind => downcast(folder.folderType)
 
 export function isFolder(folder: MailSet): boolean {
-	return folder.folderType !== MailSetKind.ALL && folder.folderType !== MailSetKind.LABEL && folder.folderType !== MailSetKind.Imported
+	switch (folder.folderType) {
+		case MailSetKind.CUSTOM:
+		case MailSetKind.INBOX:
+		case MailSetKind.SENT:
+		case MailSetKind.TRASH:
+		case MailSetKind.ARCHIVE:
+		case MailSetKind.SPAM:
+		case MailSetKind.DRAFT:
+		case MailSetKind.SCHEDULED:
+			return true
+		case MailSetKind.ALL:
+		case MailSetKind.LABEL:
+		case MailSetKind.IMPORTED:
+		default:
+			return false
+	}
+}
+
+/**
+ * @return true if {@link mailSet} is a read-only folder (see {@link READ_ONLY_SYSTEM_FOLDERS} for more info)
+ */
+export function isFolderReadOnly(mailSet: MailSet) {
+	return READ_ONLY_SYSTEM_FOLDERS.includes(mailSet.folderType as MailSetKind)
+}
+
+export function isPermanentDeleteAllowedForFolder(mailSet: MailSet) {
+	return isPermanentDeleteAllowedMailSetKind(mailSet.folderType as MailSetKind)
 }
 
 export function isNestableMailSet(mailSet: MailSet): boolean {
 	return mailSet.folderType === MailSetKind.CUSTOM
+}
+
+export function isVisibleSystemMailSet(mailSet: MailSet): boolean {
+	switch (mailSet.folderType) {
+		case MailSetKind.INBOX:
+		case MailSetKind.SENT:
+		case MailSetKind.TRASH:
+		case MailSetKind.ARCHIVE:
+		case MailSetKind.SPAM:
+		case MailSetKind.DRAFT:
+		case MailSetKind.SCHEDULED:
+			return true
+		case MailSetKind.CUSTOM:
+		case MailSetKind.ALL:
+		case MailSetKind.LABEL:
+		case MailSetKind.IMPORTED:
+		default:
+			return false
+	}
+}
+
+export function canHaveDescendents(mailSet: MailSet): boolean {
+	switch (mailSet.folderType) {
+		case MailSetKind.CUSTOM:
+		case MailSetKind.INBOX:
+		case MailSetKind.DRAFT:
+		case MailSetKind.SENT:
+		case MailSetKind.ARCHIVE:
+			return true
+		case MailSetKind.TRASH:
+		case MailSetKind.SPAM:
+		case MailSetKind.ALL:
+		case MailSetKind.LABEL:
+		case MailSetKind.IMPORTED:
+		case MailSetKind.SCHEDULED:
+		default:
+			return false
+	}
+}
+
+export function isEditableMailSet(mailSet: MailSet): boolean {
+	switch (mailSet.folderType) {
+		case MailSetKind.CUSTOM:
+		case MailSetKind.LABEL:
+			return true
+		case MailSetKind.INBOX:
+		case MailSetKind.DRAFT:
+		case MailSetKind.SENT:
+		case MailSetKind.TRASH:
+		case MailSetKind.ARCHIVE:
+		case MailSetKind.SPAM:
+		case MailSetKind.ALL:
+		case MailSetKind.IMPORTED:
+		case MailSetKind.SCHEDULED:
+		default:
+			return false
+	}
+}
+
+export function isPermanentDeleteAllowedMailSetKind(mailsetKind: MailSetKind) {
+	switch (mailsetKind) {
+		case MailSetKind.TRASH:
+		case MailSetKind.SPAM:
+			return true
+		case MailSetKind.CUSTOM:
+		case MailSetKind.LABEL:
+		case MailSetKind.INBOX:
+		case MailSetKind.DRAFT:
+		case MailSetKind.SENT:
+		case MailSetKind.ARCHIVE:
+		case MailSetKind.ALL:
+		case MailSetKind.IMPORTED:
+		case MailSetKind.SCHEDULED:
+		default:
+			return false
+	}
+}
+
+export function isTopLevelMailSet(mailSet: MailSet): boolean {
+	return mailSet.parentFolder == null
 }
 
 export function isLabel(folder: MailSet): boolean {
@@ -115,17 +221,45 @@ export enum MailSetKind {
 	DRAFT = "6",
 	ALL = "7",
 	LABEL = "8",
-	Imported = "9",
+	IMPORTED = "9",
+	SCHEDULED = "10",
 }
 
-export const SYSTEM_FOLDERS = [MailSetKind.INBOX, MailSetKind.SENT, MailSetKind.TRASH, MailSetKind.ARCHIVE, MailSetKind.SPAM, MailSetKind.DRAFT] as const
+export const SYSTEM_FOLDERS = [
+	MailSetKind.INBOX,
+	MailSetKind.SENT,
+	MailSetKind.TRASH,
+	MailSetKind.ARCHIVE,
+	MailSetKind.SPAM,
+	MailSetKind.DRAFT,
+	MailSetKind.SCHEDULED,
+] as const
 export type SystemFolderType = (typeof SYSTEM_FOLDERS)[number]
 
 export function getMailSetKind(folder: MailSet): MailSetKind {
 	return folder.folderType as MailSetKind
 }
 
-export type SimpleMoveMailTarget = MailSetKind.INBOX | MailSetKind.SENT | MailSetKind.TRASH | MailSetKind.ARCHIVE | MailSetKind.SPAM | MailSetKind.DRAFT
+export const MOVE_SYSTEM_FOLDERS = Object.freeze([
+	MailSetKind.INBOX,
+	MailSetKind.SENT,
+	MailSetKind.TRASH,
+	MailSetKind.ARCHIVE,
+	MailSetKind.SPAM,
+	MailSetKind.DRAFT,
+] as const)
+
+/**
+ * These are mail sets that are managed by the server and cannot be mutated by the client
+ *
+ * They have the following restrictions:
+ *
+ * - Mails cannot be moved in or out of these folders by the client (most other actions are still possible, such as labels and marking read/unread)
+ * - Subfolders cannot be created or moved in this folder by the client
+ */
+export const READ_ONLY_SYSTEM_FOLDERS = Object.freeze([MailSetKind.SCHEDULED])
+
+export type SimpleMoveMailTarget = (typeof SYSTEM_FOLDERS)[number]
 
 export const enum ReplyType {
 	NONE = "0",
@@ -343,7 +477,7 @@ export enum PaymentMethodType {
 	AppStore = "5",
 }
 
-export async function getDefaultPaymentMethod(): Promise<PaymentMethodType> {
+export function getDefaultPaymentMethod(): PaymentMethodType {
 	if (isIOSApp()) {
 		return PaymentMethodType.AppStore
 	}
@@ -410,6 +544,7 @@ export const enum ConversationType {
 }
 
 export const enum MailState {
+	/** BEWARE: mails queued to be sent have a state of SENDING _before_ mail details is stored as a blob */
 	DRAFT = "0",
 	SENT = "1",
 	RECEIVED = "2",
@@ -591,6 +726,8 @@ export enum FeatureType {
 	SpamClientClassification = "19",
 	QuickActions = "20",
 	ReceivesNoTutaNewsletters = "21",
+	DriveInternalBeta = "22", // Enables drive access for internal testing
+	SolutionPartner = "23",
 }
 
 export const FULL_INDEXED_TIMESTAMP: number = 0
@@ -769,6 +906,7 @@ export const enum UnsubscribeFailureReason {
 	HAS_CONTACT_LIST_GROUP = "unsubscribe.has_contact_list_group",
 	ACTIVE_APPSTORE_SUBSCRIPTION = "unsubscribe.active_appstore_subscription",
 	LABEL_LIMIT_EXCEEDED = "unsubscribe.label_limit_exceeded",
+	HAS_SCHEDULED_MAILS = "unsubscribe.has_scheduled_mails",
 }
 
 // legacy, should be deleted after clients older than 3.114 have been disabled.
@@ -983,6 +1121,10 @@ export const Keys = Object.freeze({
 	V: {
 		code: "v",
 		name: "V",
+	},
+	X: {
+		code: "x",
+		name: "X",
 	},
 	Z: {
 		code: "z",
@@ -1231,6 +1373,11 @@ export const enum ExternalImageRule {
 	Block = "2",
 }
 
+export const enum NewsletterBannerRule {
+	Allow = "0",
+	Block = "1",
+}
+
 export type PayPalData = {
 	account: string
 }
@@ -1268,6 +1415,8 @@ export const enum ArchiveDataType {
 	AuthorityRequests = "0",
 	Attachments = "1",
 	MailDetails = "2",
+	ErrorReports = "3",
+	DriveFile = "4",
 }
 
 export const OFFLINE_STORAGE_DEFAULT_TIME_RANGE_DAYS = 31
@@ -1422,3 +1571,12 @@ export enum ProcessingState {
 }
 
 export const PLAN_SELECTOR_SELECTED_BOX_SCALE = "1.03"
+
+export const CANCEL_UPLOAD_EVENT = "CANCEL_UPLOAD_EVENT"
+/**
+ * We pick a max word frequency of 2^5 so that we can compress it together
+ * with the index (which is 2^11 =2048) into two bytes
+ */
+export const MAX_WORD_FREQUENCY = 31
+export const DEFAULT_VECTOR_MAX_LENGTH = 2048
+export const UNDO_SEND_TIMEOUT_SECONDS = 10

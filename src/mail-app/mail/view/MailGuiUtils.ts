@@ -1,32 +1,44 @@
 import type { MailboxModel } from "../../../common/mailFunctionality/MailboxModel.js"
-import { File as TutanotaFile, Mail, MailSet, MovedMails } from "../../../common/api/entities/tutanota/TypeRefs.js"
-import { LockedError, PreconditionFailedError } from "../../../common/api/common/error/RestError"
+import { Contact, File as TutanotaFile, Mail, MailSet, MovedMails } from "../../../common/api/entities/tutanota/TypeRefs.js"
+import { BadRequestError, LockedError, PreconditionFailedError } from "../../../common/api/common/error/RestError"
 import { Dialog } from "../../../common/gui/base/Dialog"
 import { AllIcons } from "../../../common/gui/base/Icon"
 import { Icons } from "../../../common/gui/base/icons/Icons"
 import { isApp, isDesktop } from "../../../common/api/common/Env"
-import { $Promisable, assertNotNull, clamp, endsWith, first, isEmpty, isNotEmpty, lazyMemoized, neverNull, noOp, promiseMap } from "@tutao/tutanota-utils"
+import {
+	$Promisable,
+	assertNotNull,
+	clamp,
+	delay,
+	filterInt,
+	first,
+	isEmpty,
+	isNotEmpty,
+	lazyMemoized,
+	neverNull,
+	noOp,
+	promiseMap,
+	secondsToMillis,
+} from "@tutao/tutanota-utils"
 import {
 	EncryptionAuthStatus,
 	getMailFolderType,
 	MailReportType,
 	MailSetKind,
-	MailState,
-	SYSTEM_GROUP_MAIL_ADDRESS,
+	SimpleMoveMailTarget,
 	SystemFolderType,
 } from "../../../common/api/common/TutanotaConstants"
 import { getReportConfirmation } from "./MailReportDialog"
 import { DataFile } from "../../../common/api/common/DataFile"
 import { lang, Translation } from "../../../common/misc/LanguageViewModel"
-import { FileController } from "../../../common/file/FileController"
+import { FileController, handleDownloadErrors } from "../../../common/file/FileController"
 import { DomRectReadOnlyPolyfilled, Dropdown, DropdownChildAttrs, PosRect } from "../../../common/gui/base/Dropdown.js"
 import { modal } from "../../../common/gui/base/Modal.js"
 import { ConversationViewModel } from "./ConversationViewModel.js"
-import { size } from "../../../common/gui/size.js"
 import { PinchZoom } from "../../../common/gui/PinchZoom.js"
 import { InlineImageReference, InlineImages } from "../../../common/mailFunctionality/inlineImagesUtils.js"
 import { MailModel, MoveMode } from "../model/MailModel.js"
-import { hasValidEncryptionAuthForTeamOrSystemMail } from "../../../common/mailFunctionality/SharedMailUtils.js"
+import { isTutaTeamMail } from "../../../common/mailFunctionality/SharedMailUtils.js"
 import {
 	FolderInfo,
 	getFolderName,
@@ -43,13 +55,23 @@ import { ProgrammingError } from "../../../common/api/common/error/ProgrammingEr
 import { isOfTypeOrSubfolderOf } from "../model/MailChecks.js"
 import { LabelsPopup } from "./LabelsPopup"
 import { styles } from "../../../common/gui/styles"
-import { elementIdPart, getIds, isSameId } from "../../../common/api/common/utils/EntityUtils"
+import { elementIdPart, getElementId, getIds, isSameId } from "../../../common/api/common/utils/EntityUtils"
 import { showSnackBar } from "../../../common/gui/base/SnackBar"
 import { UndoModel } from "../../UndoModel"
 import { IndentedFolder } from "../../../common/api/common/mail/FolderSystem"
 import { computeColor, rgbToHSL } from "../../../common/gui/base/Color"
+import { getDetachedDropdownBounds } from "../../../common/gui/base/GuiUtils"
+import { DownloadListener, TransferProgressDispatcher } from "../../../common/api/main/TransferProgressDispatcher"
+import stream from "mithril/stream"
+import { showProgressDialog } from "../../../common/gui/dialogs/ProgressDialog"
+import { CancelledError } from "../../../common/api/common/error/CancelledError"
+import { LabelsPopupViewModel } from "./LabelsPopupViewModel"
+import m from "mithril"
+import { ContactModel } from "../../../common/contactsFunctionality/ContactModel"
+import { cleanMailAddress } from "../../../common/api/common/utils/CommonCalendarUtils"
+import { ContactSelectionDialogAttrs } from "../../contacts/view/ContactSelectionDialog"
 
-const UNDO_SNACKBAR_SHOW_TIME = 10 * 1000 // ms
+const UNDO_SNACKBAR_SHOW_TIME = secondsToMillis(10)
 
 /**
  * A function that returns an array of mails, or a promise that eventually returns one.
@@ -87,36 +109,49 @@ interface MoveMailsParams {
 	mailIds: ReadonlyArray<IdTuple>
 	targetFolder: MailSet
 	moveMode: MoveMode
+	contactModel: ContactModel
 }
 
-enum MoveMailSnackbarResult {
-	/** Undo moving the mail. */
+enum UndoSnackbarResult {
+	/** Undo moving or sending the mail. */
 	Undo,
 
-	/** The snackbar timed out. Prompt the user if they want to report mails. */
+	/** The snackbar timed out. Prompt the user if they want to report mails (if it was a move action). */
 	Timeout,
 
-	/** The snackbar was cleared. Automatically report mails without showing a snackbar. */
+	/** The snackbar was cleared. If it was a move action, automatically report mails without showing a snackbar. */
 	Replaced,
 }
 
-async function showUndoMoveMailSnackbar(undoModel: UndoModel, onUndoMove: () => Promise<void>, undoMoveText: string): Promise<MoveMailSnackbarResult> {
+/**
+ * Show an undo snackbar for mail
+ * @param undoModel undo model to use
+ * @param onUndo callback for if the undo button is selected
+ * @param undoMessage text to display
+ * @param undoExpiration maximum time in milliseconds before the undo button expires
+ */
+export async function showUndoMailSnackbar(
+	undoModel: UndoModel,
+	onUndo: () => Promise<void>,
+	undoMessage: Translation,
+	undoExpiration?: number,
+): Promise<UndoSnackbarResult> {
 	return new Promise((resolve) => {
-		let result: MoveMailSnackbarResult | null = null
+		let result: UndoSnackbarResult | null = null
 
 		let cancelSnackbar: () => void
 
 		const undoAction = {
 			exec: async () => {
-				result = MoveMailSnackbarResult.Undo
+				result = UndoSnackbarResult.Undo
 				resolve(result)
 
 				cancelSnackbar?.()
-				await onUndoMove()
+				await onUndo()
 			},
 			onClear: () => {
 				if (result == null) {
-					result = MoveMailSnackbarResult.Replaced
+					result = UndoSnackbarResult.Replaced
 					resolve(result)
 					cancelSnackbar?.()
 				}
@@ -124,10 +159,15 @@ async function showUndoMoveMailSnackbar(undoModel: UndoModel, onUndoMove: () => 
 		}
 
 		const clearUndoAction = lazyMemoized(() => undoModel.clearUndoActionIfPresent(undoAction))
-		const undoMessage: Translation = {
-			testId: "undoMoveMail_msg",
-			text: undoMoveText,
+
+		let isVisible = true
+		if (undoExpiration != null) {
+			delay(undoExpiration).then(() => {
+				isVisible = false
+				m.redraw()
+			})
 		}
+
 		cancelSnackbar = showSnackBar({
 			message: undoMessage,
 			button: {
@@ -139,6 +179,7 @@ async function showUndoMoveMailSnackbar(undoModel: UndoModel, onUndoMove: () => 
 					// different undo action pending
 					clearUndoAction()
 				},
+				isVisible: () => isVisible,
 			},
 			dismissButton: {
 				title: "close_alt",
@@ -152,7 +193,7 @@ async function showUndoMoveMailSnackbar(undoModel: UndoModel, onUndoMove: () => 
 			},
 			onClose: (timedOut: boolean) => {
 				if (result == null) {
-					result = timedOut ? MoveMailSnackbarResult.Timeout : MoveMailSnackbarResult.Replaced
+					result = timedOut ? UndoSnackbarResult.Timeout : UndoSnackbarResult.Replaced
 					resolve(result)
 
 					// if this times out, we don't want to let the user undo this move anymore
@@ -165,12 +206,40 @@ async function showUndoMoveMailSnackbar(undoModel: UndoModel, onUndoMove: () => 
 	})
 }
 
+async function warnUsersIfMovingContactMailToSpam(contactModel: ContactModel, mailModel: MailModel, mailIds: ReadonlyArray<IdTuple>) {
+	const { showContactSelectionDialog } = await import("../../contacts/view/ContactSelectionDialog")
+	const mails = await mailModel.loadAllMails(mailIds)
+	const senderAddresses = mails.map((mail) => mail.sender.address)
+
+	const loadedContacts = await contactModel.loadAllContacts()
+	const matchingContacts = loadedContacts.filter((contact) => contact.mailAddresses.some((a) => senderAddresses.includes(cleanMailAddress(a.address))))
+	if (matchingContacts.length === 0) {
+		return
+	}
+
+	const attrs: ContactSelectionDialogAttrs = {
+		titleText: "contactDeletionMoveToSpam_title",
+		contentText: "contactDeletionMoveToSpam_msg",
+		okActionText: "delete_action",
+		confirmActionText: "deleteContacts_msg",
+	}
+
+	showContactSelectionDialog(attrs, matchingContacts, async (dialog: Dialog, selectedContacts: Contact[]) => {
+		showProgressDialog("pleaseWait_msg", contactModel.eraseContacts(selectedContacts))
+		dialog.close()
+	})
+}
+
 /**
  * Moves the mails and reports them as spam if the user or settings allow it.
  * @return whether mails were actually moved
  */
-export async function moveMails({ mailModel, mailIds, targetFolder, moveMode, mailboxModel, undoModel }: MoveMailsParams): Promise<boolean> {
+export async function moveMails({ mailModel, mailIds, targetFolder, moveMode, mailboxModel, undoModel, contactModel }: MoveMailsParams): Promise<boolean> {
 	try {
+		if (targetFolder.folderType === MailSetKind.SPAM) {
+			warnUsersIfMovingContactMailToSpam(contactModel, mailModel, mailIds)
+		}
+
 		const movedMails = await mailModel.moveMails(mailIds, targetFolder, moveMode)
 		if (isEmpty(movedMails)) {
 			return false
@@ -182,6 +251,10 @@ export async function moveMails({ mailModel, mailIds, targetFolder, moveMode, ma
 		//LockedError should no longer be thrown!?!
 		if (e instanceof LockedError || e instanceof PreconditionFailedError) {
 			await Dialog.message("operationStillActive_msg")
+			return false
+		} else if (e instanceof BadRequestError) {
+			// This will be thrown when a mail is attempted to be moved between two different mailboxes
+			await Dialog.message("couldNotMoveMail_msg")
 			return false
 		} else {
 			throw e
@@ -238,6 +311,8 @@ async function runPostMoveActions(mailModel: MailModel, mailboxModel: MailboxMod
 		? `${lang.getTranslation("undoMoveMail_msg", { "{folder}": getFolderName(firstTargetFolder) }).text} ${lang.getTranslation("undoMailReport_msg").text}`
 		: lang.getTranslation("undoMoveMail_msg", { "{folder}": getFolderName(firstTargetFolder) }).text
 
+	const undoMoveMessage = lang.makeTranslation("undoMoveMail_msg", undoMoveText)
+
 	const onUndoMove = async () => {
 		for (const { sourceFolder: sourceFolderId, mailIds, targetFolder: targetFolderId } of movedMails) {
 			const sourceFolder = await mailModel.getMailSetById(elementIdPart(sourceFolderId))
@@ -253,10 +328,10 @@ async function runPostMoveActions(mailModel: MailModel, mailboxModel: MailboxMod
 		}
 	}
 
-	const undoResult = await showUndoMoveMailSnackbar(undoModel, onUndoMove, undoMoveText)
+	const undoResult = await showUndoMailSnackbar(undoModel, onUndoMove, undoMoveMessage)
 
-	if (shouldReportMails && undoResult !== MoveMailSnackbarResult.Undo) {
-		const reportableMails = (await mailModel.loadAllMails(reportableMailIds)).filter((mail) => !isTutanotaTeamMail(mail))
+	if (shouldReportMails && undoResult !== UndoSnackbarResult.Undo) {
+		const reportableMails = (await mailModel.loadAllMails(reportableMailIds)).filter((mail) => !isTutaTeamMail(mail))
 		await mailModel.reportMails(MailReportType.SPAM, reportableMails)
 	}
 }
@@ -269,6 +344,7 @@ export async function moveMailsToSystemFolder({
 	currentFolder,
 	moveMode,
 	undoModel,
+	contactModel,
 }: {
 	mailboxModel: MailboxModel
 	mailModel: MailModel
@@ -277,6 +353,7 @@ export async function moveMailsToSystemFolder({
 	currentFolder: MailSet
 	moveMode: MoveMode
 	undoModel: UndoModel
+	contactModel: ContactModel
 }): Promise<boolean> {
 	const folderSystem = mailModel.getFolderSystemByGroupId(assertNotNull(currentFolder._ownerGroup))
 	const targetFolder = folderSystem?.getSystemFolderByType(targetFolderType)
@@ -288,6 +365,7 @@ export async function moveMailsToSystemFolder({
 		targetFolder,
 		moveMode,
 		undoModel,
+		contactModel,
 	})
 }
 
@@ -308,12 +386,18 @@ export async function simpleMoveToSystemFolder(
 	mailboxModel: MailboxModel,
 	mailModel: MailModel,
 	undoModel: UndoModel,
-	targetFolder: SystemFolderType,
+	targetFolder: SimpleMoveMailTarget,
 	mails: readonly Mail[],
+	contactModel?: ContactModel,
 ): Promise<boolean> {
+	const mailIds = getIds(mails)
+	if (contactModel && targetFolder === MailSetKind.SPAM) {
+		warnUsersIfMovingContactMailToSpam(contactModel, mailModel, mailIds)
+	}
+
 	let movedMails: MovedMails[]
 	try {
-		movedMails = await mailModel.simpleMoveMails(getIds(mails), targetFolder)
+		movedMails = await mailModel.simpleMoveMails(mailIds, targetFolder)
 	} catch (e) {
 		return handleMoveError(e)
 	}
@@ -344,6 +428,9 @@ export function getFolderIconByType(folderType: MailSetKind): AllIcons {
 		case MailSetKind.DRAFT:
 			return Icons.Draft
 
+		case MailSetKind.SCHEDULED:
+			return Icons.ScheduleMail
+
 		default:
 			return Icons.Folder
 	}
@@ -367,14 +454,14 @@ export function replaceCidsWithInlineImages(
 	dom: HTMLElement,
 	inlineImages: InlineImages,
 	onContext: (cid: string, arg1: MouseEvent | TouchEvent, arg2: HTMLElement) => unknown,
-): Array<HTMLElement> {
+): Array<{ cid: string; url: string }> {
 	// all image tags which have cid attribute. The cid attribute has been set by the sanitizer for adding a default image.
 	const imageElements: Array<HTMLElement> = Array.from(dom.querySelectorAll("img[cid]"))
 	if (dom.shadowRoot) {
 		const shadowImageElements: Array<HTMLElement> = Array.from(dom.shadowRoot.querySelectorAll("img[cid]"))
 		imageElements.push(...shadowImageElements)
 	}
-	const elementsWithCid: HTMLElement[] = []
+	const elementsWithCid: { cid: string; url: string }[] = []
 	for (const imageElement of imageElements) {
 		const cid = imageElement.getAttribute("cid")
 
@@ -382,7 +469,7 @@ export function replaceCidsWithInlineImages(
 			const inlineImage = inlineImages.get(cid)
 
 			if (inlineImage) {
-				elementsWithCid.push(imageElement)
+				elementsWithCid.push({ cid: cid, url: inlineImage.objectUrl })
 				imageElement.setAttribute("src", inlineImage.objectUrl)
 				imageElement.classList.remove("tutanota-placeholder")
 
@@ -506,6 +593,7 @@ export async function showMoveMailsFromFolderDropdown(
 	currentFolder: MailSet,
 	mails: LazyMailIdResolver,
 	moveMode: MoveMode,
+	contactModel: ContactModel,
 	opts?: ShowMoveMailsDropdownOpts,
 ): Promise<void> {
 	const folders = await getMoveTargetFolderSystemsForMailsInFolder(mailModel, currentFolder)
@@ -523,6 +611,7 @@ export async function showMoveMailsFromFolderDropdown(
 					targetFolder: f.folder,
 					moveMode,
 					undoModel,
+					contactModel,
 				})
 			},
 		},
@@ -537,6 +626,7 @@ export async function showMoveMailsDropdown(
 	origin: PosRect,
 	mails: readonly Mail[],
 	moveMode: MoveMode,
+	contactModel: ContactModel,
 	opts?: ShowMoveMailsDropdownOpts,
 ): Promise<void> {
 	const firstMail = first(mails)
@@ -547,8 +637,8 @@ export async function showMoveMailsDropdown(
 	if (moveTargets.moveService === MoveService.SimpleMove) {
 		moveParams = {
 			...moveTargets,
-			onClick: (f: SystemFolderType) => {
-				simpleMoveToSystemFolder(mailboxModel, mailModel, undoModel, f, mails)
+			onClick: (f: SimpleMoveMailTarget) => {
+				simpleMoveToSystemFolder(mailboxModel, mailModel, undoModel, f, mails, contactModel)
 			},
 		}
 	} else {
@@ -562,6 +652,7 @@ export async function showMoveMailsDropdown(
 					targetFolder: f.folder,
 					moveMode,
 					undoModel,
+					contactModel,
 				})
 			},
 		}
@@ -643,32 +734,6 @@ export function getConversationTitle(conversationViewModel: ConversationViewMode
 	} else {
 		return lang.getTranslation("nbrOrEmails_label", { "{number}": numberOfEmails })
 	}
-}
-
-export function getMoveMailBounds(): PosRect {
-	// just putting the move mail dropdown in the left side of the viewport with a bit of margin
-	return new DomRectReadOnlyPolyfilled(size.spacing_24, size.spacing_32, 0, 0)
-}
-
-/**
- * NOTE: DOES NOT VERIFY IF THE MESSAGE IS AUTHENTIC - DO NOT USE THIS OUTSIDE OF THIS FILE OR FOR TESTING
- * @VisibleForTesting
- */
-export function isTutanotaTeamAddress(address: string): boolean {
-	return endsWith(address, "@tutao.de") || address === "no-reply@tutanota.de"
-}
-
-/**
- * Is this a tutao team member email or a system notification
- */
-export function isTutanotaTeamMail(mail: Mail): boolean {
-	const { confidential, sender, state } = mail
-	return (
-		confidential &&
-		state === MailState.RECEIVED &&
-		hasValidEncryptionAuthForTeamOrSystemMail(mail) &&
-		(sender.address === SYSTEM_GROUP_MAIL_ADDRESS || isTutanotaTeamAddress(sender.address))
-	)
 }
 
 /**
@@ -815,11 +880,41 @@ export function showLabelsPopup(
 
 	const popup = new LabelsPopup(
 		dom ?? (document.activeElement as HTMLElement),
-		opts?.origin ?? dom?.getBoundingClientRect() ?? getMoveMailBounds(),
+		opts?.origin ?? dom?.getBoundingClientRect() ?? getDetachedDropdownBounds(),
 		opts?.width ?? (styles.isDesktopLayout() ? 300 : 200),
-		mailModel.getLabelsForMails(selectedMails),
-		mailModel.getLabelStatesForMails(selectedMails),
+		new LabelsPopupViewModel(mailModel.getLabelsForMails(selectedMails), labels),
 		async (addedLabels, removedLabels) => mailModel.applyLabels(await getActionableMails(selectedMails), addedLabels, removedLabels),
 	)
 	setTimeout(() => popup.show(), 16)
+}
+
+// A temporary solution, we should try to use non-modal progress indicators
+export async function showDownloadProgressDialog(
+	transferProgressDispatcher: TransferProgressDispatcher,
+	files: readonly TutanotaFile[],
+	promise: Promise<unknown>,
+): Promise<unknown> {
+	const progressStream = stream(0)
+	const totalFileSize = files.reduce((acc, file) => acc + filterInt(file.size), 0)
+	const bytesPerFile = new Map<Id, number>()
+	const listener: DownloadListener = ({ fileId, downloadedBytes }) => {
+		if (files.some((file) => getElementId(file) === fileId)) {
+			bytesPerFile.set(fileId, downloadedBytes)
+		}
+		const downloadedTotal = Array.from(bytesPerFile.values()).reduce((acc, bytes) => acc + bytes, 0)
+		progressStream((downloadedTotal / totalFileSize) * 100)
+	}
+	transferProgressDispatcher.addDownloadListener(listener)
+	try {
+		return await showProgressDialog("loading_msg", promise, progressStream)
+	} catch (e) {
+		// handle the user cancelling the dialog
+		if (e instanceof CancelledError) {
+			return
+		}
+		console.log("downloadAndOpen error", e.message)
+		await handleDownloadErrors(e, Dialog.message)
+	} finally {
+		transferProgressDispatcher.removeDownloadListener(listener)
+	}
 }

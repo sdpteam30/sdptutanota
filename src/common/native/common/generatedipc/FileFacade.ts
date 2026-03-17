@@ -49,7 +49,7 @@ export interface FileFacade {
 	/**
 	 * download an encrypted file to the file system and return the location of the data
 	 */
-	download(sourceUrl: string, filename: string, headers: Record<string, string>): Promise<DownloadTaskResponse>
+	download(sourceUrl: string, filename: string, headers: Record<string, string>, fileId: string): Promise<DownloadTaskResponse>
 
 	/**
 	 * Calculates specified file hash (with SHA-256). Returns first 6 bytes of it as Base64.
@@ -82,6 +82,11 @@ export interface FileFacade {
 	 * Read file from given path relative to app data folder
 	 */
 	readFromAppDir(path: string): Promise<Uint8Array>
+
+	/**
+	 * Delete file from given path relative to app data folder
+	 */
+	deleteFromAppDir(path: string): Promise<void>
 
 	/**
 	 * read the file at the given location into a DataFile. Returns null if reading fails for any reason.

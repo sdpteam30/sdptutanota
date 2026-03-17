@@ -18,8 +18,7 @@ import type { Country } from "../api/common/CountryList"
 import { DefaultAnimationTime } from "../gui/animation/Animations"
 import { locator } from "../api/main/CommonLocator"
 import { PaymentInterval } from "./utils/PriceUtils.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../api/common/utils/EntityUpdateUtils.js"
-import { EntityEventsListener } from "../api/main/EventController.js"
+import { EntityEventsListener, EntityUpdateData, isUpdateForTypeRef, OnEntityUpdateReceivedPriority } from "../api/common/utils/EntityUpdateUtils.js"
 import { LoginButton } from "../gui/base/buttons/LoginButton.js"
 import { client } from "../misc/ClientDetector.js"
 import { SignupFlowStage, SignupFlowUsageTestController } from "./usagetest/UpgradeSubscriptionWizardUsageTestUtils.js"
@@ -115,15 +114,24 @@ export class InvoiceAndPaymentDataPage implements WizardPageN<UpgradeSubscriptio
 								label: "next_action",
 								class: "small-login-button",
 								onclick: async () => {
-									await createAccount(data, () => {
-										emitWizardEvent(this.dom, WizardEventType.CLOSE_DIALOG)
-									})
+									const createResult = await createAccount(data)
+									if (createResult != null) {
+										const { errorMessageId, variant } = createResult
+										if (errorMessageId != null) {
+											Dialog.message(errorMessageId)
+										}
+										if (variant === "fatalFailure") {
+											emitWizardEvent(this.dom, WizardEventType.CLOSE_DIALOG)
+										}
+										return
+									}
 									this.onAddPaymentData(data)
 								},
 								disabled:
 									(this._selectedPaymentMethod() === PaymentMethodType.CreditCard &&
 										this.ccViewModel.validateCreditCardPaymentData() != null) ||
-									(this._selectedPaymentMethod() === PaymentMethodType.Paypal && !this.isPaypalLinked()),
+									(this._selectedPaymentMethod() === PaymentMethodType.Paypal && !this.isPaypalLinked()) ||
+									this._invoiceDataInput?.selectedCountry() == null,
 							}),
 						),
 					]
@@ -132,6 +140,7 @@ export class InvoiceAndPaymentDataPage implements WizardPageN<UpgradeSubscriptio
 	}
 
 	private onAddPaymentData = async (data: UpgradeSubscriptionData) => {
+		this.isPaypalLinked(data.accountingInfo?.paypalBillingAgreement != null)
 		const invoiceDataInput = assertNotNull(this._invoiceDataInput)
 
 		const error =
@@ -212,7 +221,6 @@ export class InvoiceAndPaymentDataPageAttrs implements WizardPageAttrs<UpgradeSu
 	}
 
 	prevAction(showErrorDialog: boolean): Promise<boolean> {
-		SignupFlowUsageTestController.deletePing(SignupFlowStage.CREATE_ACCOUNT)
 		return Promise.resolve(true)
 	}
 
@@ -371,52 +379,55 @@ function verifyCreditCard(accountingInfo: AccountingInfo, braintree3ds: Braintre
 				exec: closeAction,
 				help: "close_alt",
 			})
-		let entityEventListener: EntityEventsListener = (updates: ReadonlyArray<EntityUpdateData>, eventOwnerGroupId: Id) => {
-			return promiseMap(updates, (update) => {
-				if (isUpdateForTypeRef(InvoiceInfoTypeRef, update)) {
-					return locator.entityClient.load(InvoiceInfoTypeRef, update.instanceId).then((invoiceInfo) => {
-						invoiceInfoWrapper.invoiceInfo = invoiceInfo
-						if (!invoiceInfo.paymentErrorInfo) {
-							// user successfully verified the card
-							progressDialog.close()
-							resolve(true)
-						} else if (invoiceInfo.paymentErrorInfo && invoiceInfo.paymentErrorInfo.errorCode === "card.3ds2_pending") {
-							// keep waiting. this error code is set before starting the 3DS2 verification and we just received the event very late
-						} else if (invoiceInfo.paymentErrorInfo && invoiceInfo.paymentErrorInfo.errorCode !== null) {
-							// verification error during 3ds verification
-							let error = "3dsFailedOther"
+		let entityEventListener: EntityEventsListener = {
+			onEntityUpdatesReceived: (updates: ReadonlyArray<EntityUpdateData>, eventOwnerGroupId: Id) => {
+				return promiseMap(updates, (update) => {
+					if (isUpdateForTypeRef(InvoiceInfoTypeRef, update)) {
+						return locator.entityClient.load(InvoiceInfoTypeRef, update.instanceId).then((invoiceInfo) => {
+							invoiceInfoWrapper.invoiceInfo = invoiceInfo
+							if (!invoiceInfo.paymentErrorInfo) {
+								// user successfully verified the card
+								progressDialog.close()
+								resolve(true)
+							} else if (invoiceInfo.paymentErrorInfo && invoiceInfo.paymentErrorInfo.errorCode === "card.3ds2_pending") {
+								// keep waiting. this error code is set before starting the 3DS2 verification and we just received the event very late
+							} else if (invoiceInfo.paymentErrorInfo && invoiceInfo.paymentErrorInfo.errorCode !== null) {
+								// verification error during 3ds verification
+								let error = "3dsFailedOther"
 
-							switch (invoiceInfo.paymentErrorInfo.errorCode as PaymentErrorCode) {
-								case "card.cvv_invalid":
-									error = "cvvInvalid"
-									break
-								case "card.number_invalid":
-									error = "ccNumberInvalid"
-									break
+								switch (invoiceInfo.paymentErrorInfo.errorCode as PaymentErrorCode) {
+									case "card.cvv_invalid":
+										error = "cvvInvalid"
+										break
+									case "card.number_invalid":
+										error = "ccNumberInvalid"
+										break
 
-								case "card.date_invalid":
-									error = "expirationDate"
-									break
-								case "card.insufficient_funds":
-									error = "insufficientFunds"
-									break
-								case "card.expired_card":
-									error = "cardExpired"
-									break
-								case "card.3ds2_failed":
-									error = "3dsFailed"
-									break
+									case "card.date_invalid":
+										error = "expirationDate"
+										break
+									case "card.insufficient_funds":
+										error = "insufficientFunds"
+										break
+									case "card.expired_card":
+										error = "cardExpired"
+										break
+									case "card.3ds2_failed":
+										error = "3dsFailed"
+										break
+								}
+
+								Dialog.message(getPreconditionFailedPaymentMsg(invoiceInfo.paymentErrorInfo.errorCode))
+								resolve(false)
+								progressDialog.close()
 							}
 
-							Dialog.message(getPreconditionFailedPaymentMsg(invoiceInfo.paymentErrorInfo.errorCode))
-							resolve(false)
-							progressDialog.close()
-						}
-
-						m.redraw()
-					})
-				}
-			}).then(noOp)
+							m.redraw()
+						})
+					}
+				}).then(noOp)
+			},
+			priority: OnEntityUpdateReceivedPriority.NORMAL,
 		}
 
 		locator.eventController.addEntityListener(entityEventListener)

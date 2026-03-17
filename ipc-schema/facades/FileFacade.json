@@ -115,7 +115,8 @@
 				},
 				{
 					"headers": "Map<string, string>"
-				}
+				},
+				{ "fileId": "string" }
 			],
 			"ret": "DownloadTaskResponse"
 		},
@@ -185,6 +186,15 @@
 				}
 			],
 			"ret": "bytes"
+		},
+		"deleteFromAppDir": {
+			"doc": "Delete file from given path relative to app data folder",
+			"arg": [
+				{
+					"path": "string"
+				}
+			],
+			"ret": "void"
 		},
 		"readDataFile": {
 			"doc": "read the file at the given location into a DataFile. Returns null if reading fails for any reason.",

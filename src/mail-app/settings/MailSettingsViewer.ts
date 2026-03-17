@@ -15,8 +15,9 @@ import {
 	OFFLINE_STORAGE_DEFAULT_TIME_RANGE_DAYS,
 	OperationType,
 	ReportMovedMailsType,
+	UNDO_SEND_TIMEOUT_SECONDS,
 } from "../../common/api/common/TutanotaConstants"
-import { assertNotNull, defer, LazyLoaded, noOp, ofClass, promiseMap } from "@tutao/tutanota-utils"
+import { defer, LazyLoaded, noOp, ofClass, promiseMap } from "@tutao/tutanota-utils"
 import { getInboxRuleTypeName } from "../mail/model/InboxRuleHandler"
 import { MailAddressTable } from "../../common/settings/mailaddress/MailAddressTable.js"
 import { Dialog } from "../../common/gui/base/Dialog"
@@ -86,7 +87,6 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 		this._defaultSender = getDefaultSenderFromUser(mailLocator.logins.getUserController())
 		this._signature = stream(getSignatureType(mailLocator.logins.getUserController().props).name)
 		this._reportMovedMails = getReportMovedMailsType(null) // loaded later
-
 		this._defaultUnconfidential = mailLocator.logins.getUserController().props.defaultUnconfidential
 		this._sendPlaintext = mailLocator.logins.getUserController().props.sendPlaintextOnly
 		this._noAutomaticContacts = mailLocator.logins.getUserController().props.noAutomaticContacts
@@ -378,6 +378,7 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 					mailLocator.logins.isEnabled(FeatureType.InternalCommunication) ? null : m(DropDownSelector, sendPlaintextAttrs),
 					m("#spamreports", m(DropDownSelector, reportMovedMailsAttrs)),
 					m("#outofoffice", m(TextField, outOfOfficeAttrs)),
+					m("#undoSend", m(DropDownSelector, this.makeUndoSendMailsDropdownAttrs())),
 					this.renderLocalDataSection(),
 					this.mailAddressTableModel
 						? m(
@@ -543,6 +544,25 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 			}
 		}
 		m.redraw()
+	}
+
+	makeUndoSendMailsDropdownAttrs(): DropDownSelectorAttrs<boolean> {
+		return {
+			label: "undoSend_label",
+			items: [
+				{ name: lang.get("activated_label"), value: true },
+				{ name: lang.get("deactivated_label"), value: false },
+			],
+			selectedValue: deviceConfig.getIsUndoSendEnabled(),
+			selectionChangedHandler: (arg: boolean) => {
+				deviceConfig.setIsUndoSendEnabled(arg)
+			},
+			dropdownWidth: 350,
+			helpLabel: () =>
+				lang.getTranslation("undoSendMail_msg", {
+					"{time}": UNDO_SEND_TIMEOUT_SECONDS,
+				}).text,
+		}
 	}
 
 	makeReportMovedMailsDropdownAttrs(): DropDownSelectorAttrs<ReportMovedMailsType> {

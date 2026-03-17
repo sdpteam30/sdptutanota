@@ -16,7 +16,6 @@ import {
 	WebsocketCounterData,
 	WebsocketCounterDataTypeRef,
 	WebsocketEntityDataTypeRef,
-	WebsocketLeaderStatus,
 	WebsocketLeaderStatusTypeRef,
 } from "../entities/sys/TypeRefs.js"
 import { AppName, binarySearch, delay, identity, lastThrow, Nullable, ofClass, promiseMap, randomIntFromInterval, TypeRef } from "@tutao/tutanota-utils"
@@ -46,7 +45,9 @@ import { EventInstancePrefetcher } from "./EventInstancePrefetcher"
 import { AttributeModel } from "../common/AttributeModel"
 import { newSyncMetrics } from "./utils/SyncMetrics"
 import { SessionKeyNotFoundError } from "../common/error/SessionKeyNotFoundError"
-import { hasError } from "../common/utils/ErrorUtils"
+import { hasError, isExpectedErrorForSynchronization } from "../common/utils/ErrorUtils"
+import { ProgressMonitorId } from "../common/utils/ProgressMonitor"
+import { WebsocketConnectivityListener } from "../../misc/WebsocketConnectivityModel"
 
 assertWorkerOrNode()
 
@@ -91,13 +92,9 @@ export const enum ConnectMode {
 }
 
 export interface EventBusListener {
-	onWebsocketStateChanged(state: WsConnectionState): unknown
-
 	onCounterChanged(counter: WebsocketCounterData): unknown
 
-	onLeaderStatusChanged(leaderStatus: WebsocketLeaderStatus): unknown
-
-	onEntityEventsReceived(events: readonly EntityUpdateData[], batchId: Id, groupId: Id): Promise<void>
+	onEntityEventsReceived(events: readonly EntityUpdateData[], batchId: Id, groupId: Id, eventQueueProgressMonitorId?: ProgressMonitorId): Promise<void>
 
 	/**
 	 * @param markers only phishing (not spam) markers will be sent as event bus updates
@@ -151,6 +148,7 @@ export class EventBusClient {
 	private lastInitialEventBatch: Id | null = null
 
 	constructor(
+		private readonly connectivityListener: WebsocketConnectivityListener,
 		private readonly listener: EventBusListener,
 		private readonly cache: EntityRestCache,
 		private readonly userFacade: UserFacade,
@@ -198,7 +196,7 @@ export class EventBusClient {
 		// make sure a retry will be cancelled by setting _serviceUnavailableRetry to null
 		this.serviceUnavailableRetry = null
 
-		this.listener.onWebsocketStateChanged(WsConnectionState.connecting)
+		this.connectivityListener.updateWebSocketState(WsConnectionState.connecting)
 
 		this.state = EventBusState.Automatic
 		this.connectTimer = null
@@ -249,10 +247,10 @@ export class EventBusClient {
 				break
 			case CloseEventBusOption.Pause:
 				this.state = EventBusState.Suspended
-				this.listener.onWebsocketStateChanged(WsConnectionState.connecting)
+				this.connectivityListener.updateWebSocketState(WsConnectionState.connecting)
 				break
 			case CloseEventBusOption.Reconnect:
-				this.listener.onWebsocketStateChanged(WsConnectionState.connecting)
+				this.connectivityListener.updateWebSocketState(WsConnectionState.connecting)
 				break
 		}
 
@@ -282,7 +280,7 @@ export class EventBusClient {
 
 		const p = this.initEntityEvents(connectMode)
 
-		this.listener.onWebsocketStateChanged(WsConnectionState.connected)
+		this.connectivityListener.updateWebSocketState(WsConnectionState.connected)
 
 		return p
 	}
@@ -304,9 +302,16 @@ export class EventBusClient {
 			case MessageType.EntityUpdate: {
 				const entityUpdateData = await this.decodeEntityEventValue(WebsocketEntityDataTypeRef, JSON.parse(value))
 				this.typeModelResolver.setServerApplicationTypesModelHash(entityUpdateData.applicationTypesHash)
-				const updates = await promiseMap(entityUpdateData.entityUpdates, async (event) => {
-					let instance = await this.getInstanceFromEntityEvent(event)
-					return entityUpdateToUpdateData(this.typeModelResolver, event, instance)
+
+				// We only process entity updates for apps and types the clients know about.
+				// We drop the other entity updates early on before constructing TypeRefs for them.
+				const entityUpdatesForClientApps = entityUpdateData.entityUpdates.filter(async (entityUpdate) => {
+					return await this.typeModelResolver.isKnownClientTypeReference(entityUpdate.application, parseInt(entityUpdate.typeId))
+				})
+
+				const updates = await promiseMap(entityUpdatesForClientApps, async (event) => {
+					let parsedInstance = await this.getParsedInstanceFromEntityEvent(event)
+					return entityUpdateToUpdateData(event, parsedInstance)
 				})
 
 				this.entityUpdateMessageQueue.add(entityUpdateData.eventBatchId, entityUpdateData.eventBatchOwner, updates)
@@ -333,7 +338,7 @@ export class EventBusClient {
 				}
 
 				this.userFacade.setLeaderStatus(data)
-				await this.listener.onLeaderStatusChanged(data)
+				await this.connectivityListener.onLeaderStatusMessageReceived(data)
 				break
 			}
 			default:
@@ -342,8 +347,8 @@ export class EventBusClient {
 		}
 	}
 
-	private async getInstanceFromEntityEvent(event: EntityUpdate): Promise<Nullable<ServerModelParsedInstance>> {
-		const typeRef = new TypeRef<any>(event.application as AppName, parseInt(event.typeId!))
+	private async getParsedInstanceFromEntityEvent(event: EntityUpdate): Promise<Nullable<ServerModelParsedInstance>> {
+		const typeRef = new TypeRef<any>(event.application as AppName, parseInt(event.typeId))
 		if (event.instance != null) {
 			try {
 				const serverTypeModel = await this.typeModelResolver.resolveServerTypeReference(typeRef)
@@ -401,9 +406,9 @@ export class EventBusClient {
 		} else if (serverCode === SessionExpiredError.CODE) {
 			// session is expired. do not try to reconnect until the user creates a new session
 			this.state = EventBusState.Suspended
-			this.listener.onWebsocketStateChanged(WsConnectionState.connecting)
+			this.connectivityListener.updateWebSocketState(WsConnectionState.connecting)
 		} else if (this.state === EventBusState.Automatic && this.userFacade.isFullyLoggedIn()) {
-			this.listener.onWebsocketStateChanged(WsConnectionState.connecting)
+			this.connectivityListener.updateWebSocketState(WsConnectionState.connecting)
 
 			if (this.immediateReconnect) {
 				this.immediateReconnect = false
@@ -563,7 +568,7 @@ export class EventBusClient {
 		let totalExpectedBatches = 0
 		for (const batch of timeSortedEventBatches) {
 			const updates = await promiseMap(batch.events, async (event) => {
-				return entityUpdateToUpdateData(this.typeModelResolver, event)
+				return entityUpdateToUpdateData(event)
 			})
 			const batchWasAddedToQueue = this.addBatch(getElementId(batch), getListId(batch), updates, eventQueue)
 
@@ -579,6 +584,10 @@ export class EventBusClient {
 
 		// We only have the correct amount of total work after adding all entity event batches.
 		// The progress for processed batches is tracked inside the event queue.
+
+		// On the prefetcher we add additional total work for every Mail created or updated.
+		// This additional work is then completed during the entity event processing in MailModel
+		// when the entity event for the ProcessInboxService is received and processNeeded = false for the mail.
 		const progressMonitor = new ProgressMonitorDelegate(this.progressTracker, totalExpectedBatches + allEventsFlatMapSize + 1)
 		console.log("ws", `progress monitor expects ${totalExpectedBatches} batches`)
 		await progressMonitor.workDone(1) // show progress right away
@@ -612,7 +621,7 @@ export class EventBusClient {
 		}
 	}
 
-	private async checkOutOfSync() {
+	private async checkOutOfSync(): Promise<void> {
 		// We try to detect whether event batches have already expired.
 		// If this happened we don't need to download anything, we need to purge the cache and start all over.
 		if (await this.cache.isOutOfSync()) {
@@ -648,7 +657,7 @@ export class EventBusClient {
 
 		this.reset()
 
-		this.listener.onWebsocketStateChanged(WsConnectionState.terminated)
+		this.connectivityListener.updateWebSocketState(WsConnectionState.terminated)
 	}
 
 	/**
@@ -717,7 +726,10 @@ export class EventBusClient {
 		try {
 			if (this.isTerminated()) return
 			const filteredEvents = await this.cache.entityEventsReceived(batch.events, batch.batchId, batch.groupId)
-			if (!this.isTerminated()) await this.listener.onEntityEventsReceived(filteredEvents, batch.batchId, batch.groupId)
+			if (!this.isTerminated()) {
+				const progressMonitorId = await this.eventQueue.getProgressMonitor()?.progressMonitorId
+				await this.listener.onEntityEventsReceived(filteredEvents, batch.batchId, batch.groupId, progressMonitorId)
+			}
 
 			if (batch.batchId === this.lastInitialEventBatch) {
 				console.log("Reached final event, sync is done")
@@ -739,8 +751,10 @@ export class EventBusClient {
 				this.serviceUnavailableRetry = retryPromise
 				return retryPromise
 			} else {
-				console.log("EVENT", "error", e)
-				throw e
+				if (!isExpectedErrorForSynchronization(e)) {
+					console.log("EVENT", "error", e)
+					throw e
+				}
 			}
 		}
 	}

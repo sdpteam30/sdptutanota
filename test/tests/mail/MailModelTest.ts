@@ -80,6 +80,7 @@ o.spec("MailModelTest", function () {
 			mailFacade,
 			connectivityModel,
 			() => object(),
+			object(),
 		)
 	})
 
@@ -146,6 +147,7 @@ o.spec("MailModelTest", function () {
 					mailFacade,
 					connectivityModel,
 					() => processInboxHandler,
+					object(),
 				),
 				(m: MailModel) => {
 					m.getFolderSystemByGroupId = (groupId) => {
@@ -225,7 +227,8 @@ o.spec("MailModelTest", function () {
 		})
 
 		o("does not invoke ProcessInboxHandler when downloading of mail fails on create mail event", async function () {
-			when(inboxRuleHandler.findAndApplyMatchingRule(anything(), anything())).thenResolve(null)
+			when(inboxRuleHandler.findAndApplyRulesExcludedFromSpamFilter(anything(), anything(), anything())).thenResolve(null)
+			when(inboxRuleHandler.findAndApplyRulesNotExcludedFromSpamFilter(anything(), anything(), anything())).thenResolve(null)
 			const mailCreateEvent = makeUpdate({
 				instanceListId: "mailListId",
 				instanceId: "mailId",

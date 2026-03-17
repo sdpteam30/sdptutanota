@@ -9,19 +9,19 @@ import {
 	ContactTypeRef,
 	UserSettingsGroupRootTypeRef,
 } from "../api/entities/tutanota/TypeRefs.js"
-import { getFirstOrThrow, isNotNull, LazyLoaded, ofClass, promiseMap } from "@tutao/tutanota-utils"
+import { assertNotNull, first, getFirstOrThrow, isNotNull, LazyLoaded, ofClass, promiseMap } from "@tutao/tutanota-utils"
 import Stream from "mithril/stream"
 import stream from "mithril/stream"
 import { EntityClient, loadMultipleFromLists } from "../api/common/EntityClient.js"
 import { LoginController } from "../api/main/LoginController.js"
-import { EntityEventsListener, EventController } from "../api/main/EventController.js"
+import { EventController } from "../api/main/EventController.js"
 import { LoginIncompleteError } from "../api/common/error/LoginIncompleteError.js"
 import { cleanMailAddress } from "../api/common/utils/CommonCalendarUtils.js"
 import { DbError } from "../api/common/error/DbError.js"
-import { elementIdPart, getEtId, sortCompareById } from "../api/common/utils/EntityUtils.js"
+import { elementIdPart, getEtId, listIdPart, sortCompareById } from "../api/common/utils/EntityUtils.js"
 import { NotAuthorizedError, NotFoundError } from "../api/common/error/RestError.js"
 import { ShareCapability } from "../api/common/TutanotaConstants.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../api/common/utils/EntityUpdateUtils.js"
+import { EntityEventsListener, EntityUpdateData, isUpdateForTypeRef, OnEntityUpdateReceivedPriority } from "../api/common/utils/EntityUpdateUtils.js"
 import { ContactSearchFacade } from "../../mail-app/workerUtils/index/ContactSearchFacade"
 
 assertMainOrNode()
@@ -71,6 +71,21 @@ export class ContactModel {
 	/** Id of the contact list. Is null for external users. */
 	getContactListId(): Promise<Id | null> {
 		return this.contactListId.getAsync()
+	}
+
+	async loadAllContacts(): Promise<Array<Contact>> {
+		const listId = await this.getContactListId()
+		if (listId == null) {
+			return []
+		}
+		return this.entityClient.loadAll(ContactTypeRef, listId)
+	}
+
+	async eraseContacts(contacts: Contact[]) {
+		if (contacts.length > 0) {
+			const listId = listIdPart(assertNotNull(first(contacts))._id)
+			await this.entityClient.eraseMultiple(listId, contacts)
+		}
 	}
 
 	/**
@@ -184,16 +199,19 @@ export class ContactModel {
 		}
 	}
 
-	private readonly entityEventsReceived: EntityEventsListener = async (updates: ReadonlyArray<EntityUpdateData>, eventOwnerGroupId: Id): Promise<void> => {
-		for (const update of updates) {
-			if (
-				this.loginController.getUserController().isUpdateForLoggedInUserInstance(update, eventOwnerGroupId) ||
-				isUpdateForTypeRef(UserSettingsGroupRootTypeRef, update) ||
-				isUpdateForTypeRef(GroupInfoTypeRef, update)
-			) {
-				await this.loadContactLists()
+	private readonly entityEventsReceived: EntityEventsListener = {
+		onEntityUpdatesReceived: async (updates: ReadonlyArray<EntityUpdateData>, eventOwnerGroupId: Id): Promise<void> => {
+			for (const update of updates) {
+				if (
+					this.loginController.getUserController().isUpdateForLoggedInUserInstance(update, eventOwnerGroupId) ||
+					isUpdateForTypeRef(UserSettingsGroupRootTypeRef, update) ||
+					isUpdateForTypeRef(GroupInfoTypeRef, update)
+				) {
+					await this.loadContactLists()
+				}
 			}
-		}
+		},
+		priority: OnEntityUpdateReceivedPriority.NORMAL,
 	}
 }
 

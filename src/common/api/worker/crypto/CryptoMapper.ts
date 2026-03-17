@@ -8,31 +8,26 @@ import {
 	ServerModelParsedInstance,
 	ServerTypeModel,
 } from "../../common/EntityTypes"
-import { assertNotNull, Base64, base64ToUint8Array, stringToUtf8Uint8Array, TypeRef, uint8ArrayToBase64, utf8Uint8ArrayToString } from "@tutao/tutanota-utils"
+import { Base64, base64ToUint8Array, Nullable, stringToUtf8Uint8Array, TypeRef, uint8ArrayToBase64, utf8Uint8ArrayToString } from "@tutao/tutanota-utils"
 import { AssociationType, Cardinality, ValueType } from "../../common/EntityConstants"
 import { CryptoError } from "@tutao/tutanota-crypto/error.js"
-import { Nullable } from "@tutao/tutanota-utils"
-import { aesDecrypt, aesEncrypt, AesKey, ENABLE_MAC, extractIvFromCipherText, IV_BYTE_LENGTH, random } from "@tutao/tutanota-crypto"
-import { convertDbToJsType, convertJsToDbType, decompressString, isDefaultValue, valueToDefault } from "./ModelMapper"
+import { aesDecrypt, aesEncrypt, AesKey } from "@tutao/tutanota-crypto"
+import { convertDbToJsType, convertJsToDbType, decompressString, valueToDefault } from "./ModelMapper"
 import { ClientTypeReferenceResolver, ServerTypeReferenceResolver } from "../../common/EntityFunctions"
 import { isWebClient } from "../../common/Env"
 import { ProgrammingError } from "../../common/error/ProgrammingError"
 import { SessionKeyNotFoundError } from "../../common/error/SessionKeyNotFoundError"
 import { AttributeModel } from "../../common/AttributeModel"
+import { hasError } from "../../common/utils/ErrorUtils"
 
 // Exported for testing
-export function encryptValue(
-	valueType: ModelValue & { encrypted: true },
-	value: Nullable<ParsedValue>,
-	sk: AesKey,
-	iv: Uint8Array = random.generateRandomData(IV_BYTE_LENGTH),
-): Nullable<Base64> {
+export function encryptValue(valueType: ModelValue & { encrypted: true }, value: Nullable<ParsedValue>, sk: AesKey): Nullable<Base64> {
 	if (value == null) {
 		return null
 	} else {
 		const dbValue = convertJsToDbType(valueType.type, value)!
 		const bytes = typeof dbValue === "string" ? stringToUtf8Uint8Array(dbValue) : dbValue
-		const encryptedBytes = aesEncrypt(sk, bytes, iv, true, ENABLE_MAC)
+		const encryptedBytes = aesEncrypt(sk, bytes)
 		return uint8ArrayToBase64(encryptedBytes)
 	}
 }
@@ -46,6 +41,10 @@ export function decryptValue(
 	sk: AesKey,
 ): Nullable<ParsedValue> {
 	if (value == null) {
+		return null
+	} else if (valueType.cardinality === Cardinality.ZeroOrOne && value === "") {
+		// Might happen if cardinality was changed from ZeroOrOne -> One -> ZeroOrOne
+		console.warn(`Found an encrypted attribute (${valueType.id}:${valueType.name}) with a Cardinality.ZeroOrOne and an empty value`)
 		return null
 	} else if (valueType.cardinality === Cardinality.One && value === "") {
 		// Migration for values added after the Type has been defined initially
@@ -78,9 +77,7 @@ export class CryptoMapper {
 		encryptedInstance: ServerModelEncryptedParsedInstance,
 		sk: Nullable<AesKey>,
 	): Promise<ServerModelParsedInstance> {
-		const decrypted: ServerModelParsedInstance = {
-			_finalIvs: {},
-		} as ServerModelParsedInstance
+		const decrypted: ServerModelParsedInstance = {} as ServerModelParsedInstance
 		for (const [valueIdStr, valueInfo] of Object.entries(serverTypeModel.values)) {
 			const valueId = parseInt(valueIdStr)
 			const valueName = valueInfo.name
@@ -98,20 +95,6 @@ export class CryptoMapper {
 						"session key is null, but value is encrypted. valueName: " + valueName + " valueType: " + JSON.stringify(valueInfo),
 					)
 				}
-				if (valueInfo.encrypted) {
-					if (encryptedValue === "") {
-						// the encrypted value is "" if the decrypted value is the default value
-						// storing this marker lets us restore that empty string when we re-encrypt the instance.
-						// check out encrypt() to see the other side of this.
-						decrypted._finalIvs[valueId] = null
-					} else if (valueInfo.final && encryptedValue) {
-						// the server needs to be able to check if an encrypted final field changed.
-						// that's only possible if we re-encrypt using a deterministic IV, because the ciphertext changes if
-						// the IV or the value changes.
-						// storing the IV we used for the initial encryption lets us reuse it later.
-						decrypted._finalIvs[valueId] = extractIvFromCipherText(encryptedValue as Base64)
-					}
-				}
 			} catch (e) {
 				if (decrypted._errors == null) {
 					decrypted._errors = {}
@@ -124,7 +107,7 @@ export class CryptoMapper {
 					}
 				} else {
 					decrypted._errors[valueId] = JSON.stringify(e)
-					console.log("error when decrypting value on type:", `[${serverTypeModel.app},${serverTypeModel.name}]`, "valueName:", valueName, e)
+					console.error("error when decrypting value on type:", `[${serverTypeModel.app},${serverTypeModel.name}]`, "valueName:", valueName, e)
 				}
 			}
 		}
@@ -135,11 +118,23 @@ export class CryptoMapper {
 			if (associationType.type === AssociationType.Aggregation) {
 				const appName = associationType.dependency ?? serverTypeModel.app
 				const associationTypeModel = await this.serverTypeReferenceResolver(new TypeRef(appName, associationType.refTypeId))
-				decrypted[associationId] = await this.decryptAggregateAssociation(
+				const decryptedAggregates = await this.decryptAggregateAssociation(
 					associationTypeModel,
 					encryptedInstanceValue as Array<ServerModelEncryptedParsedInstance>,
 					sk,
 				)
+				decrypted[associationId] = decryptedAggregates
+				if (this.containErrors(decryptedAggregates)) {
+					// we must propagate up to the top level of the instance that there is an error somewhere in an aggregated type.
+					// this indicates to the caller whether decryption succeeded.
+					// e.g. in order to decide whether an instance should be cached or not.
+					if (decrypted._errors == null) {
+						decrypted._errors = {}
+					}
+					// we cannot leave the object empty here, because empty objects are not consistently treated as errors
+					// see the _errors properties in the nested aggregates for more details about the error
+					decrypted._errors[associationId] = "Aggregated type decrypted with errors"
+				}
 			} else {
 				decrypted[associationId] = encryptedInstanceValue
 			}
@@ -147,6 +142,18 @@ export class CryptoMapper {
 		return decrypted
 	}
 
+	/**
+	 * Returns true if at least one of the instances contains _errors at the top level.
+	 * Useful for ATs.
+	 */
+	public containErrors(instances: ServerModelParsedInstance[]): boolean {
+		return instances.some((instance) => hasError(instance))
+	}
+
+	/**
+	 * Returns an array of the decrypted aggregates, each of which may contain decryption errors.
+	 * The caller is responsible for handling the _errors property on each aggregate if it is set.
+	 */
 	public async decryptAggregateAssociation(
 		associationServerTypeModel: ServerTypeModel | ClientTypeModel,
 		encryptedInstanceValues: Array<ServerModelEncryptedParsedInstance>,
@@ -166,7 +173,6 @@ export class CryptoMapper {
 		sk: Nullable<AesKey>,
 	): Promise<ClientModelEncryptedParsedInstance> {
 		let encrypted: ClientModelEncryptedParsedInstance = {} as ClientModelEncryptedParsedInstance
-		const finalIvs = parsedInstance._finalIvs
 
 		for (let valueId of Object.keys(clientTypeModel.values).map(Number)) {
 			let valueType = clientTypeModel.values[valueId]
@@ -176,16 +182,10 @@ export class CryptoMapper {
 			let encryptedValue
 			if (!valueType.encrypted) {
 				encryptedValue = value
-			} else if (finalIvs[valueId] === null && isDefaultValue(valueType.type, value)) {
-				// restore the default encrypted value because it has not changed.
-				// this saves storage and more importantly prevents us from throwing out-of-storage errors for updates that
-				// should not increase the size of the instance.
-				encryptedValue = ""
 			} else if (sk != null) {
 				// the value is actually Uint8Array | null | undefined. null means we need to check that the default value wasn't changed,
 				// which happened above - so it's okay to roll null into undefined.
-				const iv = finalIvs[valueId] ?? undefined
-				encryptedValue = encryptValue(valueType as ModelValue & { encrypted: true }, value, sk, iv)
+				encryptedValue = encryptValue(valueType as ModelValue & { encrypted: true }, value, sk)
 			} else {
 				throw new CryptoError(`Encrypting ${clientTypeModel.app}/${clientTypeModel.name}.${valueName} requires a session key!`)
 			}

@@ -27,6 +27,7 @@ import {
 	assertNotNull,
 	cleanMatch,
 	contains,
+	daysToMillis,
 	deduplicate,
 	defer,
 	DeferredObject,
@@ -34,6 +35,7 @@ import {
 	findAndRemove,
 	getFromMap,
 	LazyLoaded,
+	minutesToMillis,
 	neverNull,
 	noOp,
 	ofClass,
@@ -44,7 +46,7 @@ import {
 import Stream from "mithril/stream"
 import stream from "mithril/stream"
 import type { File as TutanotaFile } from "../../common/api/entities/tutanota/TypeRefs.js"
-import { checkAttachmentSize, getDefaultSender, getTemplateLanguages, isUserEmail, RecipientField } from "./SharedMailUtils.js"
+import { checkAttachmentSize, getDefaultSender, getTemplateLanguages, isAliasEnabledWithUser, isUserEmail, RecipientField } from "./SharedMailUtils.js"
 import { cloneInlineImages, InlineImages, revokeInlineImages } from "./inlineImagesUtils.js"
 import { RecipientsModel, ResolvableRecipient } from "../api/main/RecipientsModel.js"
 import { getAvailableLanguageCode, getSubstitutedLanguageCode, lang, Language, languages, MaybeTranslation, TranslationKey } from "../misc/LanguageViewModel.js"
@@ -53,7 +55,7 @@ import { EntityClient } from "../api/common/EntityClient.js"
 import { LoginController } from "../api/main/LoginController.js"
 import { EventController } from "../api/main/EventController.js"
 import { DateProvider } from "../api/common/DateProvider.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../api/common/utils/EntityUpdateUtils.js"
+import { EntityEventsListener, EntityUpdateData, isUpdateForTypeRef, OnEntityUpdateReceivedPriority } from "../api/common/utils/EntityUpdateUtils.js"
 import { UserController } from "../api/main/UserController.js"
 import { cleanMailAddress, findRecipientWithAddress } from "../api/common/utils/CommonCalendarUtils.js"
 import { getPasswordStrengthForUser, isSecurePassword, PASSWORD_MIN_SECURE_VALUE } from "../misc/passwords/PasswordUtils.js"
@@ -73,10 +75,10 @@ import { RecipientNotResolvedError } from "../api/common/error/RecipientNotResol
 import { RecipientsNotFoundError } from "../api/common/error/RecipientsNotFoundError.js"
 import { checkApprovalStatus } from "../misc/LoginUtils.js"
 import { FileNotFoundError } from "../api/common/error/FileNotFoundError.js"
-import { elementIdPart, isSameId, stringToCustomId } from "../api/common/utils/EntityUtils.js"
+import { elementIdPart, getElementId, isSameId, stringToCustomId } from "../api/common/utils/EntityUtils.js"
 import { MailBodyTooLargeError } from "../api/common/error/MailBodyTooLargeError.js"
 import { createApprovalMail } from "../api/entities/monitor/TypeRefs.js"
-import { CustomerPropertiesTypeRef } from "../api/entities/sys/TypeRefs.js"
+import { CustomerPropertiesTypeRef, GroupInfoTypeRef } from "../api/entities/sys/TypeRefs.js"
 import { isMailAddress } from "../misc/FormatValidator.js"
 import { MailboxDetail, MailboxModel } from "./MailboxModel.js"
 import { ContactModel } from "../contactsFunctionality/ContactModel.js"
@@ -86,10 +88,25 @@ import { KeyVerificationMismatchError } from "../api/common/error/KeyVerificatio
 import { EventInviteEmailType } from "../../calendar-app/calendar/view/CalendarNotificationSender"
 import { SyncTracker } from "../api/main/SyncTracker"
 import { AutosaveFacade } from "../api/worker/facades/lazy/AutosaveFacade"
+import { Time } from "../calendar/date/Time"
+import { UndoModel } from "../../mail-app/UndoModel"
+import { isAliasEnabledForGroupInfo } from "../api/common/utils/GroupUtils"
 
 assertMainOrNode()
 
 export const TOO_MANY_VISIBLE_RECIPIENTS = 10
+
+// Lower limit for when mails can be scheduled (in minutes)
+export const SEND_LATER_MIN_MINUTES_IN_FUTURE = 2
+// Upper limit for when mails can be scheduled (in days)
+export const SEND_LATER_MAX_DAYS_IN_FUTURE = 31
+
+export const enum SendAtStatus {
+	NotSet,
+	WithinRange,
+	InThePast,
+	TooFarInTheFuture,
+}
 
 export type Attachment = TutanotaFile | DataFile | FileReference
 
@@ -137,6 +154,7 @@ export class SendMailModel {
 	private recipients: Map<RecipientField, Array<ResolvableRecipient>> = new Map()
 	private senderAddress: string
 	private confidential: boolean
+	private sendAt: Date | null = null
 
 	// contains either Files from Tutanota or DataFiles of locally loaded files. these map 1:1 to the _attachmentButtons
 	private attachments: Array<Attachment> = []
@@ -186,21 +204,24 @@ export class SendMailModel {
 		private readonly autosaveFacade: AutosaveFacade,
 		private readonly needNewDraft: (mail: Mail) => Promise<boolean>,
 		private readonly syncTracker: SyncTracker,
+		readonly undoModel: UndoModel | null,
 	) {
 		const userProps = logins.getUserController().props
 		this.senderAddress = this.getDefaultSender()
 		this.confidential = !userProps.defaultUnconfidential
-
 		this.selectedNotificationLanguage = getAvailableLanguageCode(userProps.notificationMailLanguage || lang.code)
 		this.updateAvailableNotificationTemplateLanguages()
 
 		this.eventController.addEntityListener(this.entityEventReceived)
 	}
 
-	private readonly entityEventReceived = async (updates: ReadonlyArray<EntityUpdateData>) => {
-		for (const update of updates) {
-			await this.handleEntityEvent(update)
-		}
+	private readonly entityEventReceived: EntityEventsListener = {
+		onEntityUpdatesReceived: async (updates: ReadonlyArray<EntityUpdateData>) => {
+			for (const update of updates) {
+				await this.handleEntityEvent(update)
+			}
+		},
+		priority: OnEntityUpdateReceivedPriority.NORMAL,
 	}
 
 	/**
@@ -476,7 +497,7 @@ export class SendMailModel {
 		draft: Mail,
 		draftDetails: MailDetails,
 		conversationEntry: ConversationEntry,
-		attachments: TutanotaFile[],
+		attachments: Attachment[],
 		inlineImages: InlineImages,
 	): Promise<SendMailModel> {
 		this.startInit()
@@ -590,7 +611,10 @@ export class SendMailModel {
 		this.recipientsResolved.getAsync()
 
 		// .toLowerCase because all our aliases and accounts are lowercased on creation
-		this.senderAddress = senderMailAddress?.toLowerCase() || this.getDefaultSender()
+		this.senderAddress =
+			senderMailAddress != null && isAliasEnabledWithUser(this.mailboxDetails, this.user().userGroupInfo, senderMailAddress)
+				? senderMailAddress.toLowerCase()
+				: this.getDefaultSender()
 		this.confidential = confidential ?? !this.user().props.defaultUnconfidential
 		this.attachments = []
 
@@ -661,7 +685,7 @@ export class SendMailModel {
 	}
 
 	autosaveReady(): boolean {
-		return !this.waitUntilSync || this.syncTracker.isSyncDone()
+		return !this.waitUntilSync || this.syncTracker.isSyncDone
 	}
 
 	async waitForSaveReady(): Promise<void> {
@@ -728,10 +752,12 @@ export class SendMailModel {
 		return findRecipientWithAddress(this.getRecipientList(type), address)
 	}
 
-	removeRecipientByAddress(address: string, type: RecipientField, notify: boolean = true) {
-		const recipient = findRecipientWithAddress(this.getRecipientList(type), address)
-		if (recipient) {
-			this.removeRecipient(recipient, type, notify)
+	removeRecipientByAddress(address: string, recipientFields: RecipientField[], notify: boolean = true) {
+		for (const recipientField of recipientFields) {
+			const recipient = findRecipientWithAddress(this.getRecipientList(recipientField), address)
+			if (recipient) {
+				this.removeRecipient(recipient, recipientField, notify)
+			}
 		}
 	}
 
@@ -853,12 +879,79 @@ export class SendMailModel {
 		this.confidential = confidential
 	}
 
+	getSendAtDate(): Date | null {
+		return this.sendAt
+	}
+
+	getSendAtTime(): Time | null {
+		if (this.sendAt) {
+			return Time.fromDate(this.sendAt)
+		}
+		return null
+	}
+
+	setDefaultSendAtDate(): void {
+		let nextDay = new Date()
+		nextDay.setDate(nextDay.getDate() + 1)
+		nextDay.setHours(8)
+		nextDay.setMinutes(0)
+		nextDay.setSeconds(0, 0)
+		this.setSendAtDate(nextDay)
+	}
+
+	setSendAtDate(newDate: Date | null): void {
+		if (!this.sendAt) {
+			// if there is no sendAt on the model, we need to set it
+			this.sendAt = newDate
+		} else if (newDate) {
+			// if there is a sendAt on the model, we only change the date and make sure to not overwrite the time
+			newDate.setHours(this.sendAt.getHours())
+			newDate.setMinutes(this.sendAt.getMinutes())
+			newDate.setSeconds(0, 0)
+			// we reassign sendAt instead of just mutating the date so the DatePicker's inputText is updated
+			this.sendAt = newDate
+		} else {
+			// if there is not a sendAt to update, we want to set the sendAt on the model to null
+			this.sendAt = null
+		}
+	}
+
+	setSendAtTime(sendAt: Time): void {
+		this.sendAt?.setHours(sendAt.hour)
+		this.sendAt?.setMinutes(sendAt.minute)
+	}
+
+	getSendAtStatus(): SendAtStatus {
+		if (this.sendAt == null) {
+			return SendAtStatus.NotSet
+		}
+
+		const nowMillis = new Date().getTime()
+		if (this.sendAt.getTime() < nowMillis + minutesToMillis(SEND_LATER_MIN_MINUTES_IN_FUTURE)) {
+			return SendAtStatus.InThePast
+		} else if (this.sendAt.getTime() > nowMillis + daysToMillis(SEND_LATER_MAX_DAYS_IN_FUTURE)) {
+			return SendAtStatus.TooFarInTheFuture
+		} else {
+			return SendAtStatus.WithinRange
+		}
+	}
+
 	containsExternalRecipients(): boolean {
 		return this.allRecipients().some((r) => r.type === RecipientType.EXTERNAL)
 	}
 
 	getExternalRecipients(): Array<Recipient> {
 		return this.allRecipients().filter((r) => r.type === RecipientType.EXTERNAL)
+	}
+
+	getWaitMessage(): TranslationKey {
+		if (this.sendAt != null) {
+			return "scheduling_msg"
+		} else if (this.isConfidential()) {
+			return "sending_msg"
+		} else {
+			return "sendingUnencrypted_msg"
+		}
 	}
 
 	/**
@@ -870,17 +963,18 @@ export class SendMailModel {
 	 * @reject {LockedError}
 	 * @reject {UserError}
 	 * @param mailMethod
-	 * @param getConfirmation: A callback to get user confirmation
-	 * @param waitHandler: A callback to allow UI blocking while the mail is being sent. it seems like wrapping the send call in showProgressDialog causes the confirmation dialogs not to be shown. We should fix this, but this works for now
 	 * @param tooManyRequestsError
-	 * @return true if the send was completed, false if it was aborted (by getConfirmation returning false
+	 * @param sendAt Schedule send at a specific date and time
+	 * @return true if the send was completed, false if it was aborted (by getConfirmation returning false)
 	 */
 	async send(
 		mailMethod: MailMethod,
 		getConfirmation: (arg0: MaybeTranslation) => Promise<boolean> = (_) => Promise.resolve(true),
-		waitHandler: (arg0: MaybeTranslation, arg1: Promise<any>) => Promise<any> = (_, p) => p,
+		waitHandler: (arg0: MaybeTranslation, arg1: Promise<SendMailResult>) => Promise<unknown> = (_, p) => p,
+		sendAt: Date | null = null,
 		tooManyRequestsError: TranslationKey = "tooManyMails_msg",
-	): Promise<boolean> {
+		allowUndo: boolean = false,
+	): Promise<SendMailResult> {
 		// To avoid parallel invocations do not do anything async here that would later execute the sending.
 		// It is fine to wait for getConfirmation() because it is modal and will prevent the user from triggering multiple sends.
 		// If you need to do something async here put it into `asyncSend`
@@ -891,7 +985,10 @@ export class SendMailModel {
 		if (this.allRecipients().length === 1 && this.allRecipients()[0].address.toLowerCase().trim() === "approval@tutao.de") {
 			await this.sendApprovalMail(this.getBody())
 			await this.clearLocalAutosave() // because this approval mail is "sent" in an odd way, it will not clear the local autosave
-			return true
+			return {
+				success: true,
+				sendJob: null,
+			}
 		}
 
 		if (this.toRecipients().length === 0 && this.ccRecipients().length === 0 && this.bccRecipients().length === 0) {
@@ -902,12 +999,18 @@ export class SendMailModel {
 
 		// Many recipients is a warning
 		if (numVisibleRecipients >= TOO_MANY_VISIBLE_RECIPIENTS && !(await getConfirmation("manyRecipients_msg"))) {
-			return false
+			return {
+				success: false,
+				sendJob: null,
+			}
 		}
 
 		// Empty subject is a warning
 		if (this.getSubject().length === 0 && !(await getConfirmation("noSubject_msg"))) {
-			return false
+			return {
+				success: false,
+				sendJob: null,
+			}
 		}
 
 		const asyncSend = async () => {
@@ -922,23 +1025,40 @@ export class SendMailModel {
 
 			// Weak password is a warning
 			if (this.isConfidentialExternal() && this.hasInsecurePasswords() && !(await getConfirmation("presharedPasswordNotStrongEnough_msg"))) {
-				return false
+				return {
+					success: false,
+					sendJob: null,
+				}
 			}
 
-			// Don't safe unnecessarily.
-			if (this.hasMailChanged() || this.draft == null) {
+			// The draft might have been moved, sent, or scheduled from another client
+			// So load up-to-date mail when checking if a new draft is needed
+			if (this.hasMailChanged() || this.draft == null || (await this.needNewDraft(await this.entity.load(MailTypeRef, this.draft._id)))) {
+				// Don't save unnecessarily.
 				await this.saveDraft(true, mailMethod)
 			}
 
 			await this.updateContacts(recipients)
-			await this.mailFacade.sendDraft(assertNotNull(this.draft, "draft was null?"), recipients, this.selectedNotificationLanguage)
+			const sendReturn = await this.mailFacade.sendDraft(
+				assertNotNull(this.draft, "draft was null?"),
+				recipients,
+				this.selectedNotificationLanguage,
+				sendAt,
+				allowUndo,
+			)
 			await this.clearLocalAutosave() // no need to keep a local copy of a draft of an email that was sent
 			await this.updatePreviousMail()
-			await this.updateExternalLanguage()
-			return true
+			this.updateExternalLanguage()
+			return {
+				success: true,
+				sendJob: sendReturn.sendJob,
+			}
 		}
 
-		return waitHandler(this.isConfidential() ? "sending_msg" : "sendingUnencrypted_msg", asyncSend())
+		const sendPromise = asyncSend()
+
+		return waitHandler(this.getWaitMessage(), sendPromise)
+			.then(() => sendPromise, undefined)
 			.catch(
 				ofClass(LockedError, () => {
 					throw new UserError("operationStillActive_msg")
@@ -975,7 +1095,10 @@ export class SendMailModel {
 					// special case: the approval status is set to SpamSender, but the update has not been received yet, so use SpamSender as default
 					return checkApprovalStatus(this.logins, true, ApprovalStatus.SPAM_SENDER).then(() => {
 						console.log("could not send mail (blocked access)", e)
-						return false
+						return {
+							success: false,
+							sendJob: null,
+						}
 					})
 				}),
 			)
@@ -985,8 +1108,12 @@ export class SendMailModel {
 				}),
 			)
 			.catch(
-				ofClass(PreconditionFailedError, () => {
-					throw new UserError("operationStillActive_msg")
+				ofClass(PreconditionFailedError, (e) => {
+					if (e.data?.includes("send_mail.too_many_attachments")) {
+						throw new UserError("tooManyAttachments_msg")
+					} else {
+						throw new UserError("operationStillActive_msg")
+					}
 				}),
 			)
 			.catch(
@@ -1004,6 +1131,11 @@ export class SendMailModel {
 					import("../settings/keymanagement/KeyVerificationRecoveryDialog.js").then(({ showMultiRecipientsKeyVerificationRecoveryDialog }) =>
 						showMultiRecipientsKeyVerificationRecoveryDialog(failedRecipients),
 					)
+
+					return {
+						success: false,
+						sendJob: null,
+					}
 				}),
 			)
 	}
@@ -1068,10 +1200,13 @@ export class SendMailModel {
 			this._draftSavedRecently = true
 			this.waitUntilSync = false
 
+			// the draft might have been moved, sent, or scheduled from another client.
+			// Load up-to-date mail when checking if a new draft is needed
+			const upToDateDraft = this.draft && (await this.entity.load(MailTypeRef, this.draft._id))
 			this.draft =
-				this.draft == null || (await this.needNewDraft(this.draft))
+				upToDateDraft == null || (await this.needNewDraft(upToDateDraft))
 					? await this.createDraft(body, attachments, mailMethod)
-					: await this.updateDraft(body, attachments, this.draft)
+					: await this.updateDraft(body, attachments, upToDateDraft)
 
 			const attachmentIds = await this.mailFacade.getAttachmentIds(this.draft)
 			const newAttachments = await promiseMap(attachmentIds, (fileId) => this.entity.load<TutanotaFile>(FileTypeRef, fileId), {
@@ -1266,6 +1401,13 @@ export class SendMailModel {
 					await this.makeLocalAutosave()
 				}
 			}
+		} else if (isUpdateForTypeRef(GroupInfoTypeRef, update) && operation === OperationType.UPDATE) {
+			if (isSameId(getElementId(this.user().userGroupInfo), update.instanceId)) {
+				const groupInfo = await this.entity.load(GroupInfoTypeRef, [update.instanceListId, update.instanceId])
+				if (!isAliasEnabledForGroupInfo(groupInfo, this.senderAddress)) {
+					this.senderAddress = this.getDefaultSender()
+				}
+			}
 		}
 		this.markAsChangedIfNecessary(changed)
 		return Promise.resolve()
@@ -1328,4 +1470,9 @@ function recipientsFilter(recipientList: ReadonlyArray<PartialRecipient>): Array
 			cleaned: cleanMailAddress(a.address),
 		}))
 	return deduplicate(cleanedList, (a, b) => a.cleaned === b.cleaned).map((a) => a.recipient)
+}
+
+export interface SendMailResult {
+	success: boolean
+	sendJob: IdTuple | null
 }

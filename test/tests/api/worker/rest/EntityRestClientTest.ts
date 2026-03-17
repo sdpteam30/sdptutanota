@@ -45,6 +45,7 @@ import {
 	BodyTypeRef,
 	CalendarEventTypeRef,
 	ContactTypeRef,
+	FileTypeRef,
 	MailDetailsBlob,
 	MailDetailsBlobTypeRef,
 	MailDetailsTypeRef,
@@ -56,16 +57,16 @@ import { InstancePipeline } from "../../../../../src/common/api/worker/crypto/In
 import { type Entity, TypeModel } from "../../../../../src/common/api/common/EntityTypes"
 import { PersistenceResourcePostReturnTypeRef } from "../../../../../src/common/api/entities/base/TypeRefs"
 import { aes256RandomKey, AesKey, decryptKey } from "@tutao/tutanota-crypto"
-import { _encryptKeyWithVersionedKey, VersionedKey } from "../../../../../src/common/api/worker/crypto/CryptoWrapper"
+import { CryptoWrapper, VersionedKey } from "../../../../../src/common/api/worker/crypto/CryptoWrapper"
 import { EntityClient } from "../../../../../src/common/api/common/EntityClient"
 import { ServiceExecutor } from "../../../../../src/common/api/worker/rest/ServiceExecutor"
-import { OwnerEncSessionKeysUpdateQueue } from "../../../../../src/common/api/worker/crypto/OwnerEncSessionKeysUpdateQueue"
 import { DefaultEntityRestCache } from "../../../../../src/common/api/worker/rest/DefaultEntityRestCache"
 import { KeyLoaderFacade } from "../../../../../src/common/api/worker/facades/KeyLoaderFacade"
 import { AsymmetricCryptoFacade } from "../../../../../src/common/api/worker/crypto/AsymmetricCryptoFacade"
 import { PublicEncryptionKeyProvider } from "../../../../../src/common/api/worker/facades/PublicEncryptionKeyProvider"
 import { KeyRotationFacade } from "../../../../../src/common/api/worker/facades/KeyRotationFacade"
 import { AttributeModel } from "../../../../../src/common/api/common/AttributeModel"
+import { InstanceSessionKeysCache } from "../../../../../src/common/api/worker/facades/InstanceSessionKeysCache"
 
 const { anything, argThat, captor } = matchers
 
@@ -113,6 +114,7 @@ o.spec("EntityRestClient", function () {
 	let encryptedSessionKey
 	let currentDebuggingStatus
 	let typeModelResolver: TypeModelResolver
+	let cryptoWrapper: CryptoWrapper
 
 	async function typeRefToRestPath(typeRef: TypeRef<unknown>): Promise<string> {
 		return typeModelToRestPath(await typeModelResolver.resolveClientTypeReference(typeRef))
@@ -124,12 +126,13 @@ o.spec("EntityRestClient", function () {
 		instancePipeline = instancePipelineFromTypeModelResolver(typeModelResolver)
 		// instead of mocking the instance pipeline itself, mock it's internal mapper.
 		blobAccessTokenFacade = instance(BlobAccessTokenFacade)
+		cryptoWrapper = new CryptoWrapper()
 
 		restClient = object()
 
 		sk = aes256RandomKey()
 		ownerGroupKey = { object: aes256RandomKey(), version: 0 }
-		encryptedSessionKey = _encryptKeyWithVersionedKey(ownerGroupKey, sk)
+		encryptedSessionKey = cryptoWrapper.encryptKeyWithVersionedKey(ownerGroupKey, sk)
 		when(keyLoaderFacadeMock.loadSymGroupKey(ownerGroupId, 0)).thenResolve(ownerGroupKey.object)
 
 		fullyLoggedIn = true
@@ -139,11 +142,12 @@ o.spec("EntityRestClient", function () {
 			restClient,
 			instance(ServiceExecutor),
 			instancePipeline,
-			instance(OwnerEncSessionKeysUpdateQueue),
 			instance(DefaultEntityRestCache),
 			keyLoaderFacadeMock,
 			instance(AsymmetricCryptoFacade),
 			instance(PublicEncryptionKeyProvider),
+			new InstanceSessionKeysCache(),
+			cryptoWrapper,
 			() => instance(KeyRotationFacade),
 			typeModelResolver,
 			async () => {
@@ -215,9 +219,10 @@ o.spec("EntityRestClient", function () {
 			})
 			const requestPath = `${await typeRefToRestPath(CalendarEventTypeRef)}/${calendarListId}/${id1}`
 			const untypedCalendarInstance = await instancePipeline.mapAndEncrypt(CalendarEventTypeRef, calendar, sk)
+			const { version, dependsOnVersion } = await typeModelResolver.resolveClientTypeReference(CalendarEventTypeRef)
 			when(
 				restClient.request(requestPath, HttpMethod.GET, {
-					headers: { ...authHeader, v: String(tutanotaModelInfo.version) },
+					headers: { ...authHeader, v: String(version), dv: String(dependsOnVersion) },
 					responseType: MediaType.Json,
 					queryParams: undefined,
 					baseUrl: undefined,
@@ -271,9 +276,10 @@ o.spec("EntityRestClient", function () {
 				queryParams: { foo: "bar" },
 				extraHeaders: { baz: "quux" },
 			})
+			const { version, dependsOnVersion } = await typeModelResolver.resolveClientTypeReference(CalendarEventTypeRef)
 			verify(
 				restClient.request(requestPath, HttpMethod.GET, {
-					headers: { ...authHeader, v: String(tutanotaModelInfo.version), baz: "quux" },
+					headers: { ...authHeader, v: String(version), dv: String(dependsOnVersion), baz: "quux" },
 					responseType: MediaType.Json,
 					queryParams: { foo: "bar" },
 					baseUrl: undefined,
@@ -300,7 +306,7 @@ o.spec("EntityRestClient", function () {
 			const id1 = "id1"
 			const ownerKeyProviderSk = aes256RandomKey()
 			const ownerGroupKey: VersionedKey = { object: aes256RandomKey(), version: 0 }
-			const ownerKeyProviderEncryptedSessionKey = _encryptKeyWithVersionedKey(ownerGroupKey, ownerKeyProviderSk)
+			const ownerKeyProviderEncryptedSessionKey = cryptoWrapper.encryptKeyWithVersionedKey(ownerGroupKey, ownerKeyProviderSk)
 			const calendar = createTestEntity(CalendarEventTypeRef, {
 				_id: [calendarListId, id1],
 				_permissions: "some id",
@@ -310,9 +316,10 @@ o.spec("EntityRestClient", function () {
 			})
 			const untypedCalendarInstance = await instancePipeline.mapAndEncrypt(CalendarEventTypeRef, calendar, ownerKeyProviderSk)
 
+			const { version, dependsOnVersion } = await typeModelResolver.resolveClientTypeReference(CalendarEventTypeRef)
 			when(
 				restClient.request(`${await typeRefToRestPath(CalendarEventTypeRef)}/${calendarListId}/${id1}`, HttpMethod.GET, {
-					headers: { ...authHeader, v: String(tutanotaModelInfo.version) },
+					headers: { ...authHeader, v: String(version), dv: String(dependsOnVersion) },
 					responseType: MediaType.Json,
 					queryParams: undefined,
 					baseUrl: undefined,
@@ -389,9 +396,11 @@ o.spec("EntityRestClient", function () {
 			})
 			const untypedCal1 = await instancePipeline.mapAndEncrypt(CalendarEventTypeRef, calendar1, sk)
 			const untypedCal2 = await instancePipeline.mapAndEncrypt(CalendarEventTypeRef, calendar2, sk)
+
+			const { version, dependsOnVersion } = await typeModelResolver.resolveClientTypeReference(CalendarEventTypeRef)
 			when(
 				restClient.request(`${await typeRefToRestPath(CalendarEventTypeRef)}/${listId}`, HttpMethod.GET, {
-					headers: { ...authHeader, v: String(tutanotaModelInfo.version) },
+					headers: { ...authHeader, v: String(version), dv: String(dependsOnVersion) },
 					queryParams: { start: startId, count: String(count), reverse: String(false) },
 					responseType: MediaType.Json,
 					baseUrl: undefined,
@@ -794,7 +803,7 @@ o.spec("EntityRestClient", function () {
 
 	o.spec("Setup", function () {
 		o("Setup list entity", async function () {
-			const v = (await typeModelResolver.resolveClientTypeReference(CalendarEventTypeRef)).version
+			const { version, dependsOnVersion } = await typeModelResolver.resolveClientTypeReference(CalendarEventTypeRef)
 			const ownerGroupKey: VersionedKey = { object: aes256RandomKey(), version: 0 }
 			const newCalendar = createTestEntity(CalendarEventTypeRef, {
 				_id: ["listId", "element"],
@@ -812,7 +821,7 @@ o.spec("EntityRestClient", function () {
 			when(
 				restClient.request(`/rest/tutanota/calendarevent/listId`, HttpMethod.POST, {
 					baseUrl: undefined,
-					headers: { ...authHeader, v: String(v) },
+					headers: { ...authHeader, v: String(version), dv: String(dependsOnVersion) },
 					queryParams: undefined,
 					responseType: MediaType.Json,
 					body: argThat(async (json) => {
@@ -911,7 +920,7 @@ o.spec("EntityRestClient", function () {
 
 		o("when ownerKey is passed it is used instead for session key resolution", async function () {
 			const typeModel = await typeModelResolver.resolveClientTypeReference(AccountingInfoTypeRef)
-			const v = typeModel.version
+			const { version, dependsOnVersion } = typeModel
 			const ownerGroupKey: VersionedKey = { object: aes256RandomKey(), version: 0 }
 			const newAccountingInfo = createTestEntity(AccountingInfoTypeRef, {
 				_id: "id1",
@@ -930,7 +939,7 @@ o.spec("EntityRestClient", function () {
 			when(
 				restClient.request(`/rest/sys/accountinginfo`, HttpMethod.POST, {
 					baseUrl: undefined,
-					headers: { ...authHeader, v: String(v) },
+					headers: { ...authHeader, v: String(version) },
 					queryParams: undefined,
 					responseType: MediaType.Json,
 					body: argThat(async (json) => {
@@ -1151,14 +1160,55 @@ o.spec("EntityRestClient", function () {
 			newSupportData._original = structuredClone(newSupportData)
 			const patchPayload = createPatchList({ patches: [] })
 			const untypedPatchPayload = await instancePipeline.mapAndEncrypt(PatchListTypeRef, patchPayload, null)
-			when(
-				restClient.request("/rest/tutanota/supportdata/id", HttpMethod.PATCH, {
-					headers: { ...authHeader, v: String(version) },
-					body: JSON.stringify(untypedPatchPayload),
-				}),
-			)
 
 			await entityRestClient.update(newSupportData)
+
+			verify(
+				restClient.request(
+					"/rest/tutanota/supportdata/id",
+					HttpMethod.PATCH,
+					argThat(async (options) => {
+						o(options.headers).deepEquals({ ...authHeader, v: String(version) })
+						const actual = JSON.parse(options.body)
+						const patchListClientTypeModel = await typeModelResolver.resolveClientTypeReference(PatchListTypeRef)
+						const patchesAttributeIdStr = String(assertNotNull(AttributeModel.getAttributeId(patchListClientTypeModel, "patches")))
+						o(untypedPatchPayload[patchesAttributeIdStr]).deepEquals(actual[patchesAttributeIdStr])
+						o(options.queryParams).equals(undefined)
+						o(options.baseUrl).equals(undefined)
+						o(options.responseType).equals(MediaType.Json)
+					}),
+				),
+			)
+		})
+
+		o("Update entity with external aggregation sets dv header", async function () {
+			const { version, dependsOnVersion } = await typeModelResolver.resolveClientTypeReference(FileTypeRef)
+			const dummyFileData = createTestEntity(FileTypeRef, {
+				name: "filename",
+				_id: ["listId", "elementId"],
+			})
+			dummyFileData._original = structuredClone(dummyFileData)
+			const patchPayload = createPatchList({ patches: [] })
+			const untypedPatchPayload = await instancePipeline.mapAndEncrypt(PatchListTypeRef, patchPayload, null)
+
+			await entityRestClient.update(dummyFileData)
+
+			verify(
+				restClient.request(
+					"/rest/tutanota/file/listId/elementId",
+					HttpMethod.PATCH,
+					argThat(async (options) => {
+						o(options.headers).deepEquals({ ...authHeader, v: String(version), dv: String(dependsOnVersion) })
+						const actual = JSON.parse(options.body)
+						const patchListClientTypeModel = await typeModelResolver.resolveClientTypeReference(PatchListTypeRef)
+						const patchesAttributeIdStr = String(assertNotNull(AttributeModel.getAttributeId(patchListClientTypeModel, "patches")))
+						o(untypedPatchPayload[patchesAttributeIdStr]).deepEquals(actual[patchesAttributeIdStr])
+						o(options.queryParams).equals(undefined)
+						o(options.baseUrl).equals(undefined)
+						o(options.responseType).equals(MediaType.Json)
+					}),
+				),
+			)
 		})
 
 		o("Update entity throws if entity does not have an id", async function () {
@@ -1172,7 +1222,7 @@ o.spec("EntityRestClient", function () {
 			const version = typeModel.version
 			const ownerKeyProviderSk = aes256RandomKey()
 			const ownerGroupKey: VersionedKey = { object: aes256RandomKey(), version: 0 }
-			const ownerEncSessionKey = _encryptKeyWithVersionedKey(ownerGroupKey, ownerKeyProviderSk)
+			const ownerEncSessionKey = cryptoWrapper.encryptKeyWithVersionedKey(ownerGroupKey, ownerKeyProviderSk)
 			const newAccountingInfo = createTestEntity(AccountingInfoTypeRef, {
 				_id: "id1",
 				_permissions: "permissionsId",
@@ -1227,17 +1277,19 @@ o.spec("EntityRestClient", function () {
 			const newCustomer = createTestEntity(CustomerTypeRef, {
 				_id: id,
 			})
-			when(
-				restClient.request("/rest/sys/customer/id", HttpMethod.DELETE, {
-					headers: { ...authHeader, v: String(version) },
-				}),
-			)
 
 			await entityRestClient.erase(newCustomer)
+
+			verify(
+				restClient.request("/rest/sys/customer/id", HttpMethod.DELETE, {
+					headers: { ...authHeader, v: String(version) },
+					queryParams: undefined,
+				}),
+			)
 		})
 
 		o("Delete entities", async function () {
-			const { version } = await typeModelResolver.resolveClientTypeReference(CustomerTypeRef)
+			const { version, dependsOnVersion } = await typeModelResolver.resolveClientTypeReference(CalendarEventTypeRef)
 			const id = "id"
 			const idTwo = "id2"
 
@@ -1248,13 +1300,14 @@ o.spec("EntityRestClient", function () {
 				_id: ["foo", idTwo],
 			})
 
-			when(
-				restClient.request("/rest/tutanota/calendarevent/foo?ids=id,id2", HttpMethod.DELETE, {
-					headers: { ...authHeader, v: String(version) },
+			await entityRestClient.eraseMultiple("foo", [newCustomer, secondNewCustomer])
+
+			verify(
+				restClient.request("/rest/tutanota/calendarevent/foo", HttpMethod.DELETE, {
+					headers: { ...authHeader, v: String(version), dv: String(dependsOnVersion) },
+					queryParams: { ids: "id,id2" },
 				}),
 			)
-
-			await entityRestClient.eraseMultiple("foo", [newCustomer, secondNewCustomer])
 		})
 	})
 

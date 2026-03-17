@@ -70,6 +70,7 @@ interface FileFacade {
 		sourceUrl: String,
 		filename: String,
 		headers: Map<String, String>,
+		fileId: String,
 	): DownloadTaskResponse
 	/**
 	 * Calculates specified file hash (with SHA-256). Returns first 6 bytes of it as Base64.
@@ -112,6 +113,12 @@ interface FileFacade {
 	suspend fun readFromAppDir(
 		path: String,
 	): DataWrapper
+	/**
+	 * Delete file from given path relative to app data folder
+	 */
+	suspend fun deleteFromAppDir(
+		path: String,
+	): Unit
 	/**
 	 * read the file at the given location into a DataFile. Returns null if reading fails for any reason.
 	 */

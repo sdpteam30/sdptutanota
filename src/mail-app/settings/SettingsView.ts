@@ -27,7 +27,7 @@ import { AppearanceSettingsViewer } from "../../common/settings/AppearanceSettin
 import type { NavButtonAttrs } from "../../common/gui/base/NavButton.js"
 import { NavButtonColor } from "../../common/gui/base/NavButton.js"
 import { SETTINGS_PREFIX } from "../../common/misc/RouteChange"
-import { layout_size, size } from "../../common/gui/size"
+import { layout_size } from "../../common/gui/size"
 import { FolderColumnView } from "../../common/gui/FolderColumnView.js"
 import { getEtId } from "../../common/api/common/utils/EntityUtils"
 import { KnowledgeBaseListView } from "./KnowledgeBaseListView"
@@ -55,7 +55,7 @@ import { BackgroundColumnLayout } from "../../common/gui/BackgroundColumnLayout.
 import { styles } from "../../common/gui/styles.js"
 import { MobileHeader } from "../../common/gui/MobileHeader.js"
 import { isCustomizationEnabledForCustomer } from "../../common/api/common/utils/CustomerUtils.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../../common/api/common/utils/EntityUpdateUtils.js"
+import { EntityEventsListener, EntityUpdateData, isUpdateForTypeRef, OnEntityUpdateReceivedPriority } from "../../common/api/common/utils/EntityUpdateUtils.js"
 import { Dialog } from "../../common/gui/base/Dialog.js"
 import { AboutDialog } from "../../common/settings/AboutDialog.js"
 import { loadTemplateGroupInstances } from "../templates/model/TemplatePopupModel.js"
@@ -88,7 +88,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 	private readonly _settingsColumn: ViewColumn
 	private readonly _settingsDetailsColumn: ViewColumn
 	private readonly _userFolders: SettingsFolder<unknown>[]
-	private readonly _adminFolders: SettingsFolder<unknown>[]
+	private _adminFolders: SettingsFolder<unknown>[]
 	private readonly logins: LoginController
 	private _templateFolders: SettingsFolder<TemplateGroupInstance>[]
 	private readonly _dummyTemplateFolder: SettingsFolder<unknown>
@@ -405,8 +405,10 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 		await this.updateShowAffiliateSettings()
 		const currentPlanType = await this.logins.getUserController().getPlanType()
 
+		const adminFolders: SettingsFolder<unknown>[] = []
+
 		if (await this.logins.getUserController().canHaveUsers()) {
-			this._adminFolders.push(
+			adminFolders.push(
 				new SettingsFolder(
 					() => "adminUserList_action",
 					() => BootIcons.User,
@@ -423,7 +425,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 				),
 			)
 			if (!this.logins.isEnabled(FeatureType.WhitelabelChild)) {
-				this._adminFolders.push(
+				adminFolders.push(
 					new SettingsFolder(
 						() => "sharedMailboxes_label",
 						() => Icons.People,
@@ -440,7 +442,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 		}
 
 		if (this.logins.getUserController().isGlobalAdmin()) {
-			this._adminFolders.push(
+			adminFolders.push(
 				new SettingsFolder(
 					() => "globalSettings_label",
 					() => BootIcons.Settings,
@@ -451,7 +453,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 			)
 
 			if (!this.logins.isEnabled(FeatureType.WhitelabelChild) && !shouldHideBusinessPlans()) {
-				this._adminFolders.push(
+				adminFolders.push(
 					new SettingsFolder(
 						() => "whitelabel_label",
 						() => Icons.Wand,
@@ -465,7 +467,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 
 		if (!this.logins.isEnabled(FeatureType.WhitelabelChild)) {
 			if (this.logins.getUserController().isGlobalAdmin()) {
-				this._adminFolders.push(
+				adminFolders.push(
 					new SettingsFolder<void>(
 						() => "adminSubscription_action",
 						() => BootIcons.Premium,
@@ -475,7 +477,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 					),
 				)
 
-				this._adminFolders.push(
+				adminFolders.push(
 					new SettingsFolder<void>(
 						() => "adminPayment_action",
 						() => Icons.CreditCard,
@@ -485,7 +487,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 					),
 				)
 
-				this._adminFolders.push(
+				adminFolders.push(
 					new SettingsFolder(
 						() => "referralSettings_label",
 						() => BootIcons.Share,
@@ -495,7 +497,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 					).setIsVisibleHandler(() => !this.showBusinessSettings()),
 				)
 
-				this._adminFolders.push(
+				adminFolders.push(
 					new SettingsFolder(
 						() => "affiliateSettings_label",
 						() => BootIcons.Share,
@@ -518,6 +520,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 				)
 			}
 		}
+		this._adminFolders = adminFolders
 		m.redraw()
 	}
 
@@ -542,8 +545,11 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 		locator.eventController.removeEntityListener(this.entityListener)
 	}
 
-	private entityListener = (updates: EntityUpdateData[], eventOwnerGroupId: Id) => {
-		return this.entityEventsReceived(updates, eventOwnerGroupId)
+	private entityListener: EntityEventsListener = {
+		onEntityUpdatesReceived: (updates: EntityUpdateData[], eventOwnerGroupId: Id) => {
+			return this.entityEventsReceived(updates, eventOwnerGroupId)
+		},
+		priority: OnEntityUpdateReceivedPriority.NORMAL,
 	}
 
 	view({ attrs }: Vnode<SettingsViewAttrs>): Children {
@@ -754,7 +760,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 	}
 
 	private async updateShowBusinessSettings() {
-		this.showBusinessSettings((await this.logins.getUserController().loadCustomer()).businessUse === true)
+		this.showBusinessSettings((await this.logins.getUserController().reloadCustomer()).businessUse === true)
 	}
 
 	async entityEventsReceived<T>(updates: ReadonlyArray<EntityUpdateData>, eventOwnerGroupId: Id): Promise<void> {
@@ -928,7 +934,7 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 
 	async _makeKnowledgeBaseFolders(): Promise<Array<SettingsFolder<void>>> {
 		const userController = this.logins.getUserController()
-		const customer = await userController.loadCustomer()
+		const customer = await userController.reloadCustomer()
 
 		if (isCustomizationEnabledForCustomer(customer, FeatureType.KnowledgeBase)) {
 			const templateMemberships = (this.logins.getUserController() && this.logins.getUserController().getTemplateMemberships()) || []
@@ -959,8 +965,9 @@ export class SettingsView extends BaseTopLevelView implements TopLevelView<Setti
 	}
 
 	private async updateShowAffiliateSettings() {
-		const customer = await this.logins.getUserController().loadCustomer()
-		this.showAffiliateSettings = isCustomizationEnabledForCustomer(customer, FeatureType.AffiliatePartner)
+		const customer = await this.logins.getUserController().reloadCustomer()
+		this.showAffiliateSettings =
+			isCustomizationEnabledForCustomer(customer, FeatureType.AffiliatePartner) && !this.logins.isEnabled(FeatureType.SolutionPartner)
 	}
 
 	private async doExportUsers() {

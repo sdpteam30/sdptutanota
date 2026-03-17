@@ -77,6 +77,9 @@ import { IdentityKeyCreator } from "../worker/facades/lazy/IdentityKeyCreator"
 import { PublicIdentityKeyProvider } from "../worker/facades/PublicIdentityKeyProvider"
 import type { WhitelabelThemeGenerator } from "../../gui/WhitelabelThemeGenerator"
 import { LoginViewModel } from "../../login/LoginViewModel"
+import { DriveFacade } from "../worker/facades/lazy/DriveFacade.js"
+import { TransferProgressDispatcher } from "./TransferProgressDispatcher"
+import { CalendarEventUpdateCoordinator } from "../../../calendar-app/calendar/model/CalendarEventUpdateCoordinator"
 
 export interface CommonLocator {
 	worker: WorkerClient
@@ -122,10 +125,12 @@ export interface CommonLocator {
 	random: WorkerRandomizer
 	connectivityModel: WebsocketConnectivityModel
 	identityKeyCreator: IdentityKeyCreator
+	driveFacade: DriveFacade
 
 	mailboxModel: MailboxModel
 
 	calendarModel(): Promise<CalendarModel>
+	calendarEventUpdateCoordinator(): Promise<CalendarEventUpdateCoordinator>
 
 	readonly calendarInviteHandler: () => Promise<CalendarInviteHandler>
 
@@ -139,6 +144,7 @@ export interface CommonLocator {
 	usageTestModel: UsageTestModel
 	webMobileFacade: WebMobileFacade
 	operationProgressTracker: OperationProgressTracker
+	transferProgressDispatcher: TransferProgressDispatcher
 	Const: Record<string, any>
 
 	domainConfigProvider(): DomainConfigProvider

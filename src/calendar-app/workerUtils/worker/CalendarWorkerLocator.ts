@@ -47,7 +47,6 @@ import { InterWindowEventFacadeSendDispatcher } from "../../../common/native/com
 import { SqlCipherFacadeSendDispatcher } from "../../../common/native/common/generatedipc/SqlCipherFacadeSendDispatcher.js"
 import { EntropyFacade } from "../../../common/api/worker/facades/EntropyFacade.js"
 import { BlobAccessTokenFacade } from "../../../common/api/worker/facades/BlobAccessTokenFacade.js"
-import { OwnerEncSessionKeysUpdateQueue } from "../../../common/api/worker/crypto/OwnerEncSessionKeysUpdateQueue.js"
 import { EventBusEventCoordinator } from "../../../common/api/worker/EventBusEventCoordinator.js"
 import { WorkerFacade } from "../../../common/api/worker/facades/WorkerFacade.js"
 import { SqlCipherFacade } from "../../../common/native/common/generatedipc/SqlCipherFacade.js"
@@ -90,6 +89,9 @@ import { AdminKeyLoaderFacade } from "../../../common/api/worker/facades/AdminKe
 import { IdentityKeyCreator } from "../../../common/api/worker/facades/lazy/IdentityKeyCreator"
 import { PublicIdentityKeyProvider } from "../../../common/api/worker/facades/PublicIdentityKeyProvider"
 import { IdentityKeyTrustDatabase } from "../../../common/api/worker/facades/IdentityKeyTrustDatabase"
+import { InstanceSessionKeysCache } from "../../../common/api/worker/facades/InstanceSessionKeysCache"
+import { PublicEncryptionKeyCache } from "../../../common/api/worker/facades/PublicEncryptionKeyCache"
+import { DriveFacade } from "../../../common/api/worker/facades/lazy/DriveFacade"
 
 assertWorkerOrNode()
 
@@ -161,6 +163,9 @@ export type CalendarWorkerLocatorType = {
 
 	//contact
 	contactFacade: lazyAsync<ContactFacade>
+
+	// drive
+	driveFacade: lazyAsync<DriveFacade>
 }
 export const locator: CalendarWorkerLocatorType = {} as any
 
@@ -232,7 +237,7 @@ export async function initLocator(worker: CalendarWorkerImpl, browserData: Brows
 				locator.sqlCipherFacade,
 				new InterWindowEventFacadeSendDispatcher(worker),
 				dateProvider,
-				new OfflineStorageMigrator(OFFLINE_STORAGE_MIGRATIONS),
+				new OfflineStorageMigrator(OFFLINE_STORAGE_MIGRATIONS, locator.applicationTypesFacade),
 				new CalendarOfflineCleaner(),
 				locator.instancePipeline.modelMapper,
 				typeModelResolver,
@@ -309,7 +314,8 @@ export async function initLocator(worker: CalendarWorkerImpl, browserData: Brows
 		return new KeyVerificationFacade(locator.publicKeySignatureFacade, locator.publicIdentityKeyProvider, locator.identityKeyTrustDatabase)
 	})
 
-	locator.publicEncryptionKeyProvider = new PublicEncryptionKeyProvider(locator.serviceExecutor, locator.keyVerification)
+	const publicEncryptionKeyCache = new PublicEncryptionKeyCache() // should not expose this
+	locator.publicEncryptionKeyProvider = new PublicEncryptionKeyProvider(locator.serviceExecutor, locator.keyVerification, publicEncryptionKeyCache)
 
 	const adminKeyLoaderProvider = () => locator.adminKeyLoader
 
@@ -338,11 +344,12 @@ export async function initLocator(worker: CalendarWorkerImpl, browserData: Brows
 		locator.restClient,
 		locator.serviceExecutor,
 		locator.instancePipeline,
-		new OwnerEncSessionKeysUpdateQueue(locator.user, locator.serviceExecutor, typeModelResolver),
 		locator.cache as DefaultEntityRestCache,
 		locator.keyLoader,
 		asymmetricCrypto,
 		locator.publicEncryptionKeyProvider,
+		new InstanceSessionKeysCache(),
+		locator.cryptoWrapper,
 		lazyMemoized(() => locator.keyRotation),
 		typeModelResolver,
 		async (error: Error) => {
@@ -467,6 +474,7 @@ export async function initLocator(worker: CalendarWorkerImpl, browserData: Brows
 		locator.cacheManagement,
 		typeModelResolver,
 		locator.rolloutFacade,
+		locator.applicationTypesFacade,
 	)
 
 	locator.userManagement = lazyMemoized(async () => {
@@ -510,7 +518,16 @@ export async function initLocator(worker: CalendarWorkerImpl, browserData: Brows
 	const aesApp = new AesApp(nativeCryptoFacadeSendDispatcher, random)
 	locator.blob = lazyMemoized(async () => {
 		const { BlobFacade } = await import("../../../common/api/worker/facades/lazy/BlobFacade.js")
-		return new BlobFacade(locator.restClient, suspensionHandler, fileApp, aesApp, locator.instancePipeline, locator.crypto, locator.blobAccessToken)
+		return new BlobFacade(
+			locator.restClient,
+			suspensionHandler,
+			fileApp,
+			aesApp,
+			locator.instancePipeline,
+			locator.crypto,
+			locator.blobAccessToken,
+			mainInterface.uploadProgressListener,
+		)
 	})
 	locator.mail = lazyMemoized(async () => {
 		const { MailFacade } = await import("../../../common/api/worker/facades/lazy/MailFacade.js")
@@ -563,7 +580,6 @@ export async function initLocator(worker: CalendarWorkerImpl, browserData: Brows
 	})
 
 	const eventBusCoordinator = new EventBusEventCoordinator(
-		mainInterface.wsConnectivityListener,
 		locator.mail,
 		locator.user,
 		locator.cachingEntityClient,
@@ -584,6 +600,7 @@ export async function initLocator(worker: CalendarWorkerImpl, browserData: Brows
 	const eventInstancePrefetcher = new EventInstancePrefetcher(locator.cache)
 
 	locator.eventBusClient = new EventBusClient(
+		mainInterface.wsConnectivityListener,
 		eventBusCoordinator,
 		locator.cache as EntityRestCache,
 		locator.user,

@@ -67,6 +67,8 @@ import {
 	createResolveConversationsServiceGetIn,
 	createSecureExternalRecipientKeyData,
 	createSendDraftData,
+	createSendDraftDeleteIn,
+	createSendDraftParameters,
 	createSimpleMoveMailPostIn,
 	createUnreadMailStatePostIn,
 	createUpdateMailFolderData,
@@ -87,7 +89,8 @@ import {
 	PopulateClientSpamTrainingDatum,
 	ProcessInboxDatum,
 	ReportedMailFieldMarker,
-	SendDraftData,
+	SendDraftParameters,
+	SendDraftReturn,
 	SymEncInternalRecipientKeyData,
 	SymEncInternalRecipientKeyDataTypeRef,
 	TutanotaPropertiesTypeRef,
@@ -110,8 +113,8 @@ import {
 	addressDomain,
 	assertNotNull,
 	byteLength,
-	contains,
 	defer,
+	flatMap,
 	freshVersioned,
 	getUrlDomain,
 	groupBy,
@@ -128,8 +131,18 @@ import {
 import { BlobFacade } from "./BlobFacade.js"
 import { assertWorkerOrNode, isApp, isDesktop } from "../../../common/Env.js"
 import { EntityClient } from "../../../common/EntityClient.js"
-import { getEnabledMailAddressesForGroupInfo, getUserGroupMemberships } from "../../../common/utils/GroupUtils.js"
-import { containsId, elementIdPart, getElementId, getLetId, isSameId, listIdPart, stringToCustomId } from "../../../common/utils/EntityUtils.js"
+import { getEnabledMailAddressesForGroupInfo, getUserGroupMemberships, isAliasEnabledForGroupInfo } from "../../../common/utils/GroupUtils.js"
+import {
+	containsId,
+	elementIdPart,
+	getElementId,
+	getLetId,
+	getListId,
+	isSameId,
+	listIdPart,
+	stringToCustomId,
+	StrippedEntity,
+} from "../../../common/utils/EntityUtils.js"
 import { htmlToText } from "../../../common/utils/IndexUtils.js"
 import { MailBodyTooLargeError } from "../../../common/error/MailBodyTooLargeError.js"
 import { UNCOMPRESSED_MAX_SIZE } from "../../Compression.js"
@@ -138,7 +151,6 @@ import {
 	aes256RandomKey,
 	aesEncrypt,
 	AesKey,
-	bitArrayToUint8Array,
 	createAuthVerifier,
 	decryptKey,
 	encryptKey,
@@ -168,7 +180,6 @@ import { KeyVerificationMismatchError } from "../../../common/error/KeyVerificat
 import { VerifiedPublicEncryptionKey } from "./KeyVerificationFacade"
 import { UnencryptedProcessInboxDatum } from "../../../../../mail-app/mail/model/ProcessInboxHandler"
 import { UnencryptedPopulateClientSpamTrainingDatum } from "../../../../../mail-app/workerUtils/spamClassification/SpamClassifierDataDealer"
-import { MailWithMailDetails } from "../../../../../mail-app/workerUtils/index/BulkMailLoader"
 import { createSpamMailDatum, SpamMailProcessor } from "../../../common/utils/spamClassificationUtils/SpamMailProcessor"
 
 assertWorkerOrNode()
@@ -455,7 +466,7 @@ export class MailFacade {
 		const mailSessionKey: Aes128Key = assertNotNull(await this.crypto.resolveSessionKey(mail))
 		const postData = createReportMailPostData({
 			mailId: mail._id,
-			mailSessionKey: bitArrayToUint8Array(mailSessionKey),
+			mailSessionKey: keyToUint8Array(mailSessionKey),
 			reportType,
 		})
 		await this.serviceExecutor.post(ReportMailService, postData)
@@ -587,10 +598,10 @@ export class MailFacade {
 		})
 	}
 
-	async sendDraft(draft: Mail, recipients: Array<Recipient>, language: string): Promise<void> {
+	async sendDraft(draft: Mail, recipients: Array<Recipient>, language: string, sendAt: Date | null, allowUndo: boolean = false): Promise<SendDraftReturn> {
 		const senderMailGroupId = await this._getMailGroupIdForMailAddress(this.userFacade.getLoggedInUser(), draft.sender.address)
 		const bucketKey = aes256RandomKey()
-		const sendDraftData = createSendDraftData({
+		const parameters: StrippedEntity<SendDraftParameters> = {
 			language: language,
 			mail: draft._id,
 			mailSessionKey: null,
@@ -603,7 +614,7 @@ export class MailFacade {
 			secureExternalRecipientKeyData: [],
 			symEncInternalRecipientKeyData: [],
 			sessionEncEncryptionAuthStatus: null,
-		})
+		}
 
 		const attachments = await this.getAttachmentIds(draft)
 		for (const fileId of attachments) {
@@ -621,35 +632,51 @@ export class MailFacade {
 				data.fileSessionKey = keyToUint8Array(fileSessionKey)
 			}
 
-			sendDraftData.attachmentKeyData.push(data)
+			parameters.attachmentKeyData.push(data)
 		}
 
 		await Promise.all([
 			this.entityClient.loadRoot(TutanotaPropertiesTypeRef, this.userFacade.getUserGroupId()).then((tutanotaProperties) => {
-				sendDraftData.plaintext = tutanotaProperties.sendPlaintextOnly
+				parameters.plaintext = tutanotaProperties.sendPlaintextOnly
 			}),
 			this.crypto.resolveSessionKey(draft).then(async (mailSessionkey) => {
 				const sk = assertNotNull(mailSessionkey, "mailSessionKey was null")
-				sendDraftData.calendarMethod = draft.method !== MailMethod.NONE
+				parameters.calendarMethod = draft.method !== MailMethod.NONE
 
 				if (draft.confidential) {
-					sendDraftData.bucketEncMailSessionKey = encryptKey(bucketKey, sk)
+					parameters.bucketEncMailSessionKey = encryptKey(bucketKey, sk)
 					const hasExternalSecureRecipient = recipients.some((r) => r.type === RecipientType.EXTERNAL && !!this.getContactPassword(r.contact)?.trim())
 
 					if (hasExternalSecureRecipient) {
-						sendDraftData.senderNameUnencrypted = draft.sender.name // needed for notification mail
+						parameters.senderNameUnencrypted = draft.sender.name // needed for notification mail
 					}
 
-					await this.addRecipientKeyData(bucketKey, sendDraftData, recipients, senderMailGroupId)
-					if (this.isTutaCryptMail(sendDraftData)) {
-						sendDraftData.sessionEncEncryptionAuthStatus = this.cryptoWrapper.encryptString(sk, EncryptionAuthStatus.TUTACRYPT_SENDER)
+					await this.addRecipientKeyData(bucketKey, parameters, recipients, senderMailGroupId)
+					if (this.isTutaCryptMail(parameters)) {
+						parameters.sessionEncEncryptionAuthStatus = this.cryptoWrapper.encryptString(sk, EncryptionAuthStatus.TUTACRYPT_SENDER)
 					}
 				} else {
-					sendDraftData.mailSessionKey = bitArrayToUint8Array(sk)
+					parameters.mailSessionKey = keyToUint8Array(sk)
 				}
 			}),
 		])
-		await this.serviceExecutor.post(SendDraftService, sendDraftData)
+
+		const sendDraftData = createSendDraftData({
+			...parameters,
+			parameters: createSendDraftParameters(parameters),
+			sendAt,
+			allowUndo,
+		})
+
+		return await this.serviceExecutor.post(SendDraftService, sendDraftData)
+	}
+
+	async unscheduleMail(mail: IdTuple) {
+		await this.serviceExecutor.delete(SendDraftService, createSendDraftDeleteIn({ mail, sendJob: null }))
+	}
+
+	async undoSendMail(mail: IdTuple, sendJob: IdTuple) {
+		await this.serviceExecutor.delete(SendDraftService, createSendDraftDeleteIn({ mail, sendJob }))
 	}
 
 	async getAttachmentIds(draft: Mail): Promise<IdTuple[]> {
@@ -657,13 +684,12 @@ export class MailFacade {
 	}
 
 	async getReplyTos(draft: Mail): Promise<EncryptedMailAddress[]> {
-		const ownerEncSessionKeyProvider: OwnerEncSessionKeyProvider = this.keyProviderFromInstance(draft)
 		const mailDetailsDraftId = assertNotNull(draft.mailDetailsDraft, "draft without mailDetailsDraft")
 		const mailDetails = await this.entityClient.loadMultiple(
 			MailDetailsDraftTypeRef,
 			listIdPart(mailDetailsDraftId),
 			[elementIdPart(mailDetailsDraftId)],
-			ownerEncSessionKeyProvider,
+			this.keyProviderFromInstance(draft),
 		)
 		if (mailDetails.length === 0) {
 			throw new NotFoundError(`MailDetailsDraft ${draft.mailDetailsDraft}`)
@@ -763,7 +789,12 @@ export class MailFacade {
 		return this.phishingMarkers.has(hash)
 	}
 
-	private async addRecipientKeyData(bucketKey: AesKey, sendDraftData: SendDraftData, recipients: Array<Recipient>, senderMailGroupId: Id): Promise<void> {
+	private async addRecipientKeyData(
+		bucketKey: AesKey,
+		sendDraftParameters: StrippedEntity<SendDraftParameters>,
+		recipients: Array<Recipient>,
+		senderMailGroupId: Id,
+	): Promise<void> {
 		const notFoundRecipients: string[] = []
 		const keyVerificationMismatchRecipients: string[] = []
 
@@ -802,7 +833,7 @@ export class MailFacade {
 					pwEncCommunicationKey: encryptKey(passwordKey, externalGroupKeys.currentExternalUserGroupKey.object),
 					userGroupKeyVersion: String(externalGroupKeys.currentExternalUserGroupKey.version),
 				})
-				sendDraftData.secureExternalRecipientKeyData.push(data)
+				sendDraftParameters.secureExternalRecipientKeyData.push(data)
 			} else {
 				const keyData = await this.crypto.encryptBucketKeyForInternalRecipient(
 					isSharedMailboxSender ? senderMailGroupId : this.userFacade.getLoggedInUser().userGroup.group,
@@ -815,9 +846,9 @@ export class MailFacade {
 					// cannot add recipient because of notFoundError
 					// we do not throw here because we want to collect all not found recipients first
 				} else if (isSameTypeRef(keyData._type, SymEncInternalRecipientKeyDataTypeRef)) {
-					sendDraftData.symEncInternalRecipientKeyData.push(keyData as SymEncInternalRecipientKeyData)
+					sendDraftParameters.symEncInternalRecipientKeyData.push(keyData as SymEncInternalRecipientKeyData)
 				} else if (isSameTypeRef(keyData._type, InternalRecipientKeyDataTypeRef)) {
-					sendDraftData.internalRecipientKeyData.push(keyData as InternalRecipientKeyData)
+					sendDraftParameters.internalRecipientKeyData.push(keyData as InternalRecipientKeyData)
 				}
 			}
 		}
@@ -833,17 +864,17 @@ export class MailFacade {
 	/**
 	 * Checks if the given send draft data contains only encrypt keys that have been encrypted with TutaCrypt protocol.
 	 * @VisibleForTesting
-	 * @param sendDraftData The send drafta for the mail that should be sent
+	 * @param sendDraftParameters The send draft parameters for the mail that should be sent
 	 */
-	isTutaCryptMail(sendDraftData: SendDraftData) {
+	isTutaCryptMail(sendDraftParameters: StrippedEntity<SendDraftParameters>) {
 		// if an secure external recipient is involved in the conversation we do not use asymmetric encryption
-		if (sendDraftData.symEncInternalRecipientKeyData.length > 0 || sendDraftData.secureExternalRecipientKeyData.length) {
+		if (sendDraftParameters.symEncInternalRecipientKeyData.length > 0 || sendDraftParameters.secureExternalRecipientKeyData.length) {
 			return false
 		}
-		if (isEmpty(sendDraftData.internalRecipientKeyData)) {
+		if (isEmpty(sendDraftParameters.internalRecipientKeyData)) {
 			return false
 		}
-		return sendDraftData.internalRecipientKeyData.every((recipientData) => recipientData.protocolVersion === CryptoProtocolVersion.TUTA_CRYPT)
+		return sendDraftParameters.internalRecipientKeyData.every((recipientData) => recipientData.protocolVersion === CryptoProtocolVersion.TUTA_CRYPT)
 	}
 
 	private getContactPassword(contact: Contact | null): string | null {
@@ -1027,13 +1058,13 @@ export class MailFacade {
 		return promiseFilter(getUserGroupMemberships(user, GroupType.Mail), (groupMembership) => {
 			return this.entityClient.load(GroupTypeRef, groupMembership.group).then((mailGroup) => {
 				if (mailGroup.user == null) {
-					return this.entityClient.load(GroupInfoTypeRef, groupMembership.groupInfo).then((mailGroupInfo) => {
-						return contains(getEnabledMailAddressesForGroupInfo(mailGroupInfo), mailAddress)
-					})
+					return this.entityClient
+						.load(GroupInfoTypeRef, groupMembership.groupInfo)
+						.then((mailGroupInfo) => isAliasEnabledForGroupInfo(mailGroupInfo, mailAddress))
 				} else if (isSameId(mailGroup.user, user._id)) {
-					return this.entityClient.load(GroupInfoTypeRef, user.userGroup.groupInfo).then((userGroupInfo) => {
-						return contains(getEnabledMailAddressesForGroupInfo(userGroupInfo), mailAddress)
-					})
+					return this.entityClient
+						.load(GroupInfoTypeRef, user.userGroup.groupInfo)
+						.then((userGroupInfo) => isAliasEnabledForGroupInfo(userGroupInfo, mailAddress))
 				} else {
 					// not supported
 					return false
@@ -1046,6 +1077,25 @@ export class MailFacade {
 				throw new NotFoundError("group for mail address not found " + mailAddress)
 			}
 		})
+	}
+
+	/**
+	 * loads main user address, all enabled aliases and shared mailbox address
+	 * @param user
+	 *
+	 * @return main user address, all enabled aliases and shared mailbox address
+	 */
+	async getAllMailAddressesForUser(user: User): Promise<string[]> {
+		const userGroupInfo = await this.entityClient.load(GroupInfoTypeRef, user.userGroup.groupInfo)
+		const mailAddressesForUserGroup = getEnabledMailAddressesForGroupInfo(userGroupInfo)
+
+		const mailAddressesForMailGroups = await promiseMap(getUserGroupMemberships(user, GroupType.Mail), async (groupMembership) => {
+			const mailGroupInfo = await this.entityClient.load(GroupInfoTypeRef, groupMembership.groupInfo)
+			return getEnabledMailAddressesForGroupInfo(mailGroupInfo)
+		})
+		const allMailAddressesForMailGroups = flatMap(mailAddressesForMailGroups, (mailAddresses) => mailAddresses)
+
+		return mailAddressesForUserGroup.concat(allMailAddressesForMailGroups)
 	}
 
 	async clearFolder(folderId: IdTuple) {
@@ -1083,7 +1133,7 @@ export class MailFacade {
 		if (mail.mailDetailsDraft != null) {
 			throw new ProgrammingError("not supported, must be mail details blob")
 		} else {
-			const mailDetailsBlobId = assertNotNull(mail.mailDetails)
+			const mailDetailsBlobId = assertNotNull(mail.mailDetails, `null mailDetails on non-draft mail with id: ${getListId(mail)}/${getElementId(mail)}`)
 
 			const mailDetailsBlobs = await this.entityClient.loadMultiple(
 				MailDetailsBlobTypeRef,
@@ -1098,11 +1148,15 @@ export class MailFacade {
 		}
 	}
 
-	private keyProviderFromInstance(mail: Mail) {
-		return async () => ({
-			key: assertNotNull(mail._ownerEncSessionKey),
-			encryptingKeyVersion: parseKeyVersion(mail._ownerKeyVersion ?? "0"),
-		})
+	private keyProviderFromInstance(mail: Mail): OwnerEncSessionKeyProvider | undefined {
+		// only use the provider if there is an _ownerEncSessionKey
+		// this is not guaranteed in case of (temporary) decryption failures!
+		return mail._ownerEncSessionKey != null
+			? async () => ({
+					key: assertNotNull(mail._ownerEncSessionKey),
+					encryptingKeyVersion: parseKeyVersion(mail._ownerKeyVersion ?? "0"),
+				})
+			: undefined
 	}
 
 	/**
@@ -1211,18 +1265,20 @@ export class MailFacade {
 	): Promise<ProcessInboxDatum[]> {
 		const processInboxData: ProcessInboxDatum[] = []
 		for (const unencryptedProcessInboxDatum of unencryptedProcessInboxData) {
+			const { targetMoveFolder, classifierType, mailId, vectorLegacy, vectorWithServerClassifiers } = unencryptedProcessInboxDatum
 			const mailGroupKey = await this.keyLoaderFacade.getCurrentSymGroupKey(mailGroupId)
 			const sk = aes256RandomKey()
 			const ownerEncSessionKey = this.cryptoWrapper.encryptKeyWithVersionedKey(mailGroupKey, sk)
-			const { targetMoveFolder, classifierType, mailId } = unencryptedProcessInboxDatum
 			processInboxData.push(
 				createProcessInboxDatum({
 					ownerEncVectorSessionKey: ownerEncSessionKey.key,
 					ownerKeyVersion: ownerEncSessionKey.encryptingKeyVersion.toString(),
-					encVector: aesEncrypt(sk, unencryptedProcessInboxDatum.vector),
+					encVectorLegacy: aesEncrypt(sk, vectorLegacy),
+					encVectorWithServerClassifiers: aesEncrypt(sk, vectorWithServerClassifiers),
 					classifierType,
 					mailId,
 					targetMoveFolder,
+					ownerEncMailSessionKeys: unencryptedProcessInboxDatum.ownerEncMailSessionKeys,
 				}),
 			)
 		}
@@ -1238,7 +1294,7 @@ export class MailFacade {
 					ProcessInboxService,
 					createProcessInboxPostIn({
 						mailOwnerGroup: mailGroupId,
-						processInboxDatum: inboxData,
+						processInboxData: inboxData,
 					}),
 				),
 			{ concurrency: 5 },
@@ -1254,12 +1310,13 @@ export class MailFacade {
 			const mailGroupKey = await this.keyLoaderFacade.getCurrentSymGroupKey(mailGroupId)
 			const sk = aes256RandomKey()
 			const ownerEncSessionKey = this.cryptoWrapper.encryptKeyWithVersionedKey(mailGroupKey, sk)
-			const { isSpam, confidence, mailId } = unencryptedProcessInboxDatum
+			const { isSpam, confidence, mailId, vector, vectorNewFormat } = unencryptedProcessInboxDatum
 			populateClientSpamTrainingData.push(
 				createPopulateClientSpamTrainingDatum({
 					ownerEncVectorSessionKey: ownerEncSessionKey.key,
 					ownerKeyVersion: ownerEncSessionKey.encryptingKeyVersion.toString(),
-					encVector: aesEncrypt(sk, unencryptedProcessInboxDatum.vector),
+					encVectorLegacy: aesEncrypt(sk, vector),
+					encVectorWithServerClassifiers: aesEncrypt(sk, vectorNewFormat),
 					isSpam,
 					mailId,
 					confidence,
@@ -1284,15 +1341,18 @@ export class MailFacade {
 					PopulateClientSpamTrainingDataService,
 					createPopulateClientSpamTrainingDataPostIn({
 						mailOwnerGroup: mailGroupId,
-						populateClientSpamTrainingDatum: clientSpamTrainingData,
+						populateClientSpamTrainingData: clientSpamTrainingData,
 					}),
 				),
 			{ concurrency: 5 },
 		)
 	}
 
-	async vectorizeAndCompressMails(mailWithDetails: MailWithMailDetails) {
-		return this.spamMailProcessor.vectorizeAndCompress(createSpamMailDatum(mailWithDetails.mail, mailWithDetails.mailDetails))
+	async createModelInputAndUploadableVectors(mail: Mail, mailDetails: MailDetails, sourceFolder: MailSet) {
+		const datum = createSpamMailDatum(mail, mailDetails)
+		const modelInput = await this.spamMailProcessor.processSpamMailDatum(datum)
+		const { uploadableVectorLegacy, uploadableVector } = await this.spamMailProcessor.makeUploadableVectors(datum)
+		return { modelInput, uploadableVectorLegacy, uploadableVector }
 	}
 
 	/** Resolve conversation list ids to the IDs of mails in those conversations. */

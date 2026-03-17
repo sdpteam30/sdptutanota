@@ -1,10 +1,13 @@
 import { assertWorkerOrNode, getApiBaseUrl, isAdminClient, isAndroidApp, isWebClient, isWorker } from "../../common/Env"
 import { ConnectionError, handleRestError, PayloadTooLargeError } from "../../common/error/RestError"
 import { HttpMethod, MediaType, ServerModelInfo } from "../../common/EntityFunctions"
-import { assertNotNull, newPromise, typedEntries, uint8ArrayToArrayBuffer } from "@tutao/tutanota-utils"
+import { assertNotNull, isNotNull, newPromise, typedEntries, uint8ArrayToArrayBuffer } from "@tutao/tutanota-utils"
 import { isSuspensionResponse, SuspensionHandler } from "../SuspensionHandler"
 import { REQUEST_SIZE_LIMIT_DEFAULT, REQUEST_SIZE_LIMIT_MAP } from "../../common/TutanotaConstants"
 import { SuspensionError } from "../../common/error/SuspensionError.js"
+import { ApplicationTypesService } from "../../entities/base/Services"
+import { getServiceRestPath } from "./ServiceExecutor"
+import { CancelledError } from "../../common/error/CancelledError"
 
 assertWorkerOrNode()
 
@@ -12,11 +15,22 @@ const TAG = "[RestClient]"
 
 // visibleForTesting
 export const APPLICATION_TYPES_HASH_HEADER = "app-types-hash"
+const BLOB_REQUEST_TIMEOUT_MS = 5 * 60 * 1000 + 1000
 
 interface ProgressListener {
-	upload(percent: number): void
+	/**
+	 * Called when data is sent with HTTP request.
+	 * @param percent of the overall data to be sent
+	 * @param bytes sent so far
+	 */
+	upload(percent: number, bytes: number): void
 
-	download(percent: number): void
+	/**
+	 * Called when data is downloaded with HTTP request.
+	 * @param percent of the overall data to be downloded
+	 * @param bytes downloaded so far
+	 */
+	download(percent: number, bytes: number): void
 }
 
 export const enum SuspensionBehavior {
@@ -34,6 +48,7 @@ export interface RestClientOptions {
 	noCORS?: boolean
 	/** Default is to suspend all requests on rate limit. */
 	suspensionBehavior?: SuspensionBehavior
+	abortSignal?: AbortSignal
 }
 
 /**
@@ -114,8 +129,19 @@ export class RestClient {
 					return res
 				}
 
+				if (options.abortSignal) {
+					options.abortSignal.addEventListener(
+						"abort",
+						() => {
+							xhr.abort()
+						},
+						{ once: true },
+					)
+				}
+
 				const t = abortAfterTimeout()
-				let timeout = setTimeout(t.abortFunction, env.timeout)
+				const isBlobRequest = options.body instanceof Uint8Array
+				let timeout = setTimeout(t.abortFunction, isBlobRequest ? BLOB_REQUEST_TIMEOUT_MS : env.timeout)
 				t.timeoutId = timeout
 
 				if (verbose) {
@@ -135,8 +161,10 @@ export class RestClient {
 
 						// handle new server model and update the applicationTypesJson file if applicable
 						const applicationTypesHashResponseHeader = xhr.getResponseHeader(APPLICATION_TYPES_HASH_HEADER)
-						if (applicationTypesHashResponseHeader != null) {
+						if (isNotNull(applicationTypesHashResponseHeader)) {
 							this.serverModelInfo.setCurrentHash(applicationTypesHashResponseHeader)
+						} else if (!(path === getServiceRestPath(ApplicationTypesService) && method === HttpMethod.GET)) {
+							console.log(`Empty value for app types hash header in response with path ${path} and method ${method}`)
 						}
 
 						if (xhr.status === 200 || (method === HttpMethod.POST && xhr.status === 201)) {
@@ -211,7 +239,7 @@ export class RestClient {
 
 						if (options.progressListener != null && pe.lengthComputable) {
 							// see https://developer.mozilla.org/en-US/docs/Web/API/ProgressEvent
-							options.progressListener.upload((1 / pe.total) * pe.loaded)
+							options.progressListener.upload((1 / pe.total) * pe.loaded, pe.loaded)
 						}
 					}
 
@@ -253,13 +281,17 @@ export class RestClient {
 
 					if (options.progressListener != null && pe.lengthComputable) {
 						// see https://developer.mozilla.org/en-US/docs/Web/API/ProgressEvent
-						options.progressListener.download((1 / pe.total) * pe.loaded)
+						options.progressListener.download((1 / pe.total) * pe.loaded, pe.loaded)
 					}
 				}
 
 				xhr.onabort = () => {
 					clearTimeout(timeout)
-					reject(new ConnectionError(`Reached timeout of ${env.timeout}ms ${xhr.statusText} | ${method} ${path}`))
+					if (options.abortSignal?.aborted) {
+						reject(new CancelledError(`Request canceled | ${method} ${path}`))
+					} else {
+						reject(new ConnectionError(`Reached timeout of ${env.timeout}ms ${xhr.statusText} | ${method} ${path}`))
+					}
 				}
 
 				if (options.body instanceof Uint8Array) {
