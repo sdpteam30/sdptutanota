@@ -699,10 +699,10 @@ export class MailViewerViewModel {
 			const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
 
 			if (reportType === MailReportType.PHISHING) {
-				// When reported as phishing mail is moved to spam, this move can't be undone
-				await this.markAsPhishing()
+				// Only move to spam - no Tutanota API calls (markAsPhishing or reportMails)
+				// Phishing is only reported to MobyPhish trusted-senders-backend above
 				await this.mailModel.moveMails([this.mail._id], spamFolder, MoveMode.Mails)
-				await this.mailModel.reportMails(MailReportType.PHISHING, [this.mail])
+				console.log(`🔒 MOBYPHISH_LOG: Mail moved to spam folder (no Tutanota phishing report)`)
 			} else {
 				// The moving of mails into spam folder will mark them as spam
 				await moveMails({
