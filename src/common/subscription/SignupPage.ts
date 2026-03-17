@@ -8,6 +8,8 @@ import { PlanType } from "../api/common/TutanotaConstants.js"
 import { lang, Translation } from "../misc/LanguageViewModel.js"
 import { SignupFlowStage, SignupFlowUsageTestController } from "./usagetest/UpgradeSubscriptionWizardUsageTestUtils.js"
 import { createAccount } from "./utils/PaymentUtils"
+import { Dialog } from "../gui/base/Dialog"
+import { isIOSApp } from "../api/common/Env"
 
 export class SignupPage implements WizardPageN<UpgradeSubscriptionData> {
 	private dom!: HTMLElement
@@ -29,11 +31,19 @@ export class SignupPage implements WizardPageN<UpgradeSubscriptionData> {
 					data.emailInputStore = result.emailInputStore
 					data.passwordInputStore = result.passwordInputStore
 
-					await createAccount(data, () => {
-						emitWizardEvent(this.dom, WizardEventType.CLOSE_DIALOG)
-					})
+					const createResult = await createAccount(data)
 
-					emitWizardEvent(this.dom, WizardEventType.SHOW_NEXT_PAGE)
+					if (createResult != null) {
+						const { errorMessageId, variant } = createResult
+						if (errorMessageId != null) {
+							Dialog.message(errorMessageId)
+						}
+						if (variant === "fatalFailure") {
+							emitWizardEvent(this.dom, WizardEventType.CLOSE_DIALOG)
+						}
+					} else {
+						emitWizardEvent(this.dom, WizardEventType.SHOW_NEXT_PAGE)
+					}
 				} else {
 					emitWizardEvent(this.dom, WizardEventType.CLOSE_DIALOG)
 				}
@@ -64,13 +74,19 @@ export class SignupPageAttrs implements WizardPageAttrs<UpgradeSubscriptionData>
 	}
 
 	nextAction(showErrorDialog: boolean): Promise<boolean> {
-		// next action not available for this page
 		SignupFlowUsageTestController.completeStage(SignupFlowStage.CREATE_ACCOUNT, this.data.targetPlanType, this.data.options.paymentInterval())
+		if (isIOSApp()) {
+			SignupFlowUsageTestController.completeStage(
+				SignupFlowStage.SELECT_PAYMENT_METHOD,
+				this.data.targetPlanType,
+				this.data.options.paymentInterval(),
+				this.data.paymentData.paymentMethod,
+			)
+		}
 		return Promise.resolve(true)
 	}
 
 	prevAction(showErrorDialog: boolean): Promise<boolean> {
-		SignupFlowUsageTestController.deletePing(SignupFlowStage.SELECT_PLAN)
 		return Promise.resolve(true)
 	}
 

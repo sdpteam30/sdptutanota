@@ -5,10 +5,11 @@ import { createTestEntity } from "../../../TestUtils.js"
 import { Icons } from "../../../../../src/common/gui/base/icons/Icons.js"
 import { ProgrammingError } from "../../../../../src/common/api/common/error/ProgrammingError.js"
 import { getDisplayedSender } from "../../../../../src/common/api/common/CommonMailUtils.js"
-import { getConfidentialIcon, isTutanotaTeamAddress, isTutanotaTeamMail } from "../../../../../src/mail-app/mail/view/MailGuiUtils.js"
+import { getConfidentialIcon } from "../../../../../src/mail-app/mail/view/MailGuiUtils.js"
 
 import { isSystemNotification } from "../../../../../src/mail-app/mail/view/MailViewerUtils.js"
 import { compareMails } from "../../../../../src/mail-app/mail/model/MailUtils"
+import { isTutanotaTeamAddress, isTutaTeamMail } from "../../../../../src/common/mailFunctionality/SharedMailUtils"
 
 export function createSystemMail(overrides: Partial<Mail> = {}): Mail {
 	return createTestEntity(MailTypeRef, {
@@ -74,7 +75,7 @@ o.spec("CommonMailUtils", () => {
 		o(isTutanotaTeamAddress("bed-free@tutanota.de")).deepEquals(false)
 		o(isTutanotaTeamAddress("admin@somesite.com")).deepEquals(false)
 		o(isTutanotaTeamAddress("no-reply@tutao.de")).deepEquals(true)
-		o(isTutanotaTeamAddress("sales@tutao.de")).deepEquals(true)
+		o(isTutanotaTeamAddress("invoice@tutao.de")).deepEquals(true)
 		o(isTutanotaTeamAddress("no-reply@tutanota.de")).deepEquals(true)
 	})
 
@@ -111,7 +112,7 @@ o.spec("CommonMailUtils", () => {
 				state: MailState.RECEIVED,
 				sender: tutanotaSender(),
 			})
-			o(isTutanotaTeamMail(mail)).equals(false)
+			o(isTutaTeamMail(mail)).equals(false)
 		})
 
 		o("regular confidential email is not", function () {
@@ -120,27 +121,27 @@ o.spec("CommonMailUtils", () => {
 				state: MailState.RECEIVED,
 				sender: tutanotaSender(),
 			})
-			o(isTutanotaTeamMail(mail)).equals(false)
+			o(isTutaTeamMail(mail)).equals(false)
 		})
 
 		o("system email without auth is", function () {
 			const mail = createSystemMail()
-			o(isTutanotaTeamMail(mail)).equals(true)
+			o(isTutaTeamMail(mail)).equals(true)
 		})
 
 		o("system email failing PQ auth is not", function () {
 			const mail = createSystemMail({ encryptionAuthStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED })
-			o(isTutanotaTeamMail(mail)).equals(false)
+			o(isTutaTeamMail(mail)).equals(false)
 		})
 
 		o("system email with RSA (no) auth is", function () {
 			const mail = createSystemMail({ encryptionAuthStatus: EncryptionAuthStatus.RSA_NO_AUTHENTICATION })
-			o(isTutanotaTeamMail(mail)).equals(true)
+			o(isTutaTeamMail(mail)).equals(true)
 		})
 
 		o("system email with AES (no) auth is not", function () {
 			const mail = createSystemMail({ encryptionAuthStatus: EncryptionAuthStatus.AES_NO_AUTHENTICATION })
-			o(isTutanotaTeamMail(mail)).equals(false)
+			o(isTutaTeamMail(mail)).equals(false)
 		})
 
 		o("confidential email from tutao without auth is", function () {
@@ -150,7 +151,7 @@ o.spec("CommonMailUtils", () => {
 				sender: tutaoSender(),
 				encryptionAuthStatus: null,
 			})
-			o(isTutanotaTeamMail(mail)).equals(true)
+			o(isTutaTeamMail(mail)).equals(true)
 		})
 
 		o("confidential email from tutao with PQ auth is", function () {
@@ -160,7 +161,7 @@ o.spec("CommonMailUtils", () => {
 				sender: tutaoSender(),
 				encryptionAuthStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_SUCCEEDED,
 			})
-			o(isTutanotaTeamMail(mail)).equals(true)
+			o(isTutaTeamMail(mail)).equals(true)
 		})
 
 		o("confidential email from tutao with failing PQ auth is not", function () {
@@ -170,7 +171,7 @@ o.spec("CommonMailUtils", () => {
 				sender: tutaoSender(),
 				encryptionAuthStatus: EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED,
 			})
-			o(isTutanotaTeamMail(mail)).equals(false)
+			o(isTutaTeamMail(mail)).equals(false)
 		})
 
 		o("confidential email from tutao with RSA (no) auth is", function () {
@@ -180,7 +181,7 @@ o.spec("CommonMailUtils", () => {
 				sender: tutaoSender(),
 				encryptionAuthStatus: EncryptionAuthStatus.RSA_NO_AUTHENTICATION,
 			})
-			o(isTutanotaTeamMail(mail)).equals(true)
+			o(isTutaTeamMail(mail)).equals(true)
 		})
 
 		o("confidential email from tutao with AES (no) auth is not", function () {
@@ -190,7 +191,7 @@ o.spec("CommonMailUtils", () => {
 				sender: tutaoSender(),
 				encryptionAuthStatus: EncryptionAuthStatus.AES_NO_AUTHENTICATION,
 			})
-			o(isTutanotaTeamMail(mail)).equals(false)
+			o(isTutaTeamMail(mail)).equals(false)
 		})
 
 		o("confidential email from no-reply is", function () {
@@ -199,12 +200,12 @@ o.spec("CommonMailUtils", () => {
 				state: MailState.RECEIVED,
 				sender: tutanotaNoReplySender(),
 			})
-			o(isTutanotaTeamMail(mail)).equals(true)
+			o(isTutaTeamMail(mail)).equals(true)
 		})
 
 		o(`non-confidential "system" email is not`, function () {
 			const mail = createMail({ ...createSystemMail(), confidential: false })
-			o(isTutanotaTeamMail(mail)).equals(false)
+			o(isTutaTeamMail(mail)).equals(false)
 		})
 
 		o("non-confidential email from tutao is not", function () {
@@ -213,7 +214,7 @@ o.spec("CommonMailUtils", () => {
 				state: MailState.RECEIVED,
 				sender: tutaoSender(),
 			})
-			o(isTutanotaTeamMail(mail)).equals(false)
+			o(isTutaTeamMail(mail)).equals(false)
 		})
 
 		o("non confidential email from no-reply is not", function () {
@@ -222,7 +223,7 @@ o.spec("CommonMailUtils", () => {
 				state: MailState.RECEIVED,
 				sender: tutanotaNoReplySender(),
 			})
-			o(isTutanotaTeamMail(mail)).equals(false)
+			o(isTutaTeamMail(mail)).equals(false)
 		})
 	})
 

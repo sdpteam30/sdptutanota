@@ -1,7 +1,7 @@
 import { InboxRule, Mail, MailSet } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import { InboxRuleType, MailSetKind, ProcessingState } from "../../../common/api/common/TutanotaConstants"
 import { isDomainName, isRegularExpression } from "../../../common/misc/FormatValidator"
-import { asyncFind, Nullable } from "@tutao/tutanota-utils"
+import { assertNotNull, asyncFind, Nullable } from "@tutao/tutanota-utils"
 import { lang } from "../../../common/misc/LanguageViewModel"
 import type { MailboxDetail } from "../../../common/mailFunctionality/MailboxModel.js"
 import type { SelectorItemList } from "../../../common/gui/base/DropDownSelector.js"
@@ -45,6 +45,12 @@ export function getInboxRuleTypeNameMapping(): SelectorItemList<string> {
 	]
 }
 
+export enum InboxRulesApplicationType {
+	All,
+	ExcludedFromSpamFilter,
+	NotExcludedFromSpamFilter,
+}
+
 export function getInboxRuleTypeName(type: string): string {
 	let typeNameMapping = getInboxRuleTypeNameMapping().find((t) => t.value === type)
 	return typeNameMapping != null ? typeNameMapping.name : ""
@@ -57,6 +63,24 @@ export class InboxRuleHandler {
 		private readonly mailModel: MailModel,
 	) {}
 
+	async findAndApplyRulesExcludedFromSpamFilter(
+		mailboxDetail: MailboxDetail,
+		mail: Readonly<Mail>,
+		sourceFolder: MailSet,
+		ignoreProcessingState = false,
+	): Promise<Nullable<{ targetFolder: MailSet; processInboxDatum: UnencryptedProcessInboxDatum }>> {
+		return this.findAndApplyMatchingRule(mailboxDetail, mail, sourceFolder, InboxRulesApplicationType.ExcludedFromSpamFilter, ignoreProcessingState)
+	}
+
+	async findAndApplyRulesNotExcludedFromSpamFilter(
+		mailboxDetail: MailboxDetail,
+		mail: Readonly<Mail>,
+		sourceFolder: MailSet,
+		ignoreProcessingState = false,
+	): Promise<Nullable<{ targetFolder: MailSet; processInboxDatum: UnencryptedProcessInboxDatum }>> {
+		return this.findAndApplyMatchingRule(mailboxDetail, mail, sourceFolder, InboxRulesApplicationType.NotExcludedFromSpamFilter, ignoreProcessingState)
+	}
+
 	/**
 	 * Checks the mail for an existing inbox rule and moves the mail to the target folder of the rule.
 	 * @returns true if a rule matches otherwise false
@@ -64,28 +88,54 @@ export class InboxRuleHandler {
 	async findAndApplyMatchingRule(
 		mailboxDetail: MailboxDetail,
 		mail: Readonly<Mail>,
+		sourceFolder: MailSet,
+		inboxApplicationType: InboxRulesApplicationType = InboxRulesApplicationType.All,
+		ignoreProcessingState = false,
 	): Promise<Nullable<{ targetFolder: MailSet; processInboxDatum: UnencryptedProcessInboxDatum }>> {
+		if (sourceFolder.folderType !== MailSetKind.INBOX && sourceFolder.folderType !== MailSetKind.SPAM) {
+			return null
+		}
+
 		const shouldApply =
 			(mail.processingState === ProcessingState.INBOX_RULE_NOT_PROCESSED ||
 				mail.processingState === ProcessingState.INBOX_RULE_NOT_PROCESSED_AND_DO_NOT_RUN_SPAM_PREDICTION) &&
 			mail.processNeeded
 
-		if (mail._errors || !shouldApply || !(await isLandingFolder(this.mailModel, mailboxDetail, mail)) || !this.logins.getUserController().isPaidAccount()) {
+		if (mail._errors || !this.logins.getUserController().isPaidAccount() || (!ignoreProcessingState && !shouldApply)) {
 			return null
 		}
 
-		const inboxRule = await _findMatchingRule(this.mailFacade, mail, this.logins.getUserController().props.inboxRules)
+		const allInboxRules = this.logins.getUserController().props.inboxRules
+		const applicableInboxRules: InboxRule[] = allInboxRules.filter((rule) => {
+			if (inboxApplicationType === InboxRulesApplicationType.ExcludedFromSpamFilter) {
+				return rule.excludeFromSpamFilter === null || rule.excludeFromSpamFilter
+			} else if (inboxApplicationType === InboxRulesApplicationType.NotExcludedFromSpamFilter) {
+				return rule.excludeFromSpamFilter === null || !rule.excludeFromSpamFilter
+			} else {
+				return true
+			}
+		})
+		const inboxRule = await _findMatchingRule(this.mailFacade, mail, applicableInboxRules)
+
 		const mailDetails = await this.mailFacade.loadMailDetailsBlob(mail)
 		if (inboxRule) {
 			const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 			const targetFolder = folders.getFolderById(elementIdPart(inboxRule.targetFolder))
 
 			if (targetFolder) {
+				const currentFolder = assertNotNull(folders.getFolderByMail(mail))
+				const { uploadableVectorLegacy, uploadableVector } = await this.mailFacade.createModelInputAndUploadableVectors(
+					mail,
+					mailDetails,
+					currentFolder,
+				)
 				const processInboxDatum: UnencryptedProcessInboxDatum = {
 					mailId: mail._id,
 					targetMoveFolder: targetFolder._id,
 					classifierType: ClientClassifierType.CUSTOMER_INBOX_RULES,
-					vector: await this.mailFacade.vectorizeAndCompressMails({ mail, mailDetails }),
+					vectorLegacy: uploadableVectorLegacy,
+					vectorWithServerClassifiers: uploadableVector,
+					ownerEncMailSessionKeys: [],
 				}
 				return { targetFolder, processInboxDatum }
 			} else {
@@ -185,10 +235,4 @@ function _checkEmailAddresses(mailAddresses: string[], inboxRule: InboxRule): bo
 		}
 	})
 	return mailAddress != null
-}
-
-async function isLandingFolder(mailModel: MailModel, mailboxDetail: MailboxDetail, mail: Mail): Promise<boolean> {
-	const folders = await mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
-	const mailFolder = folders.getFolderByMail(mail)
-	return mailFolder?.folderType === MailSetKind.INBOX || mailFolder?.folderType === MailSetKind.SPAM
 }

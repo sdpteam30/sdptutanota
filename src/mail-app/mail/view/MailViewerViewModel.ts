@@ -10,16 +10,19 @@ import {
 	MailTypeRef,
 } from "../../../common/api/entities/tutanota/TypeRefs.js"
 import {
+	ArchiveDataType,
 	ConversationType,
 	EncryptionAuthStatus,
 	ExternalImageRule,
 	FeatureType,
+	isPermanentDeleteAllowedMailSetKind,
 	MailAuthenticationStatus,
 	MailMethod,
 	MailPhishingStatus,
 	MailReportType,
 	MailSetKind,
 	MailState,
+	NewsletterBannerRule,
 	OperationType,
 } from "../../../common/api/common/TutanotaConstants"
 import { EntityClient } from "../../../common/api/common/EntityClient"
@@ -48,7 +51,7 @@ import { LoginController } from "../../../common/api/main/LoginController"
 import m from "mithril"
 import { LockedError, NotAuthorizedError, NotFoundError } from "../../../common/api/common/error/RestError"
 import { haveSameId, isSameId } from "../../../common/api/common/utils/EntityUtils"
-import { getReferencedAttachments, isTutanotaTeamMail, loadInlineImages, moveMails } from "./MailGuiUtils"
+import { getReferencedAttachments, loadInlineImages, moveMails, moveMailsToSystemFolder, showDownloadProgressDialog } from "./MailGuiUtils"
 import { SanitizedFragment } from "../../../common/misc/HtmlSanitizer"
 import { CALENDAR_MIME_TYPE, FileController } from "../../../common/file/FileController"
 import { exportMails } from "../export/Exporter.js"
@@ -67,18 +70,23 @@ import { WorkerFacade } from "../../../common/api/worker/facades/WorkerFacade.js
 import { SearchModel } from "../../search/model/SearchModel.js"
 import { ParsedIcalFileContent } from "../../../calendar-app/calendar/view/CalendarInvites.js"
 import { MailFacade } from "../../../common/api/worker/facades/lazy/MailFacade.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js"
+import {
+	EntityEventsListener,
+	EntityUpdateData,
+	isUpdateForTypeRef,
+	OnEntityUpdateReceivedPriority,
+} from "../../../common/api/common/utils/EntityUpdateUtils.js"
 import { isOfflineError } from "../../../common/api/common/utils/ErrorUtils.js"
 import { CryptoFacade } from "../../../common/api/worker/crypto/CryptoFacade.js"
 import { AttachmentType, getAttachmentType } from "../../../common/gui/AttachmentBubble.js"
 import type { ContactImporter } from "../../contacts/ContactImporter.js"
 import { InlineImages, revokeInlineImages } from "../../../common/mailFunctionality/inlineImagesUtils.js"
-import { getDefaultSender, getEnabledMailAddressesWithUser, getMailboxName } from "../../../common/mailFunctionality/SharedMailUtils.js"
+import { getDefaultSender, getEnabledMailAddressesWithUser, getMailboxName, isTutaTeamMail } from "../../../common/mailFunctionality/SharedMailUtils.js"
 import { getDisplayedSender, getMailBodyText, MailAddressAndName } from "../../../common/api/common/CommonMailUtils.js"
 import { MailModel, MoveMode } from "../model/MailModel.js"
 import { isNoReplyTeamAddress, isSystemNotification, loadMailDetails } from "./MailViewerUtils.js"
 import { assertSystemFolderOfType, getFolderName, getPathToFolderString, loadMailHeaders } from "../model/MailUtils.js"
-import { isDraft } from "../model/MailChecks"
+import { isDraft, isEditableDraft, isMailDeletable, isMailMovable, isMailScheduled } from "../model/MailChecks"
 import type { SearchToken } from "../../../common/api/common/utils/QueryTokenUtils"
 import { CalendarEventsRepository } from "../../../common/calendar/date/CalendarEventsRepository.js"
 import { mailLocator } from "../../mailLocator.js"
@@ -90,6 +98,8 @@ import { UndoModel } from "../../UndoModel"
 import { isBrowser } from "../../../common/api/common/Env"
 import { CommonSystemFacade } from "../../../common/native/common/generatedipc/CommonSystemFacade"
 import { getServerOrigin } from "../../../common/api/common/ServerHostUtils.js"
+import { TransferProgressDispatcher } from "../../../common/api/main/TransferProgressDispatcher"
+import { locator } from "../../../common/api/main/CommonLocator"
 
 export const enum ContentBlockingStatus {
 	Block = "0",
@@ -162,6 +172,7 @@ export class MailViewerViewModel {
 	private loading: Promise<void> | null = null
 
 	private collapsed: boolean = true
+	private newsletterBannerRule: NewsletterBannerRule | null = null
 
 	get mail(): Mail {
 		return this._mail
@@ -196,6 +207,7 @@ export class MailViewerViewModel {
 		private readonly highlightedStrings: readonly SearchToken[],
 		readonly eventsRepository: CalendarEventsRepository,
 		private readonly undoModel: UndoModel,
+		private readonly transferProgressDispatcher: TransferProgressDispatcher,
 	) {
 		this.folderMailboxText = null
 		if (showFolder) {
@@ -440,24 +452,27 @@ export class MailViewerViewModel {
 		}
 	}
 
-	private readonly entityListener = async (events: EntityUpdateData[]) => {
-		for (const update of events) {
-			if (isUpdateForTypeRef(MailTypeRef, update)) {
-				const { instanceListId, instanceId, operation } = update
-				if (operation === OperationType.UPDATE && isSameId(this.mail._id, [instanceListId, instanceId])) {
-					try {
-						const updatedMail = await this.entityClient.load(MailTypeRef, this.mail._id)
-						this.updateMail({ mail: updatedMail as Mail })
-					} catch (e) {
-						if (e instanceof NotFoundError) {
-							console.log(`could not find updated mail ${JSON.stringify([instanceListId, instanceId])}`)
-						} else {
-							throw e
+	private readonly entityListener: EntityEventsListener = {
+		onEntityUpdatesReceived: async (events: EntityUpdateData[]) => {
+			for (const update of events) {
+				if (isUpdateForTypeRef(MailTypeRef, update)) {
+					const { instanceListId, instanceId, operation } = update
+					if (operation === OperationType.UPDATE && isSameId(this.mail._id, [instanceListId, instanceId])) {
+						try {
+							const updatedMail = await this.entityClient.load(MailTypeRef, this.mail._id)
+							this.updateMail({ mail: updatedMail })
+						} catch (e) {
+							if (e instanceof NotFoundError) {
+								console.log(`could not find updated mail ${JSON.stringify([instanceListId, instanceId])}`)
+							} else {
+								throw e
+							}
 						}
 					}
 				}
 			}
-		}
+		},
+		priority: OnEntityUpdateReceivedPriority.NORMAL,
 	}
 
 	private async determineRelevantRecipient() {
@@ -585,13 +600,29 @@ export class MailViewerViewModel {
 		return this.forceLightMode
 	}
 
-	isDraftMail() {
-		return this.mail.state === MailState.DRAFT
+	isDraftMail(): boolean {
+		return isDraft(this.mail)
 	}
 
-	isDeletableMail() {
+	isScheduled(): boolean {
+		return isMailScheduled(this.mail)
+	}
+
+	async unscheduleMail(): Promise<void> {
+		await this.mailModel.unscheduleMail(this.mail)
+	}
+
+	isEditableDraft() {
+		return isEditableDraft(this.mail)
+	}
+
+	isMovableMail() {
+		return isMailMovable(this.mail, this.mailModel)
+	}
+
+	isDeletingMailAllowed() {
 		const folderType = this.getFolderInfo()?.folderType
-		return folderType === MailSetKind.TRASH || folderType === MailSetKind.SPAM
+		return folderType != null && isPermanentDeleteAllowedMailSetKind(folderType) && isMailDeletable(this.mail)
 	}
 
 	isReceivedMail() {
@@ -626,10 +657,9 @@ export class MailViewerViewModel {
 
 	private isHardMailAuthenticationFailure(): boolean {
 		return (
-			(this.mailDetails != null &&
-				!this.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED) &&
-				!this.checkMailAuthenticationStatus(MailAuthenticationStatus.SOFT_FAIL)) ||
-			this.mail.encryptionAuthStatus === EncryptionAuthStatus.TUTACRYPT_AUTHENTICATION_FAILED
+			this.mailDetails != null &&
+			!this.checkMailAuthenticationStatus(MailAuthenticationStatus.AUTHENTICATED) &&
+			!this.checkMailAuthenticationStatus(MailAuthenticationStatus.SOFT_FAIL)
 		)
 	}
 
@@ -806,15 +836,11 @@ export class MailViewerViewModel {
 	}
 
 	didErrorsOccur(): boolean {
-		let bodyErrors = false
-		if (this.mailDetails) {
-			bodyErrors = typeof downcast(this.mailDetails.body)._errors !== "undefined"
-		}
-		return this.errorOccurredWhileLoadingMailDetails || typeof this.mail._errors !== "undefined" || bodyErrors
+		return this.errorOccurredWhileLoadingMailDetails || typeof this.mail._errors !== "undefined"
 	}
 
 	isTutanotaTeamMail(): boolean {
-		return isTutanotaTeamMail(this.mail)
+		return isTutaTeamMail(this.mail)
 	}
 
 	isShowingExternalContent(): boolean {
@@ -835,6 +861,10 @@ export class MailViewerViewModel {
 
 	getContentBlockingStatus(): ContentBlockingStatus | null {
 		return this.contentBlockingStatus
+	}
+
+	getNewsletterBannerRule(): NewsletterBannerRule | null {
+		return this.newsletterBannerRule
 	}
 
 	private isWarningDismissed() {
@@ -927,6 +957,14 @@ export class MailViewerViewModel {
 		}
 	}
 
+	async setNewsletterBannerRuleConfig(rule: NewsletterBannerRule): Promise<void> {
+		await this.configFacade.addNewsletterBannerRule(this.getSender().address, rule).catch(ofClass(IndexingNotSupportedError, noOp))
+	}
+
+	async updateNewsletterBannerRule(): Promise<void> {
+		this.newsletterBannerRule = await this.configFacade.getNewsletterBannerRule(this.mail.sender.address)
+	}
+
 	async updateMailPhishingStatus(newStatus: MailPhishingStatus): Promise<void> {
 		const oldStatus = this.getPhishingStatus()
 
@@ -939,15 +977,15 @@ export class MailViewerViewModel {
 		await this.entityClient.update(this.mail).catch(() => this.setPhishingStatus(oldStatus))
 	}
 
-	async markAsNotPhishing(): Promise<void> {
-		await this.updateMailPhishingStatus(MailPhishingStatus.WHITELISTED)
-	}
-
 	async markAsPhishing(): Promise<void> {
 		await this.updateMailPhishingStatus(MailPhishingStatus.SUSPICIOUS)
 	}
 
-	async reportMail(reportType: MailReportType): Promise<void> {
+	async markAsNotPhishing(): Promise<void> {
+		await this.updateMailPhishingStatus(MailPhishingStatus.WHITELISTED)
+	}
+
+	async reportSpamForMail(reportType: MailReportType): Promise<void> {
 		// Add logging for both phishing and spam reports
 		const reportTypeString = reportType === MailReportType.PHISHING ? "phishing" : "spam"
 		console.log(
@@ -1019,6 +1057,60 @@ export class MailViewerViewModel {
 		}
 	}
 
+	async reportNotSpamForMail() {
+		const hasMailMoved = await this.reapplyInboxRuleForMail()
+		if (!hasMailMoved) {
+			const mailFolderForMail = this.mailModel.getMailFolderForMail(this.mail)
+			if (!mailFolderForMail) {
+				return
+			}
+
+			await moveMailsToSystemFolder({
+				mailboxModel: this.mailboxModel,
+				mailModel: this.mailModel,
+				currentFolder: mailFolderForMail,
+				mailIds: [this.mail._id],
+				targetFolderType: MailSetKind.INBOX,
+				moveMode: MoveMode.Mails,
+				undoModel: this.undoModel,
+				contactModel: mailLocator.contactModel,
+			})
+		}
+	}
+
+	async reapplyInboxRuleForMail() {
+		const inboxRuleHandler = mailLocator.processInboxHandler()
+
+		const mail = this.mail
+		if (!mail._ownerGroup) {
+			return false
+		}
+		const mailboxDetail = await this.mailboxModel.getMailboxDetailsForMailGroup(mail._ownerGroup)
+
+		const currentFolder = this.mailModel.getMailFolderForMail(mail)
+		if (!currentFolder) {
+			return false
+		}
+
+		const targetFolder = await inboxRuleHandler.processInboxRulesOnly(mail, currentFolder, mailboxDetail)
+
+		if (isSameId(currentFolder._id, targetFolder._id)) {
+			return false
+		}
+
+		await moveMails({
+			targetFolder,
+			mailboxModel: locator.mailboxModel,
+			mailModel: mailLocator.mailModel,
+			mailIds: [mail._id],
+			moveMode: MoveMode.Mails,
+			undoModel: this.undoModel,
+			contactModel: mailLocator.contactModel,
+		})
+
+		return true
+	}
+
 	canExport(): boolean {
 		return !this.isAnnouncement() && !this.logins.isEnabled(FeatureType.DisableMailExport)
 	}
@@ -1027,12 +1119,25 @@ export class MailViewerViewModel {
 		return !this.logins.isEnabled(FeatureType.DisableMailExport)
 	}
 
-	canReport(): boolean {
+	canReportSpam(): boolean {
+		// Allow reporting for study purposes - more permissive than upstream
+		return this.logins.isInternalUserLoggedIn() && !this.isDraftMail() && this.getFolderInfo()?.folderType !== MailSetKind.SPAM
+	}
+
+	canReportPhishing(): boolean {
 		// Allow reporting for study purposes, including emails from own aliases
 		// Removed isTutanotaTeamMail() check to allow reporting own alias emails
 		// Removed phishing status check to allow reporting even if email was previously reported
 		// Users can always report emails, even if they were reported before and re-added to inbox
-		return this.logins.isInternalUserLoggedIn()
+		return this.logins.isInternalUserLoggedIn() && !this.isDraftMail()
+	}
+
+	canReportNotSpam(): boolean {
+		return this.logins.isInternalUserLoggedIn() && this.getFolderInfo()?.folderType === MailSetKind.SPAM
+	}
+
+	canReapplyInboxRules(): boolean {
+		return this.logins.isInternalUserLoggedIn() && this.getFolderInfo()?.folderType === MailSetKind.INBOX
 	}
 
 	canShowHeaders(): boolean {
@@ -1095,6 +1200,10 @@ export class MailViewerViewModel {
 			.split("\n") // split headers
 			.filter((headerLine) => headerLine.toLowerCase().startsWith("list-unsubscribe:"))
 		return !isEmpty(listUnsubscribeHeaders)
+	}
+
+	isImportedMail(): boolean {
+		return this.mailModel.getImportedMailSets().some((mailSet) => this._mail.sets.find((mailSetId) => isSameId(mailSetId, mailSet._id)))
 	}
 
 	private decodeMimeHeader(value: string): string {
@@ -1207,17 +1316,25 @@ export class MailViewerViewModel {
 	/** @return list of inline referenced cid */
 	private async loadAndProcessAdditionalMailInfo(mail: Mail, delayBodyRenderingUntil: Promise<unknown>): Promise<string[]> {
 		console.log(
-			`🔒 MOBYPHISH_LOG: loadAndProcessAdditionalMailInfo called - mailId="${mail._id[1]}", confidential=${mail.confidential}, isTutanotaTeamMail=${isTutanotaTeamMail(mail)}, senderStatus="${this.senderStatus}"`,
+			`🔒 MOBYPHISH_LOG: loadAndProcessAdditionalMailInfo called - mailId="${mail._id[1]}", confidential=${mail.confidential}, isTutanotaTeamMail=${isTutaTeamMail(mail)}, senderStatus="${this.senderStatus}"`,
 		)
 		// If the mail is a non-draft and we have loaded it before, we don't need to reload it because it cannot have been edited, so we return early
 		// drafts however can be edited, and we want to receive the changes, so for drafts we will always reload
 		// BUT: if sender status changed to confirmed/trusted_once, we need to re-sanitize to show images
-		let isDraft = mail.state === MailState.DRAFT
+		let isDraftMail = isDraft(mail)
 		const shouldShowImages = this.senderStatus === "trusted_once" || this.senderStatus === "confirmed"
 		const currentlyBlocking = this.contentBlockingStatus === ContentBlockingStatus.Block || this.contentBlockingStatus === ContentBlockingStatus.AlwaysBlock
 		const needsReSanitization = shouldShowImages && currentlyBlocking
 
-		if (this.renderedMail != null && haveSameId(mail, this.renderedMail) && !isDraft && this.sanitizeResult != null && !needsReSanitization) {
+		// in case we got errors earlier we also want to retry, e.g. to fix temporary decryption failures (when the sender key cannot be fetched)
+		if (
+			!this.didErrorsOccur() &&
+			this.renderedMail != null &&
+			haveSameId(mail, this.renderedMail) &&
+			!isDraftMail &&
+			this.sanitizeResult != null &&
+			!needsReSanitization
+		) {
 			console.log(`🔒 MOBYPHISH_LOG: Early return in loadAndProcessAdditionalMailInfo - mail already rendered, returning cached inlineImageCids`)
 			return this.sanitizeResult.inlineImageCids
 		}
@@ -1229,7 +1346,7 @@ export class MailViewerViewModel {
 		try {
 			console.log(`🔒 MOBYPHISH_LOG: Loading mail details...`)
 			this.mailDetails = await loadMailDetails(this.mailFacade, this.mail)
-			this.errorOccurredWhileLoadingMailDetails = false
+			this.errorOccurredWhileLoadingMailDetails = typeof downcast(this.mailDetails)._errors !== "undefined"
 			console.log(`🔒 MOBYPHISH_LOG: Mail details loaded successfully`)
 		} catch (e) {
 			if (e instanceof NotFoundError) {
@@ -1265,16 +1382,21 @@ export class MailViewerViewModel {
 
 		const shouldBlockImages = this.isBlockingExternalImages()
 		const senderEmail = getDisplayedSenderWithDomainReplacement(mail).address
-		const isTutanotaMail = isTutanotaTeamMail(mail)
+		const isTutanotaMail = isTutaTeamMail(mail)
 		console.log(
 			`🔒 MOBYPHISH_LOG: About to sanitize mail body - sender="${senderEmail}", isTutanotaMail=${isTutanotaMail}, senderStatus="${this.senderStatus}", contentBlockingStatus="${this.contentBlockingStatus}", shouldBlockImages=${shouldBlockImages}`,
 		)
 
 		this.sanitizeResult = await this.sanitizeMailBody(mail, shouldBlockImages)
 
-		if (!isDraft) {
+		if (!isDraftMail) {
 			this.checkMailForPhishing(mail, this.sanitizeResult.links)
 		}
+
+		await this.updateNewsletterBannerRule()
+
+		// no-antiphishing-header branch: Keep contentBlockingStatus as AlwaysShow (set earlier)
+		// since this is the control group without any warning UI
 
 		m.redraw()
 		this.renderedMail = this.mail
@@ -1355,9 +1477,7 @@ export class MailViewerViewModel {
 
 		if (calendarFile && (mail.method === MailMethod.ICAL_REQUEST || mail.method === MailMethod.ICAL_REPLY) && mail.state === MailState.RECEIVED) {
 			Promise.all([
-				import("../../../calendar-app/calendar/view/CalendarInvites.js").then(({ getEventsFromFile }) =>
-					getEventsFromFile(calendarFile, mail.confidential),
-				),
+				import("../../../calendar-app/calendar/view/CalendarInvites.js").then(({ getEventsFromFile }) => getEventsFromFile(calendarFile)),
 				this.getSenderOfResponseMail(),
 			]).then(([contents, recipient]) => {
 				this.calendarEventAttachment =
@@ -1583,7 +1703,7 @@ export class MailViewerViewModel {
 			return rawBody
 		})
 
-		const isTutanotaMail = isTutanotaTeamMail(mail)
+		const isTutanotaMail = isTutaTeamMail(mail)
 
 		// YOUR logging (keep this)
 		console.log(
@@ -1592,7 +1712,7 @@ export class MailViewerViewModel {
 
 		const sanitizeResult = getHtmlSanitizer().sanitizeFragment(urlified, {
 			blockExternalContent,
-			allowRelativeLinks: isTutanotaMail,
+			allowRelativeLinks: isTutaTeamMail(mail),
 			usePlaceholderForInlineImages: true,
 			highlightedStrings: this.highlightedStrings,
 		})
@@ -1622,7 +1742,11 @@ export class MailViewerViewModel {
 	async downloadAll(): Promise<void> {
 		const nonInlineAttachments = await this.cryptoFacade.enforceSessionKeyUpdateIfNeeded(this._mail, this.getNonInlineAttachments())
 		try {
-			await this.fileController.downloadAll(nonInlineAttachments)
+			await showDownloadProgressDialog(
+				this.transferProgressDispatcher,
+				nonInlineAttachments,
+				this.fileController.downloadAll(nonInlineAttachments, ArchiveDataType.Attachments),
+			)
 		} catch (e) {
 			if (e instanceof FileOpenError) {
 				console.warn("FileOpenError", e)
@@ -1638,9 +1762,9 @@ export class MailViewerViewModel {
 		file = (await this.cryptoFacade.enforceSessionKeyUpdateIfNeeded(this._mail, [file]))[0]
 		try {
 			if (open) {
-				await this.fileController.open(file)
+				await showDownloadProgressDialog(this.transferProgressDispatcher, [file], this.fileController.open(file))
 			} else {
-				await this.fileController.download(file)
+				await showDownloadProgressDialog(this.transferProgressDispatcher, [file], this.fileController.download(file))
 			}
 		} catch (e) {
 			if (e instanceof FileOpenError) {
@@ -1699,18 +1823,19 @@ export class MailViewerViewModel {
 	}
 
 	canReply(): boolean {
-		return !isDraft(this.mail) && !this.isAnnouncement()
+		return !this.isDraftMail() && !this.isAnnouncement()
 	}
 
 	canReplyAll(): boolean {
 		return (
+			this.canReply() &&
 			this.logins.getUserController().isInternalUser() &&
 			this.getToRecipients().length + this.getCcRecipients().length + this.getBccRecipients().length > 1
 		)
 	}
 
 	canForward(): boolean {
-		return !isDraft(this.mail) && !this.isAnnouncement() && this.logins.getUserController().isInternalUser()
+		return !this.isDraftMail() && !this.isAnnouncement() && this.logins.getUserController().isInternalUser()
 	}
 
 	shouldDelayRendering(): boolean {

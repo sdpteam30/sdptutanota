@@ -10,6 +10,7 @@ import { getServiceRestPath } from "../rest/ServiceExecutor"
 import { ApplicationTypesService } from "../../entities/base/Services"
 import { ServiceDefinition } from "../../common/ServiceRequest"
 import { ServerModelsUnavailableError } from "../../common/error/ServerModelsUnavailableError"
+import ModelInfo from "../../entities/base/ModelInfo"
 
 assertWorkerOrNode()
 
@@ -40,7 +41,8 @@ export class ApplicationTypesFacade {
 	private lastInvoked = 0
 	private deferredRequests: Array<DeferredObject<ApplicationTypesGetOut>>
 
-	private readonly persistenceFilePath: string = "server_type_models.json"
+	private readonly APPLICATION_TYPES_PATH: string = "server_type_models.json"
+	private readonly APPLICATION_TYPES_PATH_SDK: string = "server_type_models_sdk.json"
 
 	constructor(
 		private readonly restClient: RestClient,
@@ -55,6 +57,9 @@ export class ApplicationTypesFacade {
 			getServiceRestPath(ApplicationTypesService as ServiceDefinition),
 			HttpMethod.GET,
 			{
+				headers: {
+					v: String(ModelInfo.version),
+				},
 				responseType: MediaType.Binary,
 			},
 		)
@@ -99,7 +104,7 @@ export class ApplicationTypesFacade {
 		if (isDesktop() || isApp()) {
 			try {
 				const fileContent = stringToUtf8Uint8Array(newApplicationTypesJsonString)
-				await this.fileFacade.writeToAppDir(fileContent, this.persistenceFilePath)
+				await this.fileFacade.writeToAppDir(fileContent, this.APPLICATION_TYPES_PATH)
 			} catch (err_to_ignore) {
 				console.error(`Failed to persist server model: ${err_to_ignore}`)
 			}
@@ -114,7 +119,7 @@ export class ApplicationTypesFacade {
 		// when the web app is started and store it in memory
 		if (isDesktop() || isApp()) {
 			try {
-				const applicationTypesJsonData = await this.fileFacade.readFromAppDir(this.persistenceFilePath)
+				const applicationTypesJsonData = await this.fileFacade.readFromAppDir(this.APPLICATION_TYPES_PATH)
 				const applicationTypesHash = this.computeApplicationTypesHash(applicationTypesJsonData)
 				console.log(`initializing server model from local json data. Hash: ${applicationTypesHash}`)
 				const applicationTypesJson = uint8ArrayToString("utf-8", applicationTypesJsonData)
@@ -152,6 +157,13 @@ export class ApplicationTypesFacade {
 
 		for (let deferredRequest of deferredRequests) {
 			deferredRequest.reject(e)
+		}
+	}
+
+	async invalidateApplicationTypes() {
+		if (isDesktop() || isApp()) {
+			await this.fileFacade.deleteFromAppDir(this.APPLICATION_TYPES_PATH)
+			await this.fileFacade.deleteFromAppDir(this.APPLICATION_TYPES_PATH_SDK)
 		}
 	}
 }

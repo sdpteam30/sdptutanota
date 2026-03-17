@@ -274,7 +274,6 @@ export function customIdToString(customId: string): string {
 export function create<T>(typeModel: TypeModel, typeRef: TypeRef<T>, createDefaultValue: (name: string, value: ModelValue) => any = _getDefaultValue): T {
 	let i: Record<string, any> = {
 		_type: typeRef,
-		_finalIvs: {},
 	}
 
 	for (const [valueIdStr, value] of Object.entries(typeModel.values)) {
@@ -419,7 +418,7 @@ export function removeTechnicalFields<E extends Partial<SomeEntity>>(entity: E) 
 	// we want to restrict outer function to entity types, but internally we also want to handle aggregates
 	function _removeTechnicalFields(erased: Record<string, any>) {
 		for (const key of Object.keys(erased)) {
-			if (key.startsWith("_finalIvs") || key.startsWith("_errors")) {
+			if (TECHNICAL_FIELDS.includes(key)) {
 				delete erased[key]
 			} else {
 				const value = erased[key]
@@ -514,6 +513,7 @@ export const SENDER_ID = 111
 export const ATTACHMENTS_ID = 115
 
 export const IDENTITY_FIELDS = ["_id", "_ownerGroup", "_ownerEncSessionKey", "_ownerKeyVersion", "_permissions"]
+export const TECHNICAL_FIELDS = ["_original", "_errors"]
 
 export function isCustomIdType(typeModel: TypeModel): boolean {
 	const _idValue = get_IdValue(typeModel)

@@ -45,7 +45,7 @@ import {
 	listIdPart,
 } from "../../common/utils/EntityUtils"
 import { ProgrammingError } from "../../common/error/ProgrammingError"
-import { assertWorkerOrNode } from "../../common/Env"
+import { assertWorkerOrNode, isTest } from "../../common/Env"
 import type { Entity, ListElementEntity, ServerModelParsedInstance, SomeEntity, TypeModel } from "../../common/EntityTypes"
 import { ENTITY_EVENT_BATCH_EXPIRE_MS } from "../EventBusClient"
 import { CustomCacheHandlerMap } from "./cacheHandler/CustomCacheHandler.js"
@@ -55,7 +55,6 @@ import { AttributeModel } from "../../common/AttributeModel"
 import { collapseId, expandId } from "./RestClientIdUtils"
 import { PatchMerger } from "../offline/PatchMerger"
 import { hasError, isExpectedErrorForSynchronization } from "../../common/utils/ErrorUtils"
-import type { SpamClassificationModel } from "../../../../mail-app/workerUtils/spamClassification/SpamClassifier"
 
 assertWorkerOrNode()
 
@@ -266,6 +265,8 @@ export interface CacheStorage extends ExposedCacheStorage {
 	getUserId(): Id
 
 	deleteAllOwnedBy(owner: Id): Promise<void>
+
+	isInitialized(): boolean
 }
 
 /**
@@ -860,22 +861,23 @@ export class DefaultEntityRestCache implements EntityRestCache {
 	private async processCreateEvent(typeRef: TypeRef<any>, update: EntityUpdateData): Promise<EntityUpdateData | null> {
 		// if entityUpdate has been Prefetched or is NotAvailable, we do not need to do anything
 		if (update.prefetchStatus === PrefetchStatus.NotPrefetched) {
+			// if there is a custom handler we follow its decision
+			let shouldUpdateDb = this.storage.getCustomCacheHandlerMap().get(typeRef)?.shouldLoadOnCreateEvent?.(update)
+			// otherwise, we do a range check to see if we need to keep the range up-to-date. No need to load anything out of range
 			// we put new instances into cache only when it's a new instance in the cached range which is only for the list instances
 			if (update.instanceListId != null) {
-				// if there is a custom handler we follow its decision
-				let shouldUpdateDb = this.storage.getCustomCacheHandlerMap().get(typeRef)?.shouldLoadOnCreateEvent?.(update)
-				// otherwise, we do a range check to see if we need to keep the range up-to-date. No need to load anything out of range
 				shouldUpdateDb = shouldUpdateDb ?? (await this.storage.isElementIdInCacheRange(typeRef, update.instanceListId, update.instanceId))
-
-				if (shouldUpdateDb) {
-					try {
-						return await this.loadAndStoreInstanceFromUpdate(update)
-					} catch (e) {
-						if (isExpectedErrorForSynchronization(e)) {
-							return null
-						} else {
-							throw e
-						}
+			} else {
+				shouldUpdateDb = shouldUpdateDb ?? true
+			}
+			if (shouldUpdateDb) {
+				try {
+					return await this.loadAndStoreInstanceFromUpdate(update)
+				} catch (e) {
+					if (isExpectedErrorForSynchronization(e)) {
+						return null
+					} else {
+						throw e
 					}
 				}
 			}
@@ -947,6 +949,12 @@ export class DefaultEntityRestCache implements EntityRestCache {
 	 * @return true if the cache can be used, false if a direct network request should be performed
 	 */
 	private shouldUseCache(typeRef: TypeRef<any>, opts?: EntityRestClientLoadOptions): boolean {
+		// if the cacheStorage for some reason is not (yet) initialized we can not use the cache,
+		// but still want to be able to use the client and do a login, etc.
+		if (!isTest() && !this.storage.isInitialized()) {
+			return false
+		}
+
 		// some types won't be cached
 		if (isIgnoredType(typeRef)) {
 			return false

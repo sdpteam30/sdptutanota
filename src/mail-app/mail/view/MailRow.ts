@@ -18,7 +18,7 @@ import { component_size, px, size } from "../../../common/gui/size.js"
 import { noOp } from "@tutao/tutanota-utils"
 import { setHTMLElementTextWithHighlighting, VirtualRow } from "../../../common/gui/base/ListUtils.js"
 import { companyTeamLabel } from "../../../common/misc/ClientConstants.js"
-import { getConfidentialFontIcon, isTutanotaTeamMail } from "./MailGuiUtils.js"
+import { getConfidentialFontIcon } from "./MailGuiUtils.js"
 import { mailLocator } from "../../mailLocator.js"
 import { getSenderOrRecipientHeading } from "./MailViewerUtils.js"
 import { getLabelColor } from "../../../common/gui/base/Label"
@@ -28,6 +28,8 @@ import { SearchToken } from "../../../common/api/common/utils/QueryTokenUtils"
 import { lang } from "../../../common/misc/LanguageViewModel"
 import { getFolderName } from "../model/MailUtils"
 import { client } from "../../../common/misc/ClientDetector"
+import { isTutaTeamMail } from "../../../common/mailFunctionality/SharedMailUtils"
+import { isEditableDraft, isMailScheduled } from "../model/MailChecks"
 
 const iconMap: Record<MailSetKind, string> = {
 	[MailSetKind.CUSTOM]: FontIcons.Folder,
@@ -37,9 +39,11 @@ const iconMap: Record<MailSetKind, string> = {
 	[MailSetKind.ARCHIVE]: FontIcons.Archive,
 	[MailSetKind.SPAM]: FontIcons.Spam,
 	[MailSetKind.DRAFT]: FontIcons.Draft,
+	[MailSetKind.SCHEDULED]: FontIcons.ScheduleMail,
+	// The ones below will never show a folder icon, but we need them to complete the set
 	[MailSetKind.ALL]: FontIcons.Folder,
 	[MailSetKind.LABEL]: FontIcons.Folder,
-	[MailSetKind.Imported]: FontIcons.Folder,
+	[MailSetKind.IMPORTED]: FontIcons.Folder,
 }
 
 export const MAIL_ROW_V_MARGIN = 3
@@ -118,7 +122,7 @@ export class MailRow implements VirtualRow<Mail> {
 		}
 		const labels = this.updateLabels(mail)
 
-		const isTeamMail = isTutanotaTeamMail(mail)
+		const isTeamMail = isTutaTeamMail(mail)
 		setVisibility(this.teamLabelDom, isTeamMail)
 		this.showCheckboxAnimated(shouldAlwaysShowMultiselectCheckbox() || isInMultiSelect)
 
@@ -411,7 +415,7 @@ export class MailRow implements VirtualRow<Mail> {
 			description += lang.get("corrupted_msg") + " "
 		}
 
-		if (mail.state === MailState.DRAFT) {
+		if (isEditableDraft(mail)) {
 			iconText += FontIcons.Edit
 			description += lang.get("draft_label") + " "
 		}
@@ -449,6 +453,6 @@ export class MailRow implements VirtualRow<Mail> {
 	}
 
 	private folderIcon(type: MailSetKind): string {
-		return iconMap[type]
+		return iconMap[type] ?? FontIcons.Folder
 	}
 }

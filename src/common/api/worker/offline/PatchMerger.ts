@@ -16,21 +16,22 @@ import {
 	ServerModelUntypedInstance,
 	ServerTypeModel,
 } from "../../common/EntityTypes"
-import { Patch } from "../../entities/sys/TypeRefs"
-import { assertNotNull, Base64, deepEqual, isEmpty, lazy, Nullable, promiseMap, TypeRef } from "@tutao/tutanota-utils"
+import { Patch, UserTypeRef } from "../../entities/sys/TypeRefs"
+import { assertNotNull, Base64, deepEqual, isEmpty, isSameTypeRef, lazy, Nullable, promiseMap, TypeRef } from "@tutao/tutanota-utils"
 import { AttributeModel } from "../../common/AttributeModel"
 import { CacheStorage } from "../rest/DefaultEntityRestCache"
 import { PatchOperationError } from "../../common/error/PatchOperationError"
 import { AssociationType } from "../../common/EntityConstants"
 import { PatchOperationType, TypeModelResolver } from "../../common/EntityFunctions"
 import { InstancePipeline } from "../crypto/InstancePipeline"
-import { isSameId, removeTechnicalFields } from "../../common/utils/EntityUtils"
+import { isSameId } from "../../common/utils/EntityUtils"
 import { convertDbToJsType } from "../crypto/ModelMapper"
 import { decryptValue } from "../crypto/CryptoMapper"
-import { AesKey, extractIvFromCipherText } from "@tutao/tutanota-crypto"
+import { AesKey } from "@tutao/tutanota-crypto"
 import { CryptoFacade } from "../crypto/CryptoFacade"
 import { EntityUpdateData } from "../../common/utils/EntityUpdateUtils"
 import { hasError } from "../../common/utils/ErrorUtils"
+import { CryptoError } from "@tutao/tutanota-crypto/error.js"
 
 export class PatchMerger {
 	constructor(
@@ -134,7 +135,10 @@ export class PatchMerger {
 				let associationArray = instanceToChange[attributeId] as ParsedAssociation
 				const valuesToAdd = value as ParsedAssociation
 				const commonAssociationItems = associationArray.filter((association) => valuesToAdd.some((item) => deepEqual(item, association)))
-				if (!isEmpty(commonAssociationItems)) {
+
+				// We fetch the latest state of the user immediately in LoginFacade#initSession, but we still receive
+				// patches from the server for the group memberships of the user. This is fine, so we don't want to log it
+				if (!isEmpty(commonAssociationItems) && !isSameTypeRef(UserTypeRef, new TypeRef(typeModel.app, typeModel.id))) {
 					console.log(
 						`PatchMerger attempted to add an already existing item to an association. Common items: ${JSON.stringify(commonAssociationItems)}`,
 					)
@@ -146,11 +150,7 @@ export class PatchMerger {
 					const aggregationsWithCommonIdsButDifferentValues = associationArray.filter((aggregate: ParsedInstance) =>
 						valuesToAdd.some((item: ParsedInstance) => {
 							const aggregateIdAttributeId = assertNotNull(AttributeModel.getAttributeId(aggregationTypeModel, "_id"))
-							const itemWithoutFinalIvs = removeTechnicalFields(structuredClone(item))
-							const aggregateWithoutFinalIvs = removeTechnicalFields(structuredClone(aggregate))
-							return (
-								aggregate[aggregateIdAttributeId] === item[aggregateIdAttributeId] && !deepEqual(itemWithoutFinalIvs, aggregateWithoutFinalIvs)
-							)
+							return aggregate[aggregateIdAttributeId] === item[aggregateIdAttributeId] && !deepEqual(item, aggregate)
 						}),
 					)
 					if (!isEmpty(aggregationsWithCommonIdsButDifferentValues)) {
@@ -255,28 +255,22 @@ export class PatchMerger {
 		const isAggregation = typeModel.associations[attributeId] !== undefined && typeModel.associations[attributeId].type === AssociationType.Aggregation
 		if (isValue) {
 			const encryptedValueInfo = typeModel.values[attributeId] as ModelValue & { encrypted: true }
-			const encryptedValue = value
-			if (encryptedValue == null) {
-				delete pathResult.instanceToChange._finalIvs[attributeId]
-			} else if (encryptedValue === "") {
-				// the encrypted value is "" if the decrypted value is the default value
-				// storing this marker lets us restore that empty string when we re-encrypt the instance.
-				// check out encrypt in CryptoMapper to see the other side of this.
-				pathResult.instanceToChange._finalIvs[attributeId] = null
-			} else if (encryptedValueInfo.final && encryptedValue) {
-				// the server needs to be able to check if an encrypted final field changed.
-				// that's only possible if we re-encrypt using a deterministic IV, because the ciphertext changes if
-				// the IV or the value changes.
-				// storing the IV we used for the initial encryption lets us reuse it later.
-				pathResult.instanceToChange._finalIvs[attributeId] = extractIvFromCipherText(encryptedValue as Base64)
-			}
-			return decryptValue(encryptedValueInfo, encryptedValue as Base64, sk)
+			return decryptValue(encryptedValueInfo, value as Base64, sk)
 		} else if (isAggregation) {
 			const encryptedAggregatedEntities = value as Array<ServerModelEncryptedParsedInstance>
 			const modelAssociation = typeModel.associations[attributeId]
 			const appName = modelAssociation.dependency ?? typeModel.app
 			const aggregationTypeModel = await this.typeModelResolver.resolveServerTypeReference(new TypeRef(appName, modelAssociation.refTypeId))
-			return await this.instancePipeline.cryptoMapper.decryptAggregateAssociation(aggregationTypeModel, encryptedAggregatedEntities, sk)
+			const decryptedAggregates = await this.instancePipeline.cryptoMapper.decryptAggregateAssociation(
+				aggregationTypeModel,
+				encryptedAggregatedEntities,
+				sk,
+			)
+			if (this.instancePipeline.cryptoMapper.containErrors(decryptedAggregates)) {
+				// we do not want to apply a patch that failed decryption
+				throw new CryptoError("Failed to decrypt aggregate on patch")
+			}
+			return decryptedAggregates
 		} else {
 			return value
 		}
@@ -335,16 +329,7 @@ export class PatchMerger {
 
 export function distinctAssociations(associationArray: ParsedAssociation) {
 	return associationArray.reduce((acc: Array<any>, current) => {
-		if (
-			!acc.some((item) => {
-				if (item._finalIvs !== undefined) {
-					const itemWithoutFinalIvs = removeTechnicalFields(structuredClone(item) as ParsedInstance)
-					const currentWithoutFinalIvs = removeTechnicalFields(structuredClone(current) as ParsedInstance)
-					return deepEqual(itemWithoutFinalIvs, currentWithoutFinalIvs)
-				}
-				return deepEqual(item, current)
-			})
-		) {
+		if (!acc.some((item) => deepEqual(item, current))) {
 			if (current != null) {
 				acc.push(current)
 			}

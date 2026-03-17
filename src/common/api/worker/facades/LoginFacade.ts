@@ -80,7 +80,7 @@ import {
 	sha256Hash,
 	TotpSecret,
 	TotpVerifier,
-	uint8ArrayToBitArray,
+	uint8ArrayToKey,
 } from "@tutao/tutanota-crypto"
 import { CryptoFacade } from "../crypto/CryptoFacade"
 import { IServiceExecutor } from "../../common/ServiceRequest"
@@ -103,6 +103,7 @@ import { AttributeModel } from "../../common/AttributeModel"
 import { ServerModelUntypedInstance } from "../../common/EntityTypes"
 import { RolloutFacade } from "./RolloutFacade"
 import { LoginIncompleteError } from "../../common/error/LoginIncompleteError"
+import { ApplicationTypesFacade } from "./ApplicationTypesFacade"
 
 assertWorkerOrNode()
 
@@ -217,7 +218,7 @@ export class LoginFacade {
 		/**
 		 *  Only needed so that we can initialize the offline storage after login.
 		 *  This is necessary because we don't know if we'll be persistent or not until the user tries to login
-		 *  Once the credentials handling has been changed to *always* save in desktop, then this should become obsolete
+		 *  Once the credential handling has been changed to *always* save in desktop, then this should become obsolete
 		 */
 		private readonly cacheInitializer: CacheStorageLateInitializer,
 		private readonly serviceExecutor: IServiceExecutor,
@@ -231,6 +232,7 @@ export class LoginFacade {
 		private readonly cacheManagementFacade: lazyAsync<CacheManagementFacade>,
 		private readonly typeModelResolver: TypeModelResolver,
 		private readonly rolloutFacade: RolloutFacade,
+		private readonly applicationTypesFacade: ApplicationTypesFacade,
 	) {}
 
 	init(eventBusClient: EventBusClient) {
@@ -245,6 +247,10 @@ export class LoginFacade {
 
 	/**
 	 * Create session and log in. Changes internal state to refer to the logged in user.
+	 * if createSessionOnly == true, the app will not continue to initialize app-specific state
+	 * aftrer the session is created + stored and will also not create a persistent offline DB,
+	 * but still store the database key with the credentials so the offline DB can be created when the
+	 * credentials are first used.
 	 */
 	async createSession(
 		mailAddress: string,
@@ -252,7 +258,7 @@ export class LoginFacade {
 		clientIdentifier: string,
 		sessionType: SessionType,
 		databaseKey: Uint8Array | null,
-		skipPostLoginActions: boolean = false,
+		createSessionOnly: boolean = false,
 	): Promise<NewSessionData> {
 		if (this.userFacade.isPartiallyLoggedIn()) {
 			// do not reset here because the event bus client needs to be kept if the same user is logged in as before
@@ -290,7 +296,8 @@ export class LoginFacade {
 
 		const cacheInfo = await this.initCache({
 			userId: sessionData.userId,
-			databaseKey,
+			// don't create a persistent storage just yet if we're just storing credentials after signup
+			databaseKey: createSessionOnly ? null : databaseKey,
 			timeRangeDate: null,
 			forceNewDatabase,
 		})
@@ -310,7 +317,7 @@ export class LoginFacade {
 			type: CredentialType.Internal,
 		}
 
-		if (!skipPostLoginActions) {
+		if (!createSessionOnly) {
 			this.triggerPartialLoginSuccess(sessionType, cacheInfo, credentials).finally(() =>
 				this.triggerFullLoginSuccess(sessionType, cacheInfo, credentials),
 			)
@@ -322,10 +329,8 @@ export class LoginFacade {
 			user,
 			userGroupInfo,
 			sessionId: sessionData.sessionId,
-			credentials: credentials,
-			// we always try to make a persistent cache with a key for persistent session, but this
-			// falls back to ephemeral cache in browsers. no point storing the key then.
-			databaseKey: cacheInfo.isPersistent ? databaseKey : null,
+			credentials,
+			databaseKey,
 		}
 	}
 
@@ -645,11 +650,12 @@ export class LoginFacade {
 				return await this.finishResumeSession(credentials, externalUserKeyDeriver, cacheInfo)
 			}
 		} catch (e) {
-			// If we initialized the cache, but then we couldn't authenticate we should de-initialize
+			// If we initialized the cache, but then we couldn't authenticate, we should de-initialize
 			// the cache again because we will initialize it for the next attempt.
-			// It might be also called in initSession but the error can be thrown even before that (e.g. if the db is empty for some reason) so we reset
+			// It might be also called in initSession but the error can be thrown even before that (e.g. if the db is empty for some reason), so we reset
 			// the session here as well, otherwise we might try to open the DB twice.
 			await this.resetSession()
+			await this.applicationTypesFacade.invalidateApplicationTypes()
 			throw e
 		}
 	}
@@ -691,7 +697,10 @@ export class LoginFacade {
 				await this.loginListener.onLoginFailure(LoginFailReason.SessionExpired)
 			} else {
 				this.asyncLoginState = { state: "failed", credentials, cacheInfo }
-				if (!(e instanceof ConnectionError)) await this.sendError(e)
+				if (!(e instanceof ConnectionError)) {
+					await this.applicationTypesFacade.invalidateApplicationTypes()
+					await this.sendError(e)
+				}
 				await this.loginListener.onLoginFailure(LoginFailReason.Error)
 			}
 		}
@@ -803,7 +812,8 @@ export class LoginFacade {
 			await this.entropyFacade.storeEntropy()
 			return { user, accessToken, userGroupInfo }
 		} catch (e) {
-			this.resetSession()
+			await this.resetSession()
+			await this.applicationTypesFacade.invalidateApplicationTypes()
 			throw e
 		}
 	}
@@ -820,18 +830,24 @@ export class LoginFacade {
 	 */
 	private async initCache({ userId, databaseKey, timeRangeDate, forceNewDatabase }: InitCacheOptions): Promise<CacheInfo> {
 		if (databaseKey != null) {
-			return {
+			const { isPersistent, isNewOfflineDb } = await this.cacheInitializer.initialize({
+				type: "offline",
+				userId,
 				databaseKey,
-				...(await this.cacheInitializer.initialize({
-					type: "offline",
-					userId,
-					databaseKey,
-					timeRangeDate,
-					forceNewDatabase,
-				})),
+				timeRangeDate,
+				forceNewDatabase,
+			})
+			return {
+				isPersistent,
+				isNewOfflineDb,
+				databaseKey,
 			}
 		} else {
-			return { databaseKey: null, ...(await this.cacheInitializer.initialize({ type: "ephemeral", userId })) }
+			const { isPersistent, isNewOfflineDb } = await this.cacheInitializer.initialize({
+				type: "ephemeral",
+				userId,
+			})
+			return { isPersistent, isNewOfflineDb, databaseKey: null }
 		}
 	}
 
@@ -1052,7 +1068,7 @@ export class LoginFacade {
 
 	/** Changes user password to another one using recoverCode instead of the old password. */
 	async recoverLogin(mailAddress: string, recoverCode: string, newPassword: string, clientIdentifier: string): Promise<void> {
-		const recoverCodeKey = uint8ArrayToBitArray(hexToUint8Array(recoverCode))
+		const recoverCodeKey = uint8ArrayToKey(hexToUint8Array(recoverCode))
 		const recoverCodeVerifier = createAuthVerifier(recoverCodeKey)
 		const recoverCodeVerifierBase64 = base64ToBase64Url(uint8ArrayToBase64(recoverCodeVerifier))
 		const sessionData = createCreateSessionData({
@@ -1137,7 +1153,7 @@ export class LoginFacade {
 	resetSecondFactors(mailAddress: string, password: string, recoverCode: Hex): Promise<void> {
 		return this.loadUserPassphraseKey(mailAddress, password).then((passphraseReturn) => {
 			const authVerifier = createAuthVerifierAsBase64Url(passphraseReturn.userPassphraseKey)
-			const recoverCodeKey = uint8ArrayToBitArray(hexToUint8Array(recoverCode))
+			const recoverCodeKey = uint8ArrayToKey(hexToUint8Array(recoverCode))
 			const recoverCodeVerifier = createAuthVerifierAsBase64Url(recoverCodeKey)
 			const deleteData = createResetFactorsDeleteData({
 				mailAddress,
@@ -1154,7 +1170,7 @@ export class LoginFacade {
 			let recoverCodeVerifier: Base64 | null = null
 
 			if (recoverCode) {
-				const recoverCodeKey = uint8ArrayToBitArray(hexToUint8Array(recoverCode))
+				const recoverCodeKey = uint8ArrayToKey(hexToUint8Array(recoverCode))
 				recoverCodeVerifier = createAuthVerifierAsBase64Url(recoverCodeKey)
 			}
 

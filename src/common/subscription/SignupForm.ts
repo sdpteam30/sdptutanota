@@ -3,7 +3,6 @@ import stream from "mithril/stream"
 import Stream from "mithril/stream"
 import { Dialog } from "../gui/base/Dialog"
 import { Autocomplete, TextField } from "../gui/base/TextField.js"
-import { getWhitelabelRegistrationDomains } from "../login/LoginView.js"
 import { SelectMailAddressForm, SelectMailAddressFormAttrs } from "../settings/SelectMailAddressForm"
 import {
 	DEFAULT_FREE_MAIL_ADDRESS_SIGNUP_DOMAIN,
@@ -27,6 +26,7 @@ import { deviceConfig } from "../misc/DeviceConfig"
 import { PowSolution } from "../api/common/pow-worker"
 import { NewAccountData } from "./UpgradeSubscriptionWizard"
 import { emitWizardEvent, WizardEventType } from "../gui/base/WizardDialog"
+import { getWhitelabelRegistrationDomains } from "../misc/WhitelabelCustomizations"
 
 export type SignupFormAttrs = {
 	onComplete: (
@@ -123,7 +123,7 @@ export class SignupForm implements Component<SignupFormAttrs> {
 		this.dom = vnode.dom as HTMLElement
 		try {
 			const userController = locator.logins.getUserController()
-			this.readonly = (await userController.loadCustomer()) !== null
+			this.readonly = (await userController.reloadCustomer()) !== null
 		} catch (e) {
 			this.readonly = false
 		}

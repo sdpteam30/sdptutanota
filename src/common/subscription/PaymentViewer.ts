@@ -95,7 +95,7 @@ export class PaymentViewer implements UpdatableSettingsViewer {
 	}
 
 	private async loadData() {
-		this.customer = await locator.logins.getUserController().loadCustomer()
+		this.customer = await locator.logins.getUserController().reloadCustomer()
 		const customerInfo = await locator.logins.getUserController().loadCustomerInfo()
 
 		const accountingInfo = await locator.entityClient.load(AccountingInfoTypeRef, customerInfo.accountingInfo)
@@ -226,11 +226,9 @@ export class PaymentViewer implements UpdatableSettingsViewer {
 				)
 			}),
 		)
-			.then((price) =>
-				getDefaultPaymentMethod().then((paymentMethod) => {
-					return { price, paymentMethod }
-				}),
-			)
+			.then((price) => {
+				return { price, paymentMethod: getDefaultPaymentMethod() }
+			})
 			.then(({ price, paymentMethod }) => {
 				return PaymentDataDialog.show(neverNull(this.customer), neverNull(this.accountingInfo), price, paymentMethod).then((success) => {
 					if (success) {
@@ -438,7 +436,7 @@ export class PaymentViewer implements UpdatableSettingsViewer {
 			const accountingInfo = await locator.entityClient.load(AccountingInfoTypeRef, instanceId)
 			this.updateAccountingInfoData(accountingInfo)
 		} else if (isUpdateForTypeRef(CustomerTypeRef, update)) {
-			this.customer = await locator.logins.getUserController().loadCustomer()
+			this.customer = await locator.logins.getUserController().reloadCustomer()
 			m.redraw()
 		} else if (isUpdateForTypeRef(InvoiceInfoTypeRef, update)) {
 			this.invoiceInfo = await locator.entityClient.load(InvoiceInfoTypeRef, instanceId)

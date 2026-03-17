@@ -15,14 +15,21 @@ import {
 	PopulateClientSpamTrainingDatum,
 } from "../../../common/api/entities/tutanota/TypeRefs"
 import { getMailSetKind, isFolder, MailSetKind, MAX_NBR_OF_MAILS_SYNC_OPERATION, SpamDecision } from "../../../common/api/common/TutanotaConstants"
-import { GENERATED_MIN_ID, getElementId, isSameId, StrippedEntity, timestampToGeneratedId } from "../../../common/api/common/utils/EntityUtils"
+import {
+	compareNewestFirst,
+	GENERATED_MIN_ID,
+	getElementId,
+	isSameId,
+	StrippedEntity,
+	timestampToGeneratedId,
+} from "../../../common/api/common/utils/EntityUtils"
 import { BulkMailLoader, MailWithMailDetails } from "../index/BulkMailLoader"
 import { hasError } from "../../../common/api/common/utils/ErrorUtils"
-import { getSpamConfidence } from "../../../common/api/common/utils/spamClassificationUtils/SpamMailProcessor"
 import { MailFacade } from "../../../common/api/worker/facades/lazy/MailFacade"
-import { isDesktop } from "../../../common/api/common/Env"
+import { getSpamConfidence } from "../../../common/api/common/utils/spamClassificationUtils/SpamMailProcessor"
+import { isAppleDevice, isDesktop } from "../../../common/api/common/Env"
 
-//Visible for testing
+// visible for testing
 export const SINGLE_TRAIN_INTERVAL_TRAINING_DATA_LIMIT = 1000
 const INITIAL_SPAM_CLASSIFICATION_INDEX_INTERVAL_DAYS = 90
 const TRAINING_DATA_TIME_LIMIT: number = INITIAL_SPAM_CLASSIFICATION_INDEX_INTERVAL_DAYS * -1
@@ -34,8 +41,12 @@ export type TrainingDataset = {
 	spamCount: number
 }
 
-export type UnencryptedPopulateClientSpamTrainingDatum = Omit<StrippedEntity<PopulateClientSpamTrainingDatum>, "encVector" | "ownerEncVectorSessionKey"> & {
+export type UnencryptedPopulateClientSpamTrainingDatum = Omit<
+	StrippedEntity<PopulateClientSpamTrainingDatum>,
+	"encVectorLegacy" | "encVectorWithServerClassifiers" | "ownerEncVectorSessionKey"
+> & {
 	vector: Uint8Array
+	vectorNewFormat: Uint8Array
 }
 
 export class SpamClassifierDataDealer {
@@ -44,6 +55,27 @@ export class SpamClassifierDataDealer {
 		private readonly bulkMailLoader: lazyAsync<BulkMailLoader>,
 		private readonly mailFacade: lazyAsync<MailFacade>,
 	) {}
+
+	private getMaxMailsCapForDevice() {
+		const MAX_MAILS_CAP_DESKTOP = 8000
+		const MAX_MAILS_CAP_DESKTOP_APPLE = 4000
+		const MAX_MAILS_CAP_APPLE = 500
+		const MAX_MAILS_CAP = 1000
+
+		if (isAppleDevice()) {
+			if (isDesktop()) {
+				return MAX_MAILS_CAP_DESKTOP_APPLE
+			} else {
+				return MAX_MAILS_CAP_APPLE
+			}
+		} else {
+			if (isDesktop()) {
+				return MAX_MAILS_CAP_DESKTOP
+			} else {
+				return MAX_MAILS_CAP
+			}
+		}
+	}
 
 	public async fetchAllTrainingData(ownerGroup: Id): Promise<TrainingDataset> {
 		const mailboxGroupRoot = await this.entityClient.load(MailboxGroupRootTypeRef, ownerGroup)
@@ -130,24 +162,33 @@ export class SpamClassifierDataDealer {
 	}
 
 	// Visible for testing
-	subsampleHamAndSpamMails(clientSpamTrainingData: ClientSpamTrainingDatum[]): {
+	subsampleHamAndSpamMails(
+		clientSpamTrainingData: ClientSpamTrainingDatum[],
+		maxMailsCap: number = this.getMaxMailsCapForDevice(),
+	): {
 		subsampledTrainingData: ClientSpamTrainingDatum[]
 		hamCount: number
 		spamCount: number
 	} {
 		// we always want to include clientSpamTrainingData with high confidence (usually 4), because these mails have been moved explicitly by the user
+		// we always want to include more recently received mails before including older mails
 		const HIGH_CONFIDENCE_THRESHOLD = 4
-		const hamDataHighConfidence = clientSpamTrainingData.filter(
+
+		const dateSortedClientSpamTrainingData = clientSpamTrainingData.sort((l, r) => compareNewestFirst(l._id, r._id))
+
+		const hamDataHighConfidence = dateSortedClientSpamTrainingData.filter(
 			(d) => Number(d.confidence) >= HIGH_CONFIDENCE_THRESHOLD && d.spamDecision === SpamDecision.WHITELIST,
 		)
-		const spamDataHighConfidence = clientSpamTrainingData.filter(
+
+		const spamDataHighConfidence = dateSortedClientSpamTrainingData.filter(
 			(d) => Number(d.confidence) >= HIGH_CONFIDENCE_THRESHOLD && d.spamDecision === SpamDecision.BLACKLIST,
 		)
 
-		const hamDataLowConfidence = clientSpamTrainingData.filter(
+		const hamDataLowConfidence = dateSortedClientSpamTrainingData.filter(
 			(d) => Number(d.confidence) > 0 && Number(d.confidence) < HIGH_CONFIDENCE_THRESHOLD && d.spamDecision === SpamDecision.WHITELIST,
 		)
-		const spamDataLowConfidence = clientSpamTrainingData.filter(
+
+		const spamDataLowConfidence = dateSortedClientSpamTrainingData.filter(
 			(d) => Number(d.confidence) > 0 && Number(d.confidence) < HIGH_CONFIDENCE_THRESHOLD && d.spamDecision === SpamDecision.BLACKLIST,
 		)
 
@@ -179,11 +220,8 @@ export class SpamClassifierDataDealer {
 		const finalSpamSize = finalSpam.length
 		const finalSize = finalHamSize + finalSpamSize
 
-		const MAX_MAILS_CAP_DESKTOP = 4000
-		const MAX_MAILS_CAP_WEB_AND_MOBILE = 1000
-		const MAX_MAILS_CAP = isDesktop() ? MAX_MAILS_CAP_DESKTOP : MAX_MAILS_CAP_WEB_AND_MOBILE
-		const finalHamCapped = finalHam.slice(0, Math.floor((finalHamSize / finalSize) * MAX_MAILS_CAP))
-		const finalSpamCapped = finalSpam.slice(0, Math.floor((finalSpamSize / finalSize) * MAX_MAILS_CAP))
+		const finalHamCapped = finalHam.slice(0, Math.floor((finalHamSize / finalSize) * maxMailsCap))
+		const finalSpamCapped = finalSpam.slice(0, Math.floor((finalSpamSize / finalSize) * maxMailsCap))
 
 		const balanced = [...finalHamCapped, ...finalSpamCapped]
 		console.log(
@@ -224,19 +262,22 @@ export class SpamClassifierDataDealer {
 	}
 
 	private async uploadTrainingDataForMails(mails: MailWithMailDetails[], mailBox: MailBox, mailSets: MailSet[]): Promise<void> {
+		const mailFacade = await this.mailFacade()
 		const unencryptedPopulateClientSpamTrainingData: UnencryptedPopulateClientSpamTrainingDatum[] = await promiseMap(
 			mails,
 			async (mailWithDetail) => {
 				const { mail, mailDetails } = mailWithDetail
 				const allMailFolders = mailSets.filter((mailSet) => isFolder(mailSet)).map((mailFolder) => mailFolder._id)
-				const sourceMailFolderId = assertNotNull(mail.sets.find((setId) => allMailFolders.find((folderId) => isSameId(setId, folderId))))
-				const sourceMailFolder = assertNotNull(mailSets.find((set) => isSameId(set._id, sourceMailFolderId)))
-				const isSpam = getMailSetKind(sourceMailFolder) === MailSetKind.SPAM
+				const mailFolderId = assertNotNull(mail.sets.find((setId) => allMailFolders.find((folderId) => isSameId(setId, folderId))))
+				const mailFolder = assertNotNull(mailSets.find((set) => isSameId(set._id, mailFolderId)))
+				const isSpam = getMailSetKind(mailFolder) === MailSetKind.SPAM
+				const { uploadableVectorLegacy, uploadableVector } = await mailFacade.createModelInputAndUploadableVectors(mail, mailDetails, mailFolder)
 				const unencryptedPopulateClientSpamTrainingData: UnencryptedPopulateClientSpamTrainingDatum = {
 					mailId: mail._id,
 					isSpam,
+					vector: uploadableVectorLegacy,
+					vectorNewFormat: uploadableVector,
 					confidence: getSpamConfidence(mail),
-					vector: await (await this.mailFacade()).vectorizeAndCompressMails({ mail, mailDetails }),
 				}
 				return unencryptedPopulateClientSpamTrainingData
 			},

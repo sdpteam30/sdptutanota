@@ -5,8 +5,8 @@ import { concat, hexToUint8Array } from "@tutao/tutanota-utils"
 import { Deflater } from "./Deflater.js"
 import { ProgrammingError } from "../../common/error/ProgrammingError.js"
 
-// Binary header specifying the PDF version (2.0 = "322e30") and the fact that binary data is present in the file
-const PDF_HEADER = hexToUint8Array("255044462d322e300a25e2e3cfd30a")
+// Binary header specifying the PDF version (1.4 = "312e34") and the fact that binary data is present in the file
+const PDF_HEADER = hexToUint8Array("255044462d312e340a25e2e3cfd30a")
 // Special PDF object with number 0. Only appears in xref table
 const ZERO_OBJECT_ENTRY = "0000000000 65535 f"
 
@@ -107,9 +107,9 @@ export class PdfWriter {
 	 */
 	makeTrailer(identifier: string): string {
 		let trailer = `trailer${NEW_LINE}<<${NEW_LINE}`
-		trailer += `/Size ${this.pdfObjectList.length + 1}`
-		trailer += `/Root ${this.pdfReferenceToString({ refId: "CATALOG" })}`
-		trailer += `/ID [(${identifier})(${identifier})]`
+		trailer += `/Size ${this.pdfObjectList.length + 1}${NEW_LINE}`
+		trailer += `/Root ${this.pdfReferenceToString({ refId: "CATALOG" })}${NEW_LINE}`
+		trailer += `/ID [<${identifier}> <${identifier}>]${NEW_LINE}`
 		trailer += `${NEW_LINE}>>${NEW_LINE}startxref${NEW_LINE}${this.byteLengthPosition}${NEW_LINE}%%EOF`
 		return trailer
 	}
@@ -165,11 +165,11 @@ export class PdfWriter {
 	}
 
 	pdfDictionaryToString(objectReferenceDict: Map<string, PdfDictValue>): string {
-		let referenceString = "<<" + " "
+		let referenceString = `<<${NEW_LINE}`
 		for (const [key, value] of objectReferenceDict) {
-			referenceString += `/${key} ${this.resolveDictValue(value)} `
+			referenceString += `/${key} ${this.resolveDictValue(value)}${NEW_LINE}`
 		}
-		referenceString += ">>"
+		referenceString += `>>${NEW_LINE}`
 		return referenceString
 	}
 
@@ -191,15 +191,23 @@ export class PdfWriter {
 		const baseUrl = typeof location === "undefined" ? "" : location.protocol + "//" + location.hostname + (location.port ? ":" + location.port : "")
 		if (!this.cachedResources) {
 			this.cachedResources = await Promise.all(
-				["/pdf/SourceSans3-Regular.ttf", "/pdf/SourceSans3-Bold.ttf", "/pdf/sRGB2014.icc", "/pdf/identity_h.cmap", "/pdf/tutanota_logo_en.jpg"].map(
-					(url) =>
-						typeof this.customFetch !== "undefined"
-							? this.customFetch(baseUrl + url).then((r) => r.arrayBuffer())
-							: fetch(baseUrl + url).then((r) => r.arrayBuffer()),
+				[
+					"/pdf/SourceSans3-Regular.ttf",
+					"/pdf/SourceSans3-Bold.ttf",
+					"/pdf/NotoSansMono-Bold.ttf",
+					"/pdf/sRGB2014.icc",
+					"/pdf/identity_h.cmap",
+					"/pdf/tutanota_logo_en.jpg",
+					"/pdf/edit.jpg",
+					"/pdf/cloud.jpg",
+				].map((url) =>
+					typeof this.customFetch !== "undefined"
+						? this.customFetch(baseUrl + url).then((r) => r.arrayBuffer())
+						: fetch(baseUrl + url).then((r) => r.arrayBuffer()),
 				),
 			)
 		}
-		const [fontRegular, fontBold, colorProfile, cmap, tutaImage] = this.cachedResources
+		const [fontRegular, fontBold, fontMonoBold, colorProfile, cmap, tutaImage, editImage, cloudImage] = this.cachedResources
 
 		// Regular font file
 		this.createStreamObject(
@@ -214,6 +222,13 @@ export class PdfWriter {
 			await this.deflater.deflate(fontBold),
 			PdfStreamEncoding.FLATE,
 			"FONT_BOLD_FILE",
+		)
+		// Bold Mono font file
+		this.createStreamObject(
+			new Map([["Length1", fontMonoBold.byteLength.toString()]]),
+			await this.deflater.deflate(fontMonoBold),
+			PdfStreamEncoding.FLATE,
+			"FONT_MONO_BOLD_FILE",
 		)
 		// Identity CMap
 		this.createStreamObject(
@@ -251,6 +266,34 @@ export class PdfWriter {
 			PdfStreamEncoding.DCT,
 			"IMG_TUTA_LOGO",
 		)
+		this.createStreamObject(
+			new Map([
+				["Name", "/Im3"],
+				["Type", "/XObject"],
+				["Subtype", "/Image"],
+				["Width", "512"],
+				["Height", "512"],
+				["BitsPerComponent", "8"],
+				["ColorSpace", "/DeviceRGB"],
+			]),
+			new Uint8Array(editImage),
+			PdfStreamEncoding.DCT,
+			"IMG_EDIT_ICON",
+		)
+		this.createStreamObject(
+			new Map([
+				["Name", "/Im4"],
+				["Type", "/XObject"],
+				["Subtype", "/Image"],
+				["Width", "512"],
+				["Height", "512"],
+				["BitsPerComponent", "8"],
+				["ColorSpace", "/DeviceRGB"],
+			]),
+			new Uint8Array(cloudImage),
+			PdfStreamEncoding.DCT,
+			"IMG_CLOUD_ICON",
+		)
 		// Metadata
 		const todayDate = new Date()
 		const metaData = PDF_METADATA.replace("{slotCreateDate}", todayDate.toISOString()).replace("{slotModifyDate}", todayDate.toISOString())
@@ -284,7 +327,8 @@ export class PdfWriter {
 			encodedObjects.push(encodedObject)
 		}
 		encodedObjects.push(this.textEncoder.encode(this.makeXRefTable())) // Make xref table which requires all object's calculated byte-positions
-		encodedObjects.push(this.textEncoder.encode(this.makeTrailer(Date.now().toString()))) // Make trailer
+		const identifier = "FACEBEEF" + Date.now().toString() + Date.now().toString()
+		encodedObjects.push(this.textEncoder.encode(this.makeTrailer(identifier))) // Make trailer
 
 		return concat(...encodedObjects)
 	}

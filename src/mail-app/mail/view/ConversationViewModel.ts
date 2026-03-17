@@ -15,15 +15,16 @@ import {
 } from "@tutao/tutanota-utils"
 import { EntityClient } from "../../../common/api/common/EntityClient.js"
 import { LoadingStateTracker } from "../../../common/offline/LoadingState.js"
-import { EntityEventsListener, EventController } from "../../../common/api/main/EventController.js"
+import { EventController } from "../../../common/api/main/EventController.js"
 import { ConversationType, MailSetKind, MailState, OperationType } from "../../../common/api/common/TutanotaConstants.js"
 import { NotAuthorizedError, NotFoundError } from "../../../common/api/common/error/RestError.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js"
+import { EntityEventsListener, isUpdateForTypeRef, OnEntityUpdateReceivedPriority } from "../../../common/api/common/utils/EntityUpdateUtils.js"
 import { ListAutoSelectBehavior, MailListDisplayMode } from "../../../common/misc/DeviceConfig.js"
 
 import { MailModel } from "../model/MailModel.js"
 
-import { isOfTypeOrSubfolderOf } from "../model/MailChecks.js"
+import { isDraft, isOfTypeOrSubfolderOf } from "../model/MailChecks.js"
+import { compareMails } from "../model/MailUtils"
 import { getEnabledMailAddressesWithUser } from "../../../common/mailFunctionality/SharedMailUtils.js"
 
 export type MailViewerViewModelFactory = (options: CreateMailViewerOptions) => MailViewerViewModel
@@ -71,35 +72,37 @@ export class ConversationViewModel {
 		}
 	})
 
-	private readonly onEntityEvent: EntityEventsListener = async (updates, eventOwnerGroupId) => {
-		// conversation entry can be created when new email arrives
-		// conversation entry can be updated when email is moved around or deleted
-		// conversation entry is deleted only when every email in the conversation is deleted (the whole conversation list will be deleted)
-		for (const update of updates) {
-			if (isUpdateForTypeRef(ConversationEntryTypeRef, update) && update.instanceListId === this.conversationListId()) {
-				if (!this.showFullConversation()) {
-					// no need to handle CREATE because we only show a single item and we don't want to add new ones
-					// no need to handle UPDATE because the only update that can happen is when email gets deleted and then we should be closed from the
-					// outside anyway
-					continue
-				}
-				switch (update.operation) {
-					case OperationType.CREATE:
-						await this.processCreateConversationEntry(update)
-						break
-					case OperationType.UPDATE:
-						await this.processUpdateConversationEntry(update)
-						break
-					// don't process DELETE because the primary email (selected from the mail list) will be deleted first anyway
-					// and we should be closed when it happens
+	private readonly onEntityEvent: EntityEventsListener = {
+		onEntityUpdatesReceived: async (updates, eventOwnerGroupId) => {
+			// conversation entry can be created when new email arrives
+			// conversation entry can be updated when email is moved around or deleted
+			// conversation entry is deleted only when every email in the conversation is deleted (the whole conversation list will be deleted)
+			for (const update of updates) {
+				if (isUpdateForTypeRef(ConversationEntryTypeRef, update) && update.instanceListId === this.conversationListId()) {
+					if (!this.showFullConversation()) {
+						// no need to handle CREATE because we only show a single item and we don't want to add new ones
+						// no need to handle UPDATE because the only update that can happen is when email gets deleted and then we should be closed from the
+						// outside anyway
+						continue
+					}
+					const conversationEntryId: IdTuple = [update.instanceListId, update.instanceId]
+					switch (update.operation) {
+						case OperationType.CREATE:
+							await this.processCreateConversationEntry(conversationEntryId)
+							break
+						case OperationType.UPDATE:
+							await this.processUpdateConversationEntry(conversationEntryId)
+							break
+						// don't process DELETE because the primary email (selected from the mail list) will be deleted first anyway
+						// and we should be closed when it happens
+					}
 				}
 			}
-		}
+		},
+		priority: OnEntityUpdateReceivedPriority.NORMAL,
 	}
 
-	private async processCreateConversationEntry(update: EntityUpdateData) {
-		if (update.instanceListId == null) return
-		const id: IdTuple = [update.instanceListId, update.instanceId]
+	private async processCreateConversationEntry(id: IdTuple) {
 		try {
 			const entry = await this.entityClient.load(ConversationEntryTypeRef, id)
 			if (entry.mail) {
@@ -150,8 +153,7 @@ export class ConversationViewModel {
 		}
 	}
 
-	private async processUpdateConversationEntry(update: EntityUpdateData) {
-		if (update.instanceListId == null) return
+	private async processUpdateConversationEntry(conversationEntryId: IdTuple) {
 		try {
 			// first wait that we load the conversation, otherwise we might already have the email
 			await this.loadingPromise
@@ -159,7 +161,7 @@ export class ConversationViewModel {
 			return
 		}
 		const conversation = assertNotNull(this.conversation)
-		const ceId: IdTuple = [update.instanceListId, update.instanceId]
+		const ceId: IdTuple = conversationEntryId
 		let conversationEntry: ConversationEntry
 		let mail: Mail | null
 		try {
@@ -201,7 +203,7 @@ export class ConversationViewModel {
 				// We also do not show emails sent by the user (from their aliases)
 				// But always show the primary mail
 				const isPrimaryMail = isSameId(mail._id, this.options.mail._id)
-				const isDraftInTrash = mail.state === MailState.DRAFT && (await this.isInTrash(mail))
+				const isDraftInTrash = isDraft(mail) && (await this.isInTrash(mail))
 
 				if (isDraftInTrash) {
 					conversation.splice(oldItemIndex, 1)
@@ -298,6 +300,9 @@ export class ConversationViewModel {
 				}
 			}
 		}
+		// conversation is sorted by mail's receivedDate, because we do not recreate the conversationEntry once a draft is sent.
+		// without sorting, the ordering would be based on when the draft was created, not when it was sent.
+		newConversation.sort((a, b) => compareMails(b.viewModel.mail, a.viewModel.mail))
 		return newConversation
 	}
 
@@ -320,7 +325,7 @@ export class ConversationViewModel {
 				// - Drafts in trash
 				// - Emails sent by the user (from their aliases)
 				const isPrimaryMail = isSameId(mail._id, this.primaryMail._id)
-				const isDraftInTrash = mail.state === MailState.DRAFT && (await this.isInTrash(mail))
+				const isDraftInTrash = isDraft(mail) && (await this.isInTrash(mail))
 				const isSentByUser = this.isMailSentByUser(mail, userMailAddresses)
 
 				if (isPrimaryMail || (!isDraftInTrash && !isSentByUser)) {

@@ -1,8 +1,6 @@
 import { AssociationType, Cardinality, Type, ValueType } from "./EntityConstants.js"
-import { TypeRef } from "@tutao/tutanota-utils"
+import { AppName, Nullable, TypeRef } from "@tutao/tutanota-utils"
 import type { BlobElement, Element, ListElement } from "./utils/EntityUtils.js"
-import { Nullable } from "@tutao/tutanota-utils"
-import { AppName } from "@tutao/tutanota-utils"
 import { BucketKey } from "../entities/sys/TypeRefs"
 
 /**
@@ -111,7 +109,11 @@ export type TypeModel = {
 	 * the model version this type is defined in.
 	 */
 	version: number
-	/** human-readable name */
+	/**
+	 * the version of another typeModel this type (and its corresponding application) depends on, if applicable.
+	 */
+	dependsOnVersion?: number
+	/** human-readable name. */
 	name: string
 	/** the type of entity. this defines how (and if) the type is persisted. */
 	type: Values<typeof Type>
@@ -193,8 +195,6 @@ export type ParsedAssociation = EncryptedParsedAssociation
 export type ParsedInstance = Record<AttributeId, Nullable<ParsedValue> | ParsedAssociation> & {
 	/** crypto errors that happened during deserialization/serialization */
 	_errors?: Record<AttributeId, string>
-	/** the ivs used to encrypt final fields on the instance */
-	_finalIvs: Record<AttributeId, Nullable<Uint8Array>>
 }
 
 /** simple separator to distinguish between client model types and server model types */
@@ -229,8 +229,8 @@ export type ServerModelUntypedInstance = Distinct<UntypedInstance, ServerModelTy
 export interface Entity {
 	/** the address of the TypeModel this entity conforms to. */
 	_type: TypeRef<this>
+	_id?: Id | IdTuple
 	_original?: this
-	_finalIvs?: Record<number, Nullable<Uint8Array>>
 	bucketKey?: null | BucketKey
 	_ownerGroup?: null | Id
 	_ownerEncSessionKey?: null | Uint8Array
@@ -244,16 +244,16 @@ export interface Entity {
 /**
  * Entity types with instances that stand on their own, not being part of a list
  */
-export interface ElementEntity extends Entity, Element {}
+export type ElementEntity = Entity & Element
 
 /**
  * Entity types with instances that are part of a list
  */
-export interface ListElementEntity extends Entity, ListElement {}
+export type ListElementEntity = Entity & ListElement
 
 /**
  * Entity types that are stored in an immutable blob storage
  */
-export interface BlobElementEntity extends Entity, BlobElement {}
+export type BlobElementEntity = Entity & BlobElement
 
 export type SomeEntity = ElementEntity | ListElementEntity | BlobElementEntity

@@ -1,15 +1,6 @@
 import { EventBusListener } from "./EventBusClient.js"
-import { WsConnectionState } from "../main/WorkerClient.js"
-import {
-	GroupKeyUpdateTypeRef,
-	UserGroupKeyDistributionTypeRef,
-	UserGroupRootTypeRef,
-	UserTypeRef,
-	WebsocketCounterData,
-	WebsocketLeaderStatus,
-} from "../entities/sys/TypeRefs.js"
+import { GroupKeyUpdateTypeRef, UserGroupKeyDistributionTypeRef, UserGroupRootTypeRef, UserTypeRef, WebsocketCounterData } from "../entities/sys/TypeRefs.js"
 import { ReportedMailFieldMarker } from "../entities/tutanota/TypeRefs.js"
-import { WebsocketConnectivityListener } from "../../misc/WebsocketConnectivityModel.js"
 import { isAdminClient, isTest } from "../common/Env.js"
 import { MailFacade } from "./facades/lazy/MailFacade.js"
 import { UserFacade } from "./facades/UserFacade.js"
@@ -26,11 +17,11 @@ import { RolloutFacade } from "./facades/RolloutFacade"
 import { GroupManagementFacade } from "./facades/lazy/GroupManagementFacade"
 import { SyncTracker } from "../main/SyncTracker"
 import { IdentityKeyCreator } from "./facades/lazy/IdentityKeyCreator"
+import { ProgressMonitorId } from "../common/utils/ProgressMonitor"
 
 /** A bit of glue to distribute event bus events across the app. */
 export class EventBusEventCoordinator implements EventBusListener {
 	constructor(
-		private readonly connectivityListener: WebsocketConnectivityListener,
 		private readonly mailFacade: lazyAsync<MailFacade>,
 		private readonly userFacade: UserFacade,
 		private readonly entityClient: EntityClient,
@@ -46,14 +37,15 @@ export class EventBusEventCoordinator implements EventBusListener {
 		private readonly syncTracker: SyncTracker,
 	) {}
 
-	onWebsocketStateChanged(state: WsConnectionState) {
-		this.connectivityListener.updateWebSocketState(state)
-	}
-
-	async onEntityEventsReceived(events: readonly EntityUpdateData[], batchId: Id, groupId: Id): Promise<void> {
+	async onEntityEventsReceived(
+		events: readonly EntityUpdateData[],
+		batchId: Id,
+		groupId: Id,
+		eventQueueProgressMonitorId?: ProgressMonitorId,
+	): Promise<void> {
 		await this.entityEventsReceived(events)
 		await (await this.mailFacade()).entityEventsReceived(events)
-		await this.eventController.onEntityUpdateReceived(events, groupId)
+		await this.eventController.onEntityUpdateReceived(events, groupId, eventQueueProgressMonitorId)
 		// Call the indexer in this last step because now the processed event is stored and the indexer has a separate event queue that
 		// shall not receive the event twice.
 		if (!isTest() && !isAdminClient()) {
@@ -74,10 +66,6 @@ export class EventBusEventCoordinator implements EventBusListener {
 		this.sendError(tutanotaError)
 	}
 
-	onLeaderStatusChanged(leaderStatus: WebsocketLeaderStatus) {
-		this.connectivityListener.onLeaderStatusChanged(leaderStatus)
-	}
-
 	onCounterChanged(counter: WebsocketCounterData) {
 		this.eventController.onCountersUpdateReceived(counter)
 	}
@@ -85,7 +73,7 @@ export class EventBusEventCoordinator implements EventBusListener {
 	async onSyncDone(): Promise<void> {
 		this.syncTracker.markSyncAsDone()
 
-		if (this.userFacade.isLeader()) {
+		if (this.userFacade.isLeader() && !isAdminClient()) {
 			const userIdentityKeyCreationAction = {
 				execute: async () => {
 					const identityKeyCreator = await this.identityKeyCreator()

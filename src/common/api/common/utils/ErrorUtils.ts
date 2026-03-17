@@ -58,6 +58,8 @@ import { ExportError } from "../error/ExportError"
 import { KeyVerificationMismatchError } from "../error/KeyVerificationMismatchError"
 import { ServerModelsUnavailableError } from "../error/ServerModelsUnavailableError"
 import { AppLockAuthenticationError } from "../error/AppLockAuthenticationError"
+import { InvalidModelError } from "../error/InvalidModelError"
+import { MoveCycleError } from "../error/MoveCycleError"
 
 function isErrorObjectEmpty(obj: Record<string, unknown>): boolean {
 	return Object.keys(obj).length === 0
@@ -128,6 +130,7 @@ const ErrorNameToType = {
 	RecipientNotResolvedError,
 	OfflineDbClosedError,
 	ServerModelsUnavailableError,
+	InvalidModelError,
 	OutOfSyncError,
 	ServiceUnavailableError,
 	DbError,
@@ -147,6 +150,7 @@ const ErrorNameToType = {
 	KeyPermanentlyInvalidatedError,
 	MailImportError,
 	KeyVerificationMismatchError,
+	MoveCycleError,
 	Error,
 	"java.net.SocketTimeoutException": ConnectionError,
 	"java.net.SocketException": ConnectionError,

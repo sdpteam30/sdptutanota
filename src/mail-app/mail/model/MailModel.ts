@@ -12,7 +12,6 @@ import {
 	lazyMemoized,
 	Nullable,
 	ofClass,
-	partition,
 	promiseMap,
 	splitInChunks,
 } from "@tutao/tutanota-utils"
@@ -21,8 +20,8 @@ import {
 	MailboxGroupRoot,
 	MailboxProperties,
 	MailSet,
-	MailSetTypeRef,
 	MailSetEntryTypeRef,
+	MailSetTypeRef,
 	MailTypeRef,
 	MovedMails,
 } from "../../../common/api/entities/tutanota/TypeRefs.js"
@@ -38,7 +37,7 @@ import {
 	SystemFolderType,
 } from "../../../common/api/common/TutanotaConstants.js"
 import { CUSTOM_MIN_ID, elementIdPart, getElementId, listIdPart } from "../../../common/api/common/utils/EntityUtils.js"
-import { EntityUpdateData, isUpdateForTypeRef } from "../../../common/api/common/utils/EntityUpdateUtils.js"
+import { EntityUpdateData, isUpdateForTypeRef, OnEntityUpdateReceivedPriority } from "../../../common/api/common/utils/EntityUpdateUtils.js"
 import m from "mithril"
 import { WebsocketCounterData } from "../../../common/api/entities/sys/TypeRefs.js"
 import { Notifications, NotificationType } from "../../../common/gui/Notifications.js"
@@ -56,11 +55,14 @@ import { TutanotaError } from "@tutao/tutanota-error"
 import { isExpectedErrorForSynchronization } from "../../../common/api/common/utils/ErrorUtils"
 import { ProcessInboxHandler } from "./ProcessInboxHandler"
 import { isWebClient } from "../../../common/api/common/Env"
+import { ProgressMonitorId } from "../../../common/api/common/utils/ProgressMonitor"
+import { ProgressTracker } from "../../../common/api/main/ProgressTracker"
 
 interface MailboxSets {
 	folders: FolderSystem
 	/** a map from element id to the mail set */
 	labels: ReadonlyMap<Id, MailSet>
+	scheduledFolder: MailSet | null
 }
 
 export const enum LabelState {
@@ -93,11 +95,15 @@ export class MailModel {
 		private readonly mailFacade: MailFacade,
 		private readonly connectivityModel: WebsocketConnectivityModel | null,
 		private readonly processInboxHandler: () => ProcessInboxHandler,
+		private readonly progessTracker: ProgressTracker,
 	) {}
 
 	// only init listeners once
 	private readonly initListeners = lazyMemoized(() => {
-		this.eventController.addEntityListener((updates) => this.entityEventsReceived(updates))
+		this.eventController.addEntityListener({
+			onEntityUpdatesReceived: (updates, _, eventQueueProgressMonitorId) => this.entityEventsReceived(updates, eventQueueProgressMonitorId),
+			priority: OnEntityUpdateReceivedPriority.LOW,
+		})
 
 		this.eventController.getCountersStream().map((update) => {
 			this._mailboxCountersUpdates(update)
@@ -147,10 +153,12 @@ export class MailModel {
 						throw e
 					}
 				}
-				const [labels, folders] = partition(mailSets, isLabel)
+				const labels = mailSets.filter(isLabel)
 				const labelsMap = collectToMap(labels, getElementId)
-				const folderSystem = new FolderSystem(folders)
-				tempFolders.set(foldersRef._id, { folders: folderSystem, labels: labelsMap })
+
+				const scheduledFolder = mailSets.find((set) => set.folderType === MailSetKind.SCHEDULED) ?? null
+				const folderSystem = new FolderSystem(mailSets)
+				tempFolders.set(foldersRef._id, { folders: folderSystem, labels: labelsMap, scheduledFolder })
 			}
 		}
 
@@ -184,7 +192,7 @@ export class MailModel {
 	}
 
 	// visibleForTesting
-	async entityEventsReceived(updates: ReadonlyArray<EntityUpdateData>): Promise<void> {
+	async entityEventsReceived(updates: ReadonlyArray<EntityUpdateData>, eventQueueProgressMonitorId: Nullable<ProgressMonitorId> = null): Promise<void> {
 		for (const update of updates) {
 			if (isUpdateForTypeRef(MailSetTypeRef, update)) {
 				await this.init()
@@ -196,6 +204,7 @@ export class MailModel {
 					return
 				}
 
+				// check early to prevent loading the mailbox details
 				if (!mail.processNeeded) {
 					return
 				}
@@ -216,6 +225,16 @@ export class MailModel {
 				}
 				if (isWebClient()) {
 					this._showNotification(targetFolder, mail)
+				}
+			} else if (isUpdateForTypeRef(MailTypeRef, update) && update.operation === OperationType.UPDATE) {
+				if (eventQueueProgressMonitorId) {
+					const mailId: IdTuple = [update.instanceListId, update.instanceId]
+					const mail = await this.loadMail(mailId)
+
+					// complete work when the mail is processed or deleted
+					if (mail == null || !mail.processNeeded) {
+						this.progessTracker.workDoneForMonitor(eventQueueProgressMonitorId, 1)
+					}
 				}
 			}
 		}
@@ -536,7 +555,7 @@ export class MailModel {
 	}
 
 	public async finallyDeleteCustomMailFolder(folder: MailSet): Promise<void> {
-		if (folder.folderType !== MailSetKind.CUSTOM && folder.folderType !== MailSetKind.Imported) {
+		if (folder.folderType !== MailSetKind.CUSTOM && folder.folderType !== MailSetKind.IMPORTED) {
 			throw new ProgrammingError("Cannot delete non-custom folder: " + String(folder._id))
 		}
 
@@ -617,5 +636,9 @@ export class MailModel {
 		return (
 			await promiseMap(mailIdsPerList, ([listId, elementIds]) => this.entityClient.loadMultiple(MailTypeRef, listId, elementIds), { concurrency: 2 })
 		).flat()
+	}
+
+	async unscheduleMail(mail: Mail): Promise<void> {
+		return await this.mailFacade.unscheduleMail(mail._id)
 	}
 }

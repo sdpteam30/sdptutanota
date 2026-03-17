@@ -436,6 +436,7 @@ export type CustomerInfo = {
 	perUserStorageCapacity: NumberString;
 	perUserAliasCount: NumberString;
 	plan: NumberString;
+	promotionId: null | string;
 
 	customer: Id;
 	accountingInfo: Id;
@@ -447,6 +448,8 @@ export type CustomerInfo = {
 	referredBy: null | Id;
 	customPlan: null | PlanConfiguration;
 	supportInfo: null | Id;
+	managedByPartner: null | Id;
+	partnerManagedCustomers: null | Id;
 }
 export const SentGroupInvitationTypeRef: TypeRef<SentGroupInvitation> = new TypeRef("sys", 195)
 
@@ -797,11 +800,10 @@ export type EntityUpdate = {
 
 	_id: Id;
 	application: string;
-	type: string;
 	instanceListId: string;
 	instanceId: string;
 	operation: NumberString;
-	typeId: null | NumberString;
+	typeId: NumberString;
 	instance: null | string;
 
 	patch: null | PatchList;
@@ -3268,6 +3270,7 @@ export type PlanConfiguration = {
 	autoResponder: boolean;
 	contactList: boolean;
 	maxLabels: NumberString;
+	scheduledMails: boolean;
 }
 export const PlanServiceGetOutTypeRef: TypeRef<PlanServiceGetOut> = new TypeRef("sys", 2115)
 
@@ -4138,4 +4141,24 @@ export type AbuseInfo = {
 	_id: Id;
 	criterion: string;
 	value: string;
+}
+export const PartnerManagedCustomerTypeRef: TypeRef<PartnerManagedCustomer> = new TypeRef("sys", 2672)
+
+export function createPartnerManagedCustomer(values: StrippedEntity<PartnerManagedCustomer>): PartnerManagedCustomer {
+    return Object.assign(create(typeModels[PartnerManagedCustomerTypeRef.typeId], PartnerManagedCustomerTypeRef), values)
+}
+
+export type PartnerManagedCustomer = {
+	_type: TypeRef<PartnerManagedCustomer>;
+	_errors: Object;
+	_original?: PartnerManagedCustomer
+
+	_id: IdTuple;
+	_permissions: Id;
+	_format: NumberString;
+	_ownerGroup: null | Id;
+	_ownerEncSessionKey: null | Uint8Array;
+	_ownerKeyVersion: null | NumberString;
+
+	customerInfo: IdTuple;
 }

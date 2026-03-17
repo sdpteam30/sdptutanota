@@ -39,8 +39,12 @@ import { ContactModel } from "../common/contactsFunctionality/ContactModel.js"
 import { CacheMode } from "../common/api/worker/rest/EntityRestClient"
 import { SessionType } from "../common/api/common/SessionType.js"
 import { UndoModel } from "./UndoModel"
-import { CommonLocator } from "../common/api/main/CommonLocator"
 import { FeatureType } from "../common/api/common/TutanotaConstants"
+import { CommonLocator } from "../common/api/main/CommonLocator"
+import type { SignupView, SignupViewAttrs, SignupViewModel } from "../common/signup/SignupView"
+import type { DriveView, DriveViewAttrs } from "../drive-app/drive/view/DriveView"
+import type { DriveViewModel } from "../drive-app/drive/view/DriveViewModel"
+import { PartnerView, PartnerViewAttrs } from "../common/partner/PartnerView"
 
 assertMainOrNodeBoot()
 bootFinished()
@@ -126,6 +130,8 @@ import("./translations/en.js")
 
 		const { BottomNav } = await import("./gui/BottomNav.js")
 
+		// this needs to stay after client.init
+		windowFacade.init(mailLocator.logins, mailLocator.connectivityModel)
 		if (isDesktop()) {
 			import("../common/native/main/UpdatePrompt.js").then(({ registerForUpdates }) => registerForUpdates(mailLocator.desktopSettingsFacade))
 		}
@@ -228,6 +234,10 @@ import("./translations/en.js")
 								return quickContactsActions(mailLocator.contactModel, mailLocator.throttledRouter(), mailLocator.entityClient)
 							})
 							model.register(async () => {
+								const { quickDriveActions } = await import("../drive-app/drive/model/DriveQuickActions.js")
+								return quickDriveActions(mailLocator.throttledRouter(), await mailLocator.driveViewModel())
+							})
+							model.register(async () => {
 								const { quickSettingsActions } = await import("../common/settings/SettingsQuickActions.js")
 								return quickSettingsActions(mailLocator.throttledRouter(), mailLocator.logins)
 							})
@@ -254,7 +264,7 @@ import("./translations/en.js")
 			mailLocator.logins.addPostLoginAction(async () => {
 				const { MailIndexerPostLoginAction } = await import("./search/model/MailIndexerPostLoginAction")
 				const offlineStorageSettings = await mailLocator.offlineStorageSettingsModel()
-				return new MailIndexerPostLoginAction(assertNotNull(offlineStorageSettings), mailLocator.indexerFacade)
+				return new MailIndexerPostLoginAction(assertNotNull(offlineStorageSettings), mailLocator.indexerFacade, mailLocator.syncTracker)
 			})
 		}
 
@@ -324,6 +334,85 @@ import("./translations/en.js")
 			},
 			mailLocator.logins,
 		)
+
+		/**
+		 * once the old signup dialog is removed, this proxy can be replaced by the resolver in the "new signup"
+		 * branch of its onmatch method.
+		 */
+		const makeSignupViewResolver = (): RouteResolver => {
+			let actualResolver: RouteResolver | null = null
+			return {
+				async onmatch(...args) {
+					if (actualResolver == null) {
+						const activeTests = await mailLocator.usageTestModel.loadActiveUsageTests()
+						mailLocator.usageTestController.setTests(activeTests)
+						const { SignupFlowUsageTestController } = await import("../common/subscription/usagetest/UpgradeSubscriptionWizardUsageTestUtils.js")
+						const variant = SignupFlowUsageTestController.getUsageTestVariant()
+						if (variant === 1) {
+							// old signup
+							console.log("signup old variant", variant)
+							actualResolver = {
+								async onmatch() {
+									const { showSignupDialog } = await import("../common/misc/LoginUtils.js")
+
+									// We have to manually parse it because mithril does not put hash into args of onmatch
+									const urlParams = m.parseQueryString(location.search.substring(1) + "&" + location.hash.substring(1))
+									showSignupDialog(urlParams)
+
+									// Change the href of the canonical link element to make the /signup path indexed.
+									// Since this is just for search crawlers, we do not have to change it again later.
+									// We know at least Google crawler executes js to render the application.
+									const canonicalEl: HTMLLinkElement | null = document.querySelector("link[rel=canonical]")
+									if (canonicalEl) {
+										canonicalEl.href = "https://app.tuta.com/signup"
+									}
+
+									// when the user presses the browser back button, we would get a /login route without arguments
+									// in the popstate event, logging us out and reloading the page before we have a chance to (asynchronously) ask for confirmation
+									// onmatch of the login view is called after the popstate handler, but before any asynchronous operations went ahead.
+									// duplicating the history entry allows us to keep the arguments for a single back button press and run our own code to handle it
+									m.route.set("/login", {
+										keepSession: true,
+									})
+									m.route.set("/login", {
+										keepSession: true,
+									})
+									return null
+								},
+							}
+						} else {
+							// new signup
+							const { SignupView, SignupViewModel } = await import("../common/signup/SignupView")
+							console.log("signup new variant", variant)
+							actualResolver = makeViewResolver<SignupViewAttrs, SignupView, { viewModel: SignupViewModel }>(
+								{
+									prepareRoute: async () => {
+										const migrator = await mailLocator.credentialFormatMigrator()
+										await migrator.migrate()
+										return {
+											component: SignupView,
+											cache: {
+												viewModel: new SignupViewModel(),
+											},
+										}
+									},
+									prepareAttrs: (cache) => cache,
+									requireLogin: false,
+								},
+								mailLocator.logins,
+							)
+						}
+					}
+					return actualResolver.onmatch?.(...args)
+				},
+				render(...args) {
+					if (actualResolver == null) {
+						throw new ProgrammingError("render called before onmatch?")
+					}
+					return actualResolver.render?.(...args)
+				},
+			}
+		}
 
 		const paths = applicationPaths({
 			login: makeViewResolver<LoginViewAttrs, LoginView, { makeViewModel: () => LoginViewModel }>(
@@ -546,41 +635,82 @@ import("./translations/en.js")
 				},
 				mailLocator.logins,
 			),
+			drive: makeViewResolver<
+				DriveViewAttrs,
+				DriveView,
+				{
+					drawerAttrsFactory: () => DrawerMenuAttrs
+					header: AppHeaderAttrs
+					driveViewModel: DriveViewModel
+					bottomNav: () => Children
+					lazySearchBar: () => Children
+				}
+			>(
+				{
+					prepareRoute: async (cache) => {
+						const { DriveView } = await import("../drive-app/drive/view/DriveView.js")
+						const { lazySearchBar } = await import("./LazySearchBar.js")
+						const drawerAttrsFactory = await mailLocator.drawerAttrsFactory()
+						return {
+							component: DriveView,
+							cache: cache ?? {
+								drawerAttrsFactory,
+								header: await mailLocator.appHeaderAttrs(),
+								driveViewModel: await mailLocator.driveViewModel(),
+								bottomNav: () => m(BottomNav),
+								lazySearchBar: () =>
+									m(lazySearchBar, {
+										placeholder: lang.get("searchCalendar_placeholder"),
+									}),
+							},
+						}
+					},
+					prepareAttrs: ({ header, driveViewModel, drawerAttrsFactory, bottomNav, lazySearchBar }) => ({
+						drawerAttrs: drawerAttrsFactory(),
+						header,
+						driveViewModel,
+						bottomNav,
+						lazySearchBar,
+						showMoveItemDialog: (item) => mailLocator.showMoveItemDialog(item),
+					}),
+				},
+				mailLocator.logins,
+			),
+			partner: makeViewResolver<
+				PartnerViewAttrs,
+				PartnerView,
+				{
+					drawerAttrsFactory: () => DrawerMenuAttrs
+					header: AppHeaderAttrs
+				}
+			>(
+				{
+					prepareRoute: async () => {
+						const { PartnerView } = await import("../common/partner/PartnerView.js")
+						const drawerAttrsFactory = await mailLocator.drawerAttrsFactory()
+						return {
+							component: PartnerView,
+							cache: {
+								drawerAttrsFactory,
+								header: await mailLocator.appHeaderAttrs(),
+							},
+						}
+					},
+					prepareAttrs: (cache) => ({
+						drawerAttrs: cache.drawerAttrsFactory(),
+						header: cache.header,
+						logins: mailLocator.logins,
+					}),
+				},
+				mailLocator.logins,
+			),
 
 			/**
 			 * The following resolvers are programmed by hand instead of using createViewResolver() in order to be able to properly redirect
 			 * to the login page without having to deal with a ton of conditional logic in the LoginViewModel and to avoid some of the default
 			 * behaviour of resolvers created with createViewResolver(), e.g. caching.
 			 */
-			signup: {
-				async onmatch() {
-					const { showSignupDialog } = await import("../common/misc/LoginUtils.js")
-
-					// We have to manually parse it because mithril does not put hash into args of onmatch
-					const urlParams = m.parseQueryString(location.search.substring(1) + "&" + location.hash.substring(1))
-					showSignupDialog(urlParams)
-
-					// Change the href of the canonical link element to make the /signup path indexed.
-					// Since this is just for search crawlers, we do not have to change it again later.
-					// We know at least Google crawler executes js to render the application.
-					const canonicalEl: HTMLLinkElement | null = document.querySelector("link[rel=canonical]")
-					if (canonicalEl) {
-						canonicalEl.href = "https://app.tuta.com/signup"
-					}
-
-					// when the user presses the browser back button, we would get a /login route without arguments
-					// in the popstate event, logging us out and reloading the page before we have a chance to (asynchronously) ask for confirmation
-					// onmatch of the login view is called after the popstate handler, but before any asynchronous operations went ahead.
-					// duplicating the history entry allows us to keep the arguments for a single back button press and run our own code to handle it
-					m.route.set("/login", {
-						keepSession: true,
-					})
-					m.route.set("/login", {
-						keepSession: true,
-					})
-					return null
-				},
-			},
+			signup: makeSignupViewResolver(),
 			giftcard: {
 				async onmatch() {
 					const { showGiftCardDialog } = await import("../common/misc/LoginUtils.js")

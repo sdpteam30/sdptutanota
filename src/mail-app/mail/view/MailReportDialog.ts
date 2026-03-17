@@ -10,18 +10,21 @@ import { MailModel } from "../model/MailModel.js"
 import { MailViewModel } from "./MailViewModel.js"
 
 import { newPromise } from "@tutao/tutanota-utils"
-import { isTutanotaTeamMail } from "./MailGuiUtils"
+import { isTutaTeamMail } from "../../../common/mailFunctionality/SharedMailUtils"
 
 function confirmMailReportDialog(mailModel: MailModel, mailboxDetails: MailboxDetail): Promise<boolean> {
 	return newPromise((resolve) => {
 		let shallRememberDecision = false
 		const child = () =>
-			m(Checkbox, {
-				label: () => lang.get("rememberDecision_msg"),
-				checked: shallRememberDecision,
-				onChecked: (v) => (shallRememberDecision = v),
-				helpLabel: "changeMailSettings_msg",
-			})
+			m(
+				".pt-16",
+				m(Checkbox, {
+					label: () => lang.get("rememberDecision_msg"),
+					checked: shallRememberDecision,
+					onChecked: (v) => (shallRememberDecision = v),
+					helpLabel: "changeMailSettings_msg",
+				}),
+			)
 
 		async function updateSpamReportSetting(areMailsReported: boolean) {
 			if (shallRememberDecision) {
@@ -70,7 +73,7 @@ export async function reportMailsAutomatically(
 ): Promise<void> {
 	const shouldReportMails = await getReportConfirmation(mailReportType, mailboxModel, mailModel)
 	if (shouldReportMails) {
-		const reportableMails = (await mails()).filter((mail) => !isTutanotaTeamMail(mail))
+		const reportableMails = (await mails()).filter((mail) => !isTutaTeamMail(mail))
 		await mailModel.reportMails(mailReportType, reportableMails)
 	}
 }

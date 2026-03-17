@@ -14,7 +14,7 @@ let upgradeDialogShowing = false
 /**
  * Opens a dialog which states that the function is not available in the Free subscription and provides an option to upgrade.
  */
-export async function showNotAvailableForFreeDialog(acceptedPlans: readonly AvailablePlanType[] = NewPaidPlans) {
+export async function showNotAvailableForFreeDialog(acceptedPlans: readonly AvailablePlanType[] = NewPaidPlans): Promise<void> {
 	// upgradeDialogShowing prevents the dialog from being opened multiple times, as could happen when waiting for the wizard to import
 	if (!upgradeDialogShowing) {
 		upgradeDialogShowing = true
@@ -99,8 +99,7 @@ export async function showPlanUpgradeRequiredDialog(acceptedPlans: readonly Avai
 	}
 	const userController = locator.logins.getUserController()
 	if (userController.isFreeAccount()) {
-		showNotAvailableForFreeDialog(acceptedPlans)
-		return false
+		await showNotAvailableForFreeDialog(acceptedPlans)
 	} else if (!userController.isGlobalAdmin()) {
 		Dialog.message("contactAdmin_msg")
 		return false
@@ -114,8 +113,8 @@ export async function showPlanUpgradeRequiredDialog(acceptedPlans: readonly Avai
 			reason = businessPlanRequired ? "pricing.notSupportedByPersonalPlan_msg" : "newPaidPlanRequired_msg"
 		}
 		await showSwitchPlanDialog(userController, acceptedPlans, reason)
-		return acceptedPlans.includes(downcast<AvailablePlanType>(await userController.getPlanType()))
 	}
+	return acceptedPlans.includes(downcast<AvailablePlanType>(await userController.getPlanType()))
 }
 
 export async function showUpgradeWizardOrSwitchSubscriptionDialog(
@@ -135,7 +134,7 @@ async function showSwitchPlanDialog(userController: UserController, acceptedPlan
 	const bookings = await locator.entityClient.loadRange(BookingTypeRef, neverNull(customerInfo.bookings).items, GENERATED_MAX_ID, 1, true)
 	const { showSwitchDialog } = await import("../subscription/SwitchSubscriptionDialog")
 	return showSwitchDialog({
-		customer: await userController.loadCustomer(),
+		customer: await userController.reloadCustomer(),
 		accountingInfo: await userController.loadAccountingInfo(),
 		lastBooking: assertNotNull(bookings[0]),
 		acceptedPlans,

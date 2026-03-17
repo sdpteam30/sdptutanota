@@ -1,8 +1,8 @@
 import m, { Children, Component, Vnode } from "mithril"
-import { layout_size, px } from "../../gui/size"
+import { px } from "../../gui/size"
 import { Icon } from "../../gui/base/Icon"
 import { Icons } from "../../gui/base/icons/Icons"
-import { colorForBg } from "../../gui/base/GuiUtils"
+import { colorForBg, normalizeColorHex } from "../../gui/base/GuiUtils"
 import { theme } from "../../gui/theme"
 import { EventGridData, RowBounds } from "./CalendarTimeGrid"
 import {
@@ -12,9 +12,10 @@ import {
 	EventWrapperFlags,
 } from "../../../calendar-app/calendar/view/CalendarViewModel"
 import { formatEventTime, getDisplayEventTitle, TEMPORARY_EVENT_OPACITY } from "../../../calendar-app/calendar/gui/CalendarGuiUtils"
-import { TabIndex } from "../../api/common/TutanotaConstants"
-import { EventWrapperFlagKeys, FlagKeyToIcon, getTimeTextFormatForLongEvent, getTimeZone } from "../date/CalendarUtils"
+import { EventTextTimeOption, TabIndex } from "../../api/common/TutanotaConstants"
+import { EventWrapperFlagKeys, FlagKeyToIcon, getDiffIn60mIntervals, getTimeTextFormatForLongEvent, getTimeZone } from "../date/CalendarUtils"
 import { Time } from "../date/Time"
+import { isAllDayEvent } from "../../api/common/utils/CommonCalendarUtils"
 
 export const MIN_ROW_SPAN = 3
 
@@ -39,25 +40,32 @@ export type CalendarEventBubbleAttrs = {
 	interactions?: EventBubbleInteractions & CalendarEventBubbleDragProperties
 	gridInfo: EventGridData
 	eventWrapper: EventWrapper
-	rowOverflowInfo: RangeOverflowData
-	columnOverflowInfo: RangeOverflowData
+	verticalOverflowInfo: RangeOverflowData
+	horizontalOverflowInfo: RangeOverflowData
 	canReceiveFocus: boolean
-	baseDate?: Date
+	baseDate: Date
 	height?: number
 }
-const lineHeight = layout_size.calendar_line_height
-const lineHeightPx = px(lineHeight)
 
 export class CalendarEventBubble implements Component<CalendarEventBubbleAttrs> {
 	view({ attrs }: Vnode<CalendarEventBubbleAttrs>): Children {
-		// This helps us stop flickering in certain cases where we want to disable and re-enable fade in (ie. when dragging events)
-		// Reapplying the animation to the element will cause it to trigger instantly, so we don't want to do that
-		// const doFadeIn = !this.hasFinishedInitialRender && attrs.fadeIn
-		// const enablePointerEvents = attrs.enablePointerEvents
-		const { gridInfo, eventWrapper, rowOverflowInfo, interactions, canReceiveFocus, baseDate, columnOverflowInfo, height } = attrs
-		const zone = getTimeZone()
-		const timeFormat = baseDate ? getTimeTextFormatForLongEvent(eventWrapper.event, baseDate, baseDate, zone) : null
-		const formatedEventTime = timeFormat ? formatEventTime(eventWrapper.event, timeFormat) : ""
+		const { gridInfo, eventWrapper, interactions, canReceiveFocus, baseDate, horizontalOverflowInfo } = attrs
+		const calendarEvent = eventWrapper.event
+
+		const isLongNormalEvent = !isAllDayEvent(calendarEvent) && getDiffIn60mIntervals(calendarEvent.startTime, calendarEvent.endTime) >= 24
+		const timeFormat = isLongNormalEvent
+			? EventTextTimeOption.START_END_TIME
+			: getTimeTextFormatForLongEvent(calendarEvent, baseDate, baseDate, getTimeZone())
+
+		const eventTime = timeFormat ? formatEventTime(calendarEvent, timeFormat) : ""
+		const eventTitle = isLongNormalEvent ? `${eventTime} ${getDisplayEventTitle(calendarEvent.summary)}` : getDisplayEventTitle(calendarEvent.summary)
+
+		const resolvedStyles = this.resolveStyles(attrs)
+		const overflowIndicatorStyle = {
+			backgroundColor: resolvedStyles.backgroundColor,
+			borderRight: `1px solid ${resolvedStyles.backgroundColor}`,
+			width: px(6),
+		} satisfies Partial<CSSStyleDeclaration>
 
 		return m(
 			".flex.z2.b.darker-hover.small",
@@ -68,32 +76,24 @@ export class CalendarEventBubble implements Component<CalendarEventBubbleAttrs> 
 					minWidth: px(0),
 					gridColumn: `${gridInfo.column.start} / span ${gridInfo.column.span}`,
 					gridRow: `${gridInfo.row.start} / ${gridInfo.row.end}`,
-					color: !eventWrapper.flags?.isFeatured ? colorForBg(`#${eventWrapper.color}`) : undefined,
+					color: resolvedStyles.color,
 					opacity: `${eventWrapper.flags?.isTransientEvent ? TEMPORARY_EVENT_OPACITY : 1}`,
 				} satisfies Partial<CSSStyleDeclaration>,
 			},
 			[
-				columnOverflowInfo.start
-					? m(".event-continues-left-indicator.height-100p", {
-							style: {
-								backgroundColor: `#${eventWrapper.color}`,
-								borderRight: `1px solid #${eventWrapper.color}`,
-								width: px(6),
-							} satisfies Partial<CSSStyleDeclaration>,
-						})
-					: null,
+				horizontalOverflowInfo.start ? m(".event-continues-left-indicator.height-100p", { style: overflowIndicatorStyle }) : null,
+				// EventBubble
 				m(
-					// EventBubble
 					".pl-4.pr-4.height-100p.full-width.border-radius-4",
 					{
 						onclick: (e: MouseEvent) => {
 							e.stopPropagation()
 							if (!eventWrapper.flags?.isTransientEvent) {
-								interactions?.click(attrs.eventWrapper.event, e)
+								interactions?.click(calendarEvent, e)
 							}
 						},
 						onkeydown: (e: KeyboardEvent) => {
-							interactions?.keyDown(attrs.eventWrapper.event, e)
+							interactions?.keyDown(calendarEvent, e)
 						},
 						onmousedown: () => {
 							if (!eventWrapper.flags?.isTransientEvent) {
@@ -102,112 +102,142 @@ export class CalendarEventBubble implements Component<CalendarEventBubbleAttrs> 
 						},
 						tabIndex: canReceiveFocus ? TabIndex.Default : TabIndex.Programmatic,
 						class: interactions?.click ? "cursor-pointer" : "",
-						style: {
-							height: height ? px(height) : undefined,
-							borderTop: rowOverflowInfo.start ? "none" : undefined,
-							borderBottom: rowOverflowInfo.end ? "none" : undefined,
-
-							"border-top-left-radius": rowOverflowInfo.start || columnOverflowInfo.start ? "0" : undefined,
-							"border-top-right-radius": rowOverflowInfo.start || columnOverflowInfo.end ? "0" : undefined,
-							"border-bottom-left-radius": rowOverflowInfo.end || columnOverflowInfo.start ? "0" : undefined,
-							"border-bottom-right-radius": rowOverflowInfo.end || columnOverflowInfo.end ? "0" : undefined,
-
-							backgroundColor: eventWrapper.color.includes("#") ? eventWrapper.color : `#${eventWrapper.color}`,
-
-							border: eventWrapper.flags?.isFeatured
-								? `1.5px dashed ${eventWrapper.flags?.isConflict ? theme.on_warning_container : theme.on_success_container}`
-								: "none",
-
-							paddingTop: "2px",
-							paddingBottom: "2px",
-						} satisfies Partial<CSSStyleDeclaration> & Record<string, any>,
+						style: resolvedStyles,
 					},
 					eventWrapper.flags.isFeatured
-						? m(".flex.items-start", [
-								m(Icon, {
-									icon: eventWrapper.flags?.isConflict ? Icons.AlertCircle : Icons.Checkmark,
-									container: "div",
-									class: "mr-xxs",
-									style: {
-										fill: eventWrapper.flags?.isConflict ? theme.on_warning_container : theme.on_success_container,
-									},
-								}),
-								m(
-									".break-word.b.text-ellipsis-multi-line.lh",
-									{
-										style: {
-											"-webkit-line-clamp": 2,
-											color: eventWrapper.flags?.isConflict ? theme.on_warning_container : theme.on_success_container,
-										},
-									},
-									getDisplayEventTitle(eventWrapper.event.summary),
-								),
-							])
-						: this.renderNonFeaturedTexts(eventWrapper.event.summary, eventWrapper.color, gridInfo.row, formatedEventTime, eventWrapper.flags),
+						? this.renderFeaturedTexts(eventTitle, resolvedStyles.color || normalizeColorHex(eventWrapper.color), !!eventWrapper.flags.isConflict)
+						: this.renderNonFeaturedTexts(
+								eventTitle,
+								resolvedStyles.color || colorForBg(normalizeColorHex(eventWrapper.color)),
+								gridInfo.row,
+								isAllDayEvent(eventWrapper.event) || isLongNormalEvent ? "" : eventTime,
+								eventWrapper.flags,
+							),
 				),
-				columnOverflowInfo.end
-					? m(".event-continues-right-indicator.height-100p", {
-							style: {
-								backgroundColor: `#${eventWrapper.color}`,
-								borderLeft: `1px solid #${eventWrapper.color}`,
-								width: px(6),
-							} satisfies Partial<CSSStyleDeclaration>,
-						})
-					: null,
+				horizontalOverflowInfo.end ? m(".event-continues-right-indicator.height-100p", { style: overflowIndicatorStyle }) : null,
 			],
 		)
 	}
 
-	private renderNonFeaturedTexts(summary: string, color: string, rowBounds: RowBounds, eventTime: string, flags: EventWrapperFlags) {
+	private resolveStyles({ eventWrapper, height, horizontalOverflowInfo, verticalOverflowInfo }: CalendarEventBubbleAttrs): Partial<CSSStyleDeclaration> {
+		const normalizedEventWrapperColor = normalizeColorHex(eventWrapper.color)
+		const defaultStyle = {
+			height: height ? px(height) : undefined,
+			color: colorForBg(normalizedEventWrapperColor),
+			backgroundColor: normalizedEventWrapperColor,
+			borderTop: verticalOverflowInfo.start ? "none" : undefined,
+			borderBottom: verticalOverflowInfo.end ? "none" : undefined,
+			borderTopLeftRadius: verticalOverflowInfo.start || horizontalOverflowInfo.start ? "0" : undefined,
+			borderTopRightRadius: verticalOverflowInfo.start || horizontalOverflowInfo.end ? "0" : undefined,
+			borderBottomLeftRadius: verticalOverflowInfo.end || horizontalOverflowInfo.start ? "0" : undefined,
+			borderBottomRightRadius: verticalOverflowInfo.end || horizontalOverflowInfo.end ? "0" : undefined,
+			paddingTop: "2px",
+			paddingBottom: "2px",
+		}
+
+		const featuredEventStyle = {
+			border: `1.5px dashed ${eventWrapper.flags?.isConflict ? theme.on_warning_container : theme.on_success_container}`,
+			color: eventWrapper.flags.isConflict ? theme.on_warning_container : theme.on_success_container,
+		}
+
+		const ghostStyle = {
+			color: theme.on_surface_variant,
+			border: `1px dashed ${theme.outline}`,
+			borderLeft: horizontalOverflowInfo.start ? "none" : undefined,
+			borderRight: horizontalOverflowInfo.end ? "none" : undefined,
+			backgroundColor: theme.surface_container_high,
+		}
+
+		return {
+			...defaultStyle,
+			...(eventWrapper.flags?.isFeatured ? featuredEventStyle : {}),
+			...(eventWrapper.flags?.isGhost ? ghostStyle : {}),
+		}
+	}
+
+	private renderFeaturedTexts(title: string, color: string, isConflict: boolean) {
+		return m(".flex.items-start", [
+			m(Icon, {
+				icon: isConflict ? Icons.AlertCircle : Icons.Checkmark,
+				container: "div",
+				class: "mr-xxs",
+				style: {
+					fill: color,
+				},
+			}),
+			m(
+				".break-word.b.text-ellipsis-multi-line.lh",
+				{
+					style: {
+						"-webkit-line-clamp": 2,
+						color,
+					},
+				},
+				title,
+			),
+		])
+	}
+
+	/**
+	 * Logic for rendering the text and Icon of a bubble that is NOT flagged as "featured".
+	 * "Non-featured" events are just regular event bubbles showing up in all different calendar views.
+	 *
+	 * Events are currently labeled "featured" for display in the event banner, where they have special
+	 * styling to distinguish them from events unrelated to the event invite.
+	 * @private
+	 */
+	private renderNonFeaturedTexts(title: string, iconFillColor: string, rowBounds: RowBounds, eventTime: string, flags: EventWrapperFlags) {
 		const totalRowSpan = rowBounds.end - rowBounds.start
 		const showSecondLine = totalRowSpan >= MIN_ROW_SPAN * 2
 		const maxLines = Math.floor((totalRowSpan - MIN_ROW_SPAN) / MIN_ROW_SPAN)
 
+		const hasEventTime = eventTime !== ""
+
+		const flagIcons = Object.entries(flags)
+			.filter(([key, value]) => value && FlagKeyToIcon[key as EventWrapperFlagKeys])
+			.map(([key]) =>
+				m(Icon, {
+					icon: FlagKeyToIcon[key as EventWrapperFlagKeys],
+					class: "icon-small",
+					style: {
+						fill: iconFillColor,
+						marginTop: "2px",
+						marginRight: "2px",
+					},
+				}),
+			)
+
 		return m(".flex", [
-			Object.entries(flags).map(([key, value]: [EventWrapperFlagKeys, boolean]) => {
-				return value && FlagKeyToIcon[key]
-					? m(Icon, {
-							icon: FlagKeyToIcon[key],
-							style: {
-								fill: colorForBg("#" + color),
-								"margin-top": "2px",
-								"margin-right": "2px",
-							},
-							class: "icon-small",
-						})
-					: null
-			}),
-			m(
-				".flex.overflow-hidden",
-				{
-					class: showSecondLine ? "col" : "",
-				},
-				[
-					m(
-						"span",
-						{
-							class: showSecondLine ? "text-ellipsis-multi-line" : "text-no-wrap",
-							style: {
-								"-webkit-line-clamp": maxLines, // This helps resizing the text to show as much as possible of its contents
-							},
+			...flagIcons,
+			m(".flex.overflow-hidden", { class: showSecondLine ? "col" : "" }, [
+				m(
+					"span",
+					{
+						class: showSecondLine ? "text-ellipsis-multi-line" : "text-no-wrap",
+						style: {
+							"-webkit-line-clamp": maxLines,
 						},
-						getDisplayEventTitle(summary),
-					),
-					m(".flex.items-center.text-ellipsis", [
-						!showSecondLine && eventTime !== ""
-							? m(Icon, {
-									class: "icon-small ml-4 mr-4",
-									icon: Icons.Time,
-									style: {
-										fill: colorForBg("#" + color),
-										marginTop: "-2px",
-									},
-								})
-							: null,
-						`${eventTime}`,
-					]),
-				],
-			),
+					},
+					title,
+				),
+				hasEventTime ? this.renderEventTime(eventTime, showSecondLine, iconFillColor) : null,
+			]),
+		])
+	}
+
+	private renderEventTime(eventTime: string, showSecondLine: boolean, iconFillColor: string): Children {
+		return m(".flex.items-center.text-ellipsis", [
+			!showSecondLine
+				? m(Icon, {
+						icon: Icons.Time,
+						class: "icon-small ml-4 mr-4",
+						style: {
+							fill: iconFillColor,
+							marginTop: "-2px",
+						},
+					})
+				: null,
+			eventTime,
 		])
 	}
 }

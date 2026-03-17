@@ -8,6 +8,7 @@ import { DateWrapper } from '../sys/TypeRefs.js'
 import { StringWrapper } from '../sys/TypeRefs.js'
 import { GeneratedIdWrapper } from '../sys/TypeRefs.js'
 import { IdTupleWrapper } from '../sys/TypeRefs.js'
+import { InstanceSessionKey } from '../sys/TypeRefs.js'
 
 export const SubfilesTypeRef: TypeRef<Subfiles> = new TypeRef("tutanota", 11)
 
@@ -245,6 +246,8 @@ export type Mail = {
 	keyVerificationState: null | NumberString;
 	processingState: NumberString;
 	processNeeded: boolean;
+	sendAt: null | Date;
+	serverClassificationData: null | string;
 
 	sender: MailAddress;
 	attachments: IdTuple[];
@@ -815,12 +818,15 @@ export type SendDraftData = {
 	plaintext: boolean;
 	calendarMethod: boolean;
 	sessionEncEncryptionAuthStatus: null | Uint8Array;
+	sendAt: null | Date;
+	allowUndo: boolean;
 
 	internalRecipientKeyData: InternalRecipientKeyData[];
 	secureExternalRecipientKeyData: SecureExternalRecipientKeyData[];
 	attachmentKeyData: AttachmentKeyData[];
 	mail: IdTuple;
 	symEncInternalRecipientKeyData: SymEncInternalRecipientKeyData[];
+	parameters: null | SendDraftParameters;
 }
 export const SendDraftReturnTypeRef: TypeRef<SendDraftReturn> = new TypeRef("tutanota", 557)
 
@@ -838,6 +844,7 @@ export type SendDraftReturn = {
 
 	notifications: NotificationMail[];
 	sentMail: IdTuple;
+	sendJob: null | IdTuple;
 }
 export const ReceiveInfoServiceDataTypeRef: TypeRef<ReceiveInfoServiceData> = new TypeRef("tutanota", 570)
 
@@ -865,6 +872,7 @@ export type InboxRule = {
 	_id: Id;
 	type: string;
 	value: string;
+	excludeFromSpamFilter: null | boolean;
 
 	targetFolder: IdTuple;
 }
@@ -1146,6 +1154,8 @@ export type CalendarEvent = {
 	invitedConfidentially: null | boolean;
 	recurrenceId: null | Date;
 	_ownerKeyVersion: null | NumberString;
+	sender: null | string;
+	pendingInvitation: null | boolean;
 
 	repeatRule: null | CalendarRepeatRule;
 	alarmInfos: IdTuple[];
@@ -1252,15 +1262,15 @@ export type UserSettingsGroupRoot = {
 
 	groupSettings: GroupSettings[];
 }
-export const CalendarDeleteDataTypeRef: TypeRef<CalendarDeleteData> = new TypeRef("tutanota", 982)
+export const CalendarDeleteInTypeRef: TypeRef<CalendarDeleteIn> = new TypeRef("tutanota", 982)
 
-export function createCalendarDeleteData(values: StrippedEntity<CalendarDeleteData>): CalendarDeleteData {
-    return Object.assign(create(typeModels[CalendarDeleteDataTypeRef.typeId], CalendarDeleteDataTypeRef), values)
+export function createCalendarDeleteIn(values: StrippedEntity<CalendarDeleteIn>): CalendarDeleteIn {
+    return Object.assign(create(typeModels[CalendarDeleteInTypeRef.typeId], CalendarDeleteInTypeRef), values)
 }
 
-export type CalendarDeleteData = {
-	_type: TypeRef<CalendarDeleteData>;
-	_original?: CalendarDeleteData
+export type CalendarDeleteIn = {
+	_type: TypeRef<CalendarDeleteIn>;
+	_original?: CalendarDeleteIn
 
 	_format: NumberString;
 
@@ -2630,7 +2640,8 @@ export type ClientSpamTrainingDatum = {
 	_ownerKeyVersion: null | NumberString;
 	confidence: NumberString;
 	spamDecision: NumberString;
-	vector: Uint8Array;
+	vectorLegacy: Uint8Array;
+	vectorWithServerClassifiers: null | Uint8Array;
 }
 export const ClientSpamTrainingDatumIndexEntryTypeRef: TypeRef<ClientSpamTrainingDatumIndexEntry> = new TypeRef("tutanota", 1747)
 
@@ -2662,10 +2673,12 @@ export type ProcessInboxDatum = {
 	ownerEncVectorSessionKey: Uint8Array;
 	ownerKeyVersion: NumberString;
 	classifierType: null | NumberString;
-	encVector: Uint8Array;
+	encVectorLegacy: Uint8Array;
+	encVectorWithServerClassifiers: null | Uint8Array;
 
 	mailId: IdTuple;
 	targetMoveFolder: IdTuple;
+	ownerEncMailSessionKeys: InstanceSessionKey[];
 }
 export const ProcessInboxPostInTypeRef: TypeRef<ProcessInboxPostIn> = new TypeRef("tutanota", 1764)
 
@@ -2680,7 +2693,7 @@ export type ProcessInboxPostIn = {
 	_format: NumberString;
 	mailOwnerGroup: Id;
 
-	processInboxDatum: ProcessInboxDatum[];
+	processInboxData: ProcessInboxDatum[];
 }
 export const PopulateClientSpamTrainingDatumTypeRef: TypeRef<PopulateClientSpamTrainingDatum> = new TypeRef("tutanota", 1770)
 
@@ -2697,7 +2710,8 @@ export type PopulateClientSpamTrainingDatum = {
 	ownerKeyVersion: NumberString;
 	isSpam: boolean;
 	confidence: NumberString;
-	encVector: Uint8Array;
+	encVectorLegacy: Uint8Array;
+	encVectorWithServerClassifiers: null | Uint8Array;
 
 	mailId: IdTuple;
 }
@@ -2714,5 +2728,45 @@ export type PopulateClientSpamTrainingDataPostIn = {
 	_format: NumberString;
 	mailOwnerGroup: Id;
 
-	populateClientSpamTrainingDatum: PopulateClientSpamTrainingDatum[];
+	populateClientSpamTrainingData: PopulateClientSpamTrainingDatum[];
+}
+export const SendDraftDeleteInTypeRef: TypeRef<SendDraftDeleteIn> = new TypeRef("tutanota", 1785)
+
+export function createSendDraftDeleteIn(values: StrippedEntity<SendDraftDeleteIn>): SendDraftDeleteIn {
+    return Object.assign(create(typeModels[SendDraftDeleteInTypeRef.typeId], SendDraftDeleteInTypeRef), values)
+}
+
+export type SendDraftDeleteIn = {
+	_type: TypeRef<SendDraftDeleteIn>;
+	_original?: SendDraftDeleteIn
+
+	_format: NumberString;
+
+	mail: IdTuple;
+	sendJob: null | IdTuple;
+}
+export const SendDraftParametersTypeRef: TypeRef<SendDraftParameters> = new TypeRef("tutanota", 1788)
+
+export function createSendDraftParameters(values: StrippedEntity<SendDraftParameters>): SendDraftParameters {
+    return Object.assign(create(typeModels[SendDraftParametersTypeRef.typeId], SendDraftParametersTypeRef), values)
+}
+
+export type SendDraftParameters = {
+	_type: TypeRef<SendDraftParameters>;
+	_original?: SendDraftParameters
+
+	_id: Id;
+	language: string;
+	mailSessionKey: null | Uint8Array;
+	bucketEncMailSessionKey: null | Uint8Array;
+	senderNameUnencrypted: null | string;
+	plaintext: boolean;
+	calendarMethod: boolean;
+	sessionEncEncryptionAuthStatus: null | Uint8Array;
+
+	mail: IdTuple;
+	internalRecipientKeyData: InternalRecipientKeyData[];
+	secureExternalRecipientKeyData: SecureExternalRecipientKeyData[];
+	symEncInternalRecipientKeyData: SymEncInternalRecipientKeyData[];
+	attachmentKeyData: AttachmentKeyData[];
 }
