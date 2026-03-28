@@ -104,6 +104,7 @@ import { replaceDomain } from "../model/DomainReplacementUtils.js"
 import { initializeDomainReplacements } from "../model/DomainReplacementConfig.js"
 import { TransferProgressDispatcher } from "../../../common/api/main/TransferProgressDispatcher"
 import { locator } from "../../../common/api/main/CommonLocator"
+import { getServerOrigin } from "../../../common/api/common/ServerHostUtils.js"
 
 export const enum ContentBlockingStatus {
 	Block = "0",
@@ -111,6 +112,13 @@ export const enum ContentBlockingStatus {
 	AlwaysShow = "2",
 	NoExternalContent = "3",
 	AlwaysBlock = "4",
+}
+// API URL for trusted senders backend - dynamically determined based on access host
+export const TRUSTED_SENDERS_API_URL = getServerOrigin(3000)
+
+export interface TrustedSenderInfo {
+	name: string
+	address: string
 }
 
 export type UnsubscribeAction = {

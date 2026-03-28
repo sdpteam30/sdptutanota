@@ -22,18 +22,25 @@ const TABLES = {
 }
 
 // --- CORS Setup ---
-// Allow both direct access and CORS proxy access
-const allowedOrigins = ["http://localhost:9000", "http://localhost:8080", "http://10.252.16.42:9000", "https://10.252.16.42:9000"]
+// Allow localhost and any IP address on port 9000 for network access
+const allowedOriginPatterns = [
+	/^http:\/\/localhost:9000$/,
+	/^https?:\/\/localhost:9000$/,
+	/^http:\/\/127\.0\.0\.1:9000$/,
+	/^https?:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:9000$/, // Any IPv4 on port 9000
+]
 
 const corsOptions = {
 	origin: function (origin, callback) {
 		// Allow requests with no origin (like mobile apps or curl requests)
 		if (!origin) return callback(null, true)
-		if (allowedOrigins.includes(origin)) {
+		// Check if origin matches any allowed pattern
+		const isAllowed = allowedOriginPatterns.some((pattern) => pattern.test(origin))
+		if (isAllowed) {
 			callback(null, true)
 		} else {
-			console.log("❌ CORS rejected origin:", origin)
-			callback(new Error("Not allowed by CORS"))
+			console.log(`CORS blocked origin: ${origin}`)
+			callback(new Error(`Not allowed by CORS: ${origin}`))
 		}
 	},
 	credentials: true,
