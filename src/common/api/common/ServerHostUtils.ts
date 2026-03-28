@@ -2,7 +2,6 @@
  * Utility functions for determining the server host.
  * Used to dynamically configure API endpoints based on how the application is accessed.
  */
-
 /**
  * Auto-detect the server host based on current location.
  * Returns the hostname of the current page, or "localhost" if not available.
@@ -22,7 +21,6 @@ export function getServerHost(): string {
 	}
 	return "localhost"
 }
-
 /**
  * Get the full server origin including protocol and port.
  *
@@ -37,7 +35,6 @@ export function getServerOrigin(defaultPort: number = 3000): string {
 	}
 	return `http://localhost:${defaultPort}`
 }
-
 /**
  * Check if the application is being accessed from a remote network location.
  *
@@ -50,7 +47,6 @@ export function isRemoteAccess(): boolean {
 	}
 	return false
 }
-
 /**
  * Check if the hostname is an IP address.
  *

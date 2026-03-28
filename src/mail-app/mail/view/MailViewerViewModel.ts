@@ -108,7 +108,6 @@ export const enum ContentBlockingStatus {
 	NoExternalContent = "3",
 	AlwaysBlock = "4",
 }
-
 // API URL for trusted senders backend - dynamically determined based on access host
 export const TRUSTED_SENDERS_API_URL = getServerOrigin(3000)
 
