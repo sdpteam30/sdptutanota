@@ -15,20 +15,30 @@ const supabaseKey = process.env.SUPABASE_ANON_KEY
 const supabase = createClient(supabaseUrl, supabaseKey)
 
 // --- CORS Setup ---
-const allowedOrigins = ["http://localhost:9000"]
+// Allow localhost and any IP address on port 9000 for network access
+const allowedOriginPatterns = [
+	/^http:\/\/localhost:9000$/,
+	/^https?:\/\/localhost:9000$/,
+	/^http:\/\/127\.0\.0\.1:9000$/,
+	/^https?:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:9000$/, // Any IPv4 on port 9000
+]
 
 const corsOptions = {
 	origin: function (origin, callback) {
+		// Allow requests with no origin (like mobile apps or curl)
 		if (!origin) return callback(null, true)
-		if (allowedOrigins.includes(origin)) {
+		// Check if origin matches any allowed pattern
+		const isAllowed = allowedOriginPatterns.some((pattern) => pattern.test(origin))
+		if (isAllowed) {
 			callback(null, true)
 		} else {
-			callback(new Error("Not allowed by CORS"))
+			console.log(`CORS blocked origin: ${origin}`)
+			callback(new Error(`Not allowed by CORS: ${origin}`))
 		}
 	},
 	credentials: true,
 	methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-	allowedHeaders: ["Content-Type", "Accept", "Authorization"],
+	allowedHeaders: ["Content-Type", "Accept", "Authorization", "X-Requested-With"],
 	exposedHeaders: ["Content-Type", "Authorization"],
 }
 

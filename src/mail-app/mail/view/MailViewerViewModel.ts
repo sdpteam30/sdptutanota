@@ -99,6 +99,7 @@ import { isBrowser } from "../../../common/api/common/Env"
 import { CommonSystemFacade } from "../../../common/native/common/generatedipc/CommonSystemFacade"
 import { TransferProgressDispatcher } from "../../../common/api/main/TransferProgressDispatcher"
 import { locator } from "../../../common/api/main/CommonLocator"
+import { getServerOrigin } from "../../../common/api/common/ServerHostUtils.js"
 
 export const enum ContentBlockingStatus {
 	Block = "0",
@@ -107,7 +108,8 @@ export const enum ContentBlockingStatus {
 	NoExternalContent = "3",
 	AlwaysBlock = "4",
 }
-export const TRUSTED_SENDERS_API_URL = "http://localhost:3000"
+// API URL for trusted senders backend - dynamically determined based on access host
+export const TRUSTED_SENDERS_API_URL = getServerOrigin(3000)
 
 export interface TrustedSenderInfo {
 	name: string
