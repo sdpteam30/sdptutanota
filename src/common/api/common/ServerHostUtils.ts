@@ -23,14 +23,19 @@ export function getServerHost(): string {
 }
 /**
  * Get the full server origin including protocol and port.
+ * When accessing remotely, routes through CORS proxy on port 8080 to reach the backend.
  *
  * @param defaultPort - The default port to use if not in the URL (e.g., 3000 for backend API)
- * @returns The full origin (e.g., "http://localhost:3000", "http://10.252.16.42:3000")
+ * @returns The full origin (e.g., "http://localhost:3000", or CORS proxy URL for remote access)
  */
 export function getServerOrigin(defaultPort: number = 3000): string {
 	if (typeof window !== "undefined" && window.location) {
 		const protocol = window.location.protocol
-		const hostname = getServerHost()
+		const hostname = window.location.hostname
+		// If accessing via IP (remote), route through CORS proxy on port 8080
+		if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+			return `${protocol}//${hostname}:8080/http://localhost:${defaultPort}`
+		}
 		return `${protocol}//${hostname}:${defaultPort}`
 	}
 	return `http://localhost:${defaultPort}`

@@ -145,8 +145,8 @@ RUN npm ci
 # Build packages
 RUN npm run build-packages
 
-# Build the web application
-RUN node make prod
+# Build the web application (use 'local' stage so staticUrl is null and domain config is used)
+RUN node make local
 
 # Production stage
 FROM node:20-alpine AS production
