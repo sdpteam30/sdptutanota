@@ -48,6 +48,9 @@ docker-compose up --build
 
 ## Local Development Build
 
+See [doc/BUILDING.md](doc/BUILDING.md) for official build prerequisites and release builds.
+See [doc/HACKING.md](doc/HACKING.md) for development workflow and code structure.
+
 ### 1. Initialize Submodules (Required First Time)
 ```bash
 git submodule init
@@ -68,31 +71,69 @@ npm run build-packages
 ### 4. Build Web Application
 
 ```bash
+# Local/network build (recommended - allows domain config resolution)
+node make local
+
 # Development build (uses browser URL as API endpoint)
 node make
 
 # Production build (uses Tutanota production server)
 node make prod
-
-# Alternative production build command
-node webapp prod
 ```
 
-### 5. Serve the Build
+**Important:** For network access (accessing from remote browser via IP), use `node make local` which sets `staticUrl: null` allowing the app to use domain configs for CORS proxy routing.
+
+### 5. Start Backend Services
+
+Before serving the frontend, start the required backend services:
+
 ```bash
-npx serve build -s -p 9000
+# Terminal 1: Start CORS proxy (required for Tuta API and trusted-senders-backend)
+cd cors-anywhere
+node server.js
+# Runs on port 8080
+
+# Terminal 2: Start trusted-senders-backend
+cd trusted-senders-backend
+node index.js
+# Runs on port 3000
 ```
+
+### 6. Serve the Frontend
+```bash
+cd build
+python3 -m http.server 9000
+# Or: npx serve build -s -p 9000
+```
+
+### Network Access (Remote Browser)
+
+When accessing from a remote browser (e.g., `http://10.252.16.42:9000`):
+
+1. **Tuta API calls** route through CORS proxy: `http://10.252.16.42:8080/https://app.tuta.com`
+2. **Trusted-senders-backend calls** route through CORS proxy: `http://10.252.16.42:8080/http://localhost:3000`
+
+This is handled automatically by:
+- `DomainConfigs.js` - defines CORS proxy URLs for known hostnames
+- `ServerHostUtils.ts` - routes backend calls through CORS proxy for remote access
+- `RestClient.ts` - properly appends paths to CORS proxy URLs
 
 ## Build Scripts
 
 | Script | Description |
 |--------|-------------|
-| `node make` | Dev build for webapp |
-| `node make prod` | Production webapp build |
+| `node make` | Dev build (uses browser URL as API endpoint) |
+| `node make local` | Network access build (staticUrl=null, uses domain configs) |
+| `node make prod` | Production build (staticUrl=null for network access) |
 | `node make -d prod` | Desktop client (dev against production) |
 | `node webapp prod` | Alternative production webapp build |
 | `node desktop --custom-desktop-release` | Desktop release build |
 | `node android` | Android APK build |
+
+**Build Stages Explained:**
+- `make` / `make local`: Sets `staticUrl: null` - app uses `window.location` and `DomainConfigs.js` to determine API URLs. Required for network access with CORS proxy.
+- `make prod`: Also sets `staticUrl: null` for network builds.
+- When `staticUrl` is set to a URL (e.g., `https://app.tuta.com`), domain configs are bypassed.
 
 ## Project Structure
 
@@ -183,11 +224,39 @@ class MyComponent implements Component<Attrs> {
 
 ## MobyPhish Study-Specific
 
+### CORS Proxy (`cors-anywhere/`)
+
+The CORS proxy is required for:
+1. Proxying Tuta API requests (browser can't directly call `https://app.tuta.com` due to CORS)
+2. Proxying trusted-senders-backend requests when accessing remotely
+
+**Configuration:** `cors-anywhere/server.js`
+- Listens on port 8080
+- Allows origins: `localhost:9000`, any IP address on port 9000
+- Proxies requests by appending target URL to path (e.g., `/https://app.tuta.com/rest/...`)
+
+**Start:** `cd cors-anywhere && node server.js`
+
+### Trusted Senders Backend (`trusted-senders-backend/`)
+
+Express.js API server that logs user interactions with email senders to Supabase.
+
+**Configuration:** Requires `.env` file with Supabase credentials:
+```
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
+```
+
+**Start:** `cd trusted-senders-backend && node index.js` (port 3000)
+
 ### Backend API Endpoints
 - `POST /update-email-status` - Log email interactions
 - `GET /email-status/:user_email/:email_id` - Get status
 - `GET /trusted-senders/:user_email` - Get trusted list
 - `POST /add-trusted` - Add trusted sender
+- `POST /remove-trusted` - Remove trusted sender
+- `POST /report-spam` - Report phishing/spam
+- `POST /validate-sender-email` - Validate sender email format
 
 ### Status Values Tracked
 - `confirmed`, `denied`, `reported_phishing`, `reported_impersonation`
@@ -195,8 +264,9 @@ class MyComponent implements Component<Attrs> {
 
 ### Switching Study Branches
 ```bash
-./switch-branch.sh sean-dev1              # Full anti-phishing UI
-./switch-branch.sh no-antiphishing-header # Control group
+./switch-branch.sh sean-dev1                    # Full anti-phishing UI
+./switch-branch.sh default-antiphishing-header  # Default Tuta header
+./switch-branch.sh no-antiphishing-header       # Control group
 ```
 
 ## Common Issues
@@ -212,10 +282,47 @@ npm run build-packages
 ### env.js networkDebugging Error
 The Docker build applies fixes automatically. For local builds, ensure `networkDebugging` has a default value in `buildSrc/env.js`.
 
+### CORS Errors When Accessing Remotely
+If you see CORS errors when accessing from a remote browser:
+1. Ensure CORS proxy is running: `cd cors-anywhere && node server.js`
+2. Ensure you built with `node make local` (not just `node make`)
+3. Check that `DomainConfigs.js` has an entry for your IP address, or uses the `{hostname}` fallback
+4. Clear browser cache/service workers (DevTools → Application → Clear site data)
+
+### Trusted Senders Backend Not Loading
+If trusted senders requests fail from remote browser:
+1. Ensure backend is running: `cd trusted-senders-backend && node index.js`
+2. Requests should route through CORS proxy (check Network tab for `http://IP:8080/http://localhost:3000/...`)
+3. The backend itself only needs to be accessible from localhost (CORS proxy handles remote access)
+
+### Browser Cache Issues
+After rebuilding, if changes don't appear:
+1. Hard refresh: `Ctrl+Shift+R`
+2. If still not working, clear service workers and site data:
+   - DevTools → Application → Storage → Clear site data
+3. Incognito mode always works (no cached assets)
+
 ## Important Files
 
+### Build Configuration
 - `buildSrc/env.js` - Environment configuration
+- `buildSrc/buildWebapp.js` - Webapp build script (sets `staticUrl`)
+- `buildSrc/DomainConfigs.js` - Domain-specific API URL configs (CORS proxy routing)
 - `buildSrc/postinstall.js` - Post-install hooks
+
+### Core Code
 - `src/common/api/` - Core API and crypto code
+- `src/common/api/worker/rest/RestClient.ts` - HTTP client (handles CORS proxy URL construction)
+- `src/common/api/common/ServerHostUtils.ts` - Server host/origin detection (CORS proxy routing for backend)
+
+### MobyPhish Custom
+- `trusted-senders-backend/index.js` - Backend API server
+- `trusted-senders-backend/.env` - Supabase credentials (not in git)
+- `cors-anywhere/server.js` - CORS proxy server
+- `src/mail-app/mail/view/MailViewerViewModel.ts` - Email viewer with trust UI
+- `src/mail-app/mail/model/TrustedSendersService.ts` - Backend API client (some branches)
+
+### Docker
 - `Dockerfile` - Main multi-stage build
+- `Dockerfile.frontend` - Frontend-only build
 - `docker-compose.yml` - Full stack orchestration

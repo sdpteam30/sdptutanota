@@ -38,6 +38,93 @@ Instructions here will produce a *release* version of the client. For *debug* ve
 >
 > Just delete the `libs/webassembly/include` directory and re-build.
 
+## MobyPhish Study Build (Custom Fork)
+
+This fork includes additional services for the MobyPhish anti-phishing study. The full stack includes:
+- **Frontend**: Tuta Mail web client (port 9000)
+- **CORS Proxy**: Proxies requests to Tuta API and backend (port 8080)
+- **Trusted Senders Backend**: Logs user interactions to Supabase (port 3000)
+
+### Docker Build (Recommended)
+
+The easiest way to run the full stack:
+
+```bash
+docker-compose up --build
+```
+
+Or use the branch switching script:
+```bash
+./switch-branch.sh sean-dev1
+```
+
+### Manual Build with Backend Services
+
+#### Pre-requisites:
+
+* All standard Tuta Mail prerequisites (see above)
+* Supabase account and credentials for trusted-senders-backend
+
+#### Build steps:
+
+1. Follow steps 1-8 from the standard web client build above
+2. Build the web application for network access: `node make local`
+3. Set up the trusted-senders-backend:
+   ```bash
+   cd trusted-senders-backend
+   npm ci
+   cp .env.example .env  # Then edit .env with your Supabase credentials
+   ```
+4. Set up the CORS proxy:
+   ```bash
+   cd cors-anywhere
+   npm ci
+   ```
+
+#### Running the services:
+
+Start each service in a separate terminal:
+
+```bash
+# Terminal 1: CORS Proxy (required for Tuta API and backend access)
+cd cors-anywhere
+node server.js
+# Listens on port 8080
+
+# Terminal 2: Trusted Senders Backend
+cd trusted-senders-backend
+node index.js
+# Listens on port 3000
+
+# Terminal 3: Frontend
+cd build
+python3 -m http.server 9000
+# Or: npx serve . -s -p 9000
+```
+
+#### Network Access (Remote Browser):
+
+When accessing from a remote browser (e.g., `http://10.252.16.42:9000`):
+
+* Build with `node make local` (sets `staticUrl: null` for domain config resolution)
+* Tuta API requests route through: `http://<host>:8080/https://app.tuta.com`
+* Backend requests route through: `http://<host>:8080/http://localhost:3000`
+* The CORS proxy handles cross-origin requests automatically
+
+#### Trusted Senders Backend Configuration:
+
+Create `trusted-senders-backend/.env` with:
+```
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_KEY=your_supabase_anon_key
+```
+
+#### Study Branches:
+
+* `sean-dev1` - Full anti-phishing interface with warning banners
+* `default-antiphishing-header` - Default Tuta Mail with original header
+* `no-antiphishing-header` - Control group without security headers
+
 ## Building and running your own Tuta Mail Android app
 
 If you build and install the Tuta Mail Android app by yourself, keep in mind that you will not get updates automatically.
