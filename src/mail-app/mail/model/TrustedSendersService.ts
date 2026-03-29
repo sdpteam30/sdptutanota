@@ -27,27 +27,27 @@ export interface PhishingReportRecord {
 	email_id?: string
 }
 
-// Auto-detect the server host based on current location
-function getServerHost(): string {
+// Get the backend base URL, routing through CORS proxy when accessing remotely
+function getBackendBaseUrl(): string {
 	if (typeof window !== "undefined" && window.location) {
 		const hostname = window.location.hostname
-		// If accessing via IP or non-localhost hostname, use that
+		const protocol = window.location.protocol
+		// If accessing via IP (remote), route through CORS proxy on port 8080
 		if (hostname !== "localhost" && hostname !== "127.0.0.1") {
-			return hostname
+			return `${protocol}//${hostname}:8080/http://localhost:3000`
 		}
 	}
-	return "localhost"
+	return "http://localhost:3000"
 }
 
 export class TrustedSendersService {
 	private readonly backendUrl: string
 
 	constructor(backendUrl?: string) {
-		const host = getServerHost()
-		this.backendUrl = backendUrl || `http://${host}:3000`
+		this.backendUrl = backendUrl || getBackendBaseUrl()
 	}
 
-	// Helper to build backend URL (no CORS proxy needed - backend has its own CORS config)
+	// Helper to build backend URL (routes through CORS proxy when accessing remotely)
 	private getBackendUrl(endpoint: string): string {
 		const url = `${this.backendUrl}${endpoint}`
 		console.log("🌐 Backend URL:", url)

@@ -174,7 +174,7 @@ import "./${builtWorkerFile}"`,
 	}
 	await createHtml(
 		env.create({
-			staticUrl: stage === "release" || stage === "local" ? null : restUrl,
+			staticUrl: stage === "release" || stage === "local" || stage === "prod" ? null : restUrl,
 			version,
 			mode: "Browser",
 			dist: true,
