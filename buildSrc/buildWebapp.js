@@ -174,7 +174,9 @@ import "./${builtWorkerFile}"`,
 	}
 	await createHtml(
 		env.create({
-			staticUrl: stage === "release" || stage === "local" ? null : restUrl,
+			// Set staticUrl to null so the app uses location.href to determine domain config
+			// This allows network access builds to use their own domain config (e.g., CORS proxy)
+			staticUrl: stage === "release" || stage === "local" || stage === "prod" ? null : restUrl,
 			version,
 			mode: "Browser",
 			dist: true,

@@ -109,7 +109,19 @@ export const enum ContentBlockingStatus {
 	AlwaysBlock = "4",
 }
 // API URL for trusted senders backend - dynamically determined based on access host
-export const TRUSTED_SENDERS_API_URL = getServerOrigin(3000)
+// When accessing remotely, route through CORS proxy on port 8080 to reach backend on localhost:3000
+function getTrustedSendersApiUrl(): string {
+	if (typeof window !== "undefined" && window.location) {
+		const hostname = window.location.hostname
+		const protocol = window.location.protocol
+		// If accessing via IP (remote), route through CORS proxy
+		if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+			return `${protocol}//${hostname}:8080/http://localhost:3000`
+		}
+	}
+	return "http://localhost:3000"
+}
+export const TRUSTED_SENDERS_API_URL = getTrustedSendersApiUrl()
 
 export interface TrustedSenderInfo {
 	name: string

@@ -94,7 +94,7 @@ The setup automatically:
 The Docker build follows the standard Tutanota build process:
 1. `npm ci` - Clean install dependencies
 2. `npm run build-packages` - Build packages
-3. `node make prod` - Build web application
+3. `node make local` - Build web application (uses 'local' stage for network access support)
 
 All previous builds are automatically overwritten - no manual cleanup needed.
 
