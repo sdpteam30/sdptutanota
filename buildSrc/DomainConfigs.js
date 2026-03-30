@@ -94,11 +94,12 @@ export const domainConfigs = {
 		referralBaseUrl: "https://app.local.tuta.com:9000/signup",
 		websiteBaseUrl: "https://local.tuta.com:9000",
 	},
+	// Localhost config - routes API through CORS proxy to Tutanota
 	localhost: {
-		firstPartyDomain: true,
+		firstPartyDomain: false,
 		partneredDomainTransitionUrl: "http://localhost:9000",
-		apiUrl: "http://localhost:9000",
-		paymentUrl: "http://localhost:9000/braintree.html",
+		apiUrl: "http://localhost:8080/https://app.tuta.com",
+		paymentUrl: "https://pay.tutanota.com/braintree.html",
 		webauthnUrl: "http://localhost:9000/webauthn",
 		legacyWebauthnUrl: "http://localhost:9000/webauthn",
 		webauthnMobileUrl: "http://localhost:9000/webauthnmobile",
