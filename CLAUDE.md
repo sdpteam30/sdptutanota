@@ -20,7 +20,7 @@ This is a **fork of Tutanota/Tuta Mail** - an open-source encrypted email client
 - **Native Crypto**: Rust + WebAssembly (Emscripten)
 - **Desktop**: Electron
 - **Mobile**: Native Android (Kotlin) and iOS (Swift)
-- **Backend (custom)**: Node.js/Express with SQLite
+- **Backend (custom)**: Node.js/Express with Supabase (PostgreSQL)
 
 ## Prerequisites
 
@@ -210,7 +210,7 @@ class MyComponent implements Component<Attrs> {
 
 ### Naming Conventions
 - `*View`: Major app views (corresponds to URL routes)
-- `*ListVie`w: List display components
+- `*ListView`: List display components
 - `*Viewer`: Single element display
 - `*Model`: Logic for app parts (main thread)
 - `*Controller`: Bookkeeping/general actions
@@ -244,7 +244,7 @@ Express.js API server that logs user interactions with email senders to Supabase
 **Configuration:** Requires `.env` file with Supabase credentials:
 ```
 SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_key
+SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
 **Start:** `cd trusted-senders-backend && node index.js` (port 3000)
@@ -255,8 +255,8 @@ SUPABASE_KEY=your_supabase_key
 - `GET /trusted-senders/:user_email` - Get trusted list
 - `POST /add-trusted` - Add trusted sender
 - `POST /remove-trusted` - Remove trusted sender
-- `POST /report-spam` - Report phishing/spam
-- `POST /validate-sender-email` - Validate sender email format
+- `POST /validate-sender-email` - Validate sender email against known addresses
+- `POST /reset-email-statuses` - Clear statuses (debugging/testing)
 
 ### Status Values Tracked
 - `confirmed`, `denied`, `reported_phishing`, `reported_impersonation`
