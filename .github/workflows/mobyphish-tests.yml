@@ -1,0 +1,169 @@
+name: MobyPhish Tests
+
+on:
+  push:
+    branches:
+      - sean-dev1
+      - db-dev
+      - default-antiphishing-header
+      - no-antiphishing-header
+  pull_request:
+    branches:
+      - sean-dev1
+      - db-dev
+      - default-antiphishing-header
+      - no-antiphishing-header
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    name: trusted-senders-backend unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: trusted-senders-backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: trusted-senders-backend
+        run: npm ci
+
+      - name: Run backend route tests
+        working-directory: trusted-senders-backend
+        run: npm test
+
+  docker-smoke-test:
+    name: Docker build + smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine build branch
+        id: branch
+        run: |
+          # Use the current ref name as BUILD_BRANCH so the image matches the branch under test.
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          echo "build_branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "Building image for branch: ${BRANCH}"
+
+      - name: Create dummy .env for backend (CI has no Supabase creds)
+        run: |
+          mkdir -p trusted-senders-backend
+          printf 'SUPABASE_URL=http://stub.invalid\nSUPABASE_ANON_KEY=dummy\n' \
+            > trusted-senders-backend/.env
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: mobyphish:smoke-test
+          build-args: |
+            BUILD_BRANCH=${{ steps.branch.outputs.build_branch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start container
+        run: |
+          docker run -d --name mobyphish-smoke \
+            -p 9000:9000 -p 3000:3000 -p 8080:8080 \
+            -v "$PWD/trusted-senders-backend/.env:/app/trusted-senders-backend/.env:ro" \
+            mobyphish:smoke-test
+
+      - name: Wait for services to come up
+        run: |
+          set -e
+          for port in 9000 3000 8080; do
+            echo "Waiting for port $port..."
+            for i in $(seq 1 30); do
+              if curl -sf "http://localhost:$port/" > /dev/null 2>&1 \
+                 || curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port/" | grep -qE '^(200|301|302|404|500)$'; then
+                echo "Port $port responded on attempt $i"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "::error::Port $port did not come up in 60s"
+                docker logs mobyphish-smoke
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Smoke test - frontend serves index.html
+        run: |
+          set -e
+          body=$(curl -sf http://localhost:9000/ || (docker logs mobyphish-smoke && exit 1))
+          echo "$body" | grep -qi '<html' || (echo "::error::Frontend did not serve HTML"; echo "$body" | head -20; exit 1)
+          echo "✓ Frontend serves HTML"
+
+      - name: Smoke test - backend health check
+        run: |
+          set -e
+          body=$(curl -sf http://localhost:3000/ || (docker logs mobyphish-smoke && exit 1))
+          echo "$body" | grep -qi 'Running' || (echo "::error::Backend health check failed"; echo "$body"; exit 1)
+          echo "✓ Backend responds on / health endpoint"
+
+      - name: Smoke test - backend rejects bad payloads (400)
+        run: |
+          set -e
+          # Missing required fields → 400
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST http://localhost:3000/update-email-status \
+            -H 'Content-Type: application/json' \
+            -d '{}')
+          if [ "$code" != "400" ]; then
+            echo "::error::Expected 400 from /update-email-status with empty body, got $code"
+            docker logs mobyphish-smoke
+            exit 1
+          fi
+          echo "✓ Backend validates request payloads"
+
+      - name: Smoke test - backend rejects invalid status value (400)
+        run: |
+          set -e
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST http://localhost:3000/update-email-status \
+            -H 'Content-Type: application/json' \
+            -d '{"user_email":"u@x.com","email_id":"m1","sender_email":"s@y.com","status":"bogus"}')
+          if [ "$code" != "400" ]; then
+            echo "::error::Expected 400 for invalid status, got $code"
+            docker logs mobyphish-smoke
+            exit 1
+          fi
+          echo "✓ Backend rejects invalid status values"
+
+      - name: Smoke test - CORS proxy is up
+        run: |
+          set -e
+          # cors-anywhere returns a help message or usage info on /
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/)
+          if [ "$code" = "000" ]; then
+            echo "::error::CORS proxy did not respond"
+            docker logs mobyphish-smoke
+            exit 1
+          fi
+          echo "✓ CORS proxy responded (HTTP $code)"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs mobyphish-smoke
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f mobyphish-smoke || true
