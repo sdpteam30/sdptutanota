@@ -195,6 +195,7 @@ export class MailViewerViewModel {
 	private senderConfirmed: boolean = false
 	public senderStatus: string = "" // confirmed, denied, added_to_trusted, removed_from_trusted, reported_phishing
 	public interactionType: string = "" // interacted, no_interaction
+	public currentAssignmentId: number | null = null // assignment_id from study assignments table, null if not a task email
 
 	private readonly viewModelId = Math.random().toString(36).substring(2, 8)
 
@@ -234,13 +235,18 @@ export class MailViewerViewModel {
 		const senderEmail = getDisplayedSenderWithDomainReplacement(this.mail).address
 
 		try {
-			const [trustedResponse, statusResponse] = await Promise.all([
+			const [trustedResponse, statusResponse, assignmentResponse] = await Promise.all([
 				fetch(`${TRUSTED_SENDERS_API_URL}/trusted-senders/${userEmail}`, {
 					headers: { Accept: "application/json" },
 					credentials: "include",
 					mode: "cors",
 				}),
 				fetch(`${TRUSTED_SENDERS_API_URL}/email-status/${userEmail}/${emailId}`, {
+					headers: { Accept: "application/json" },
+					credentials: "include",
+					mode: "cors",
+				}),
+				fetch(`${TRUSTED_SENDERS_API_URL}/assignment-by-sender/${encodeURIComponent(userEmail)}/${encodeURIComponent(senderEmail)}`, {
 					headers: { Accept: "application/json" },
 					credentials: "include",
 					mode: "cors",
@@ -252,6 +258,17 @@ export class MailViewerViewModel {
 
 			const trustedData = await trustedResponse.json()
 			const statusData = await statusResponse.json()
+
+			// Resolve assignment for this email (404 = not a study task email, silently skip)
+			if (assignmentResponse.ok) {
+				const assignmentData = await assignmentResponse.json()
+				if (assignmentData.assignment_id) {
+					this.currentAssignmentId = assignmentData.assignment_id
+					console.log(
+						`🔒 MOBYPHISH_LOG: assignment_id=${assignmentData.assignment_id} task="${assignmentData.task_name}" is_phishing=${assignmentData.is_phishing} stage=${assignmentData.stage}`,
+					)
+				}
+			}
 
 			const trustedSendersList: TrustedSenderInfo[] = Array.isArray(trustedData.trusted_senders) ? trustedData.trusted_senders : []
 
@@ -289,6 +306,16 @@ export class MailViewerViewModel {
 				}
 			}
 
+			// "email_opened" is internal tracking — treat as no user action for UI purposes
+			if (currentStatus === "email_opened") {
+				currentStatus = ""
+			}
+
+			// Log first open of a task email (only when no prior interaction exists)
+			if (this.currentAssignmentId !== null && !statusData.status) {
+				this.logEmailOpened().catch((err) => console.error("🔒 MOBYPHISH_LOG: logEmailOpened failed:", err))
+			}
+
 			this.senderStatus = currentStatus
 			this.interactionType = statusData.interaction_type
 
@@ -306,6 +333,26 @@ export class MailViewerViewModel {
 		} catch (error) {
 			console.error("Error fetching sender data:", error)
 		}
+	}
+
+	private async logEmailOpened(): Promise<void> {
+		const userEmail = this.logins.getUserController().loginUsername
+		const emailId = this.mail._id[1]
+		const senderEmail = getDisplayedSenderWithDomainReplacement(this.mail).address
+
+		await fetch(`${TRUSTED_SENDERS_API_URL}/update-email-status`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", Accept: "application/json" },
+			body: JSON.stringify({
+				user_email: userEmail,
+				email_id: emailId,
+				sender_email: senderEmail,
+				status: "email_opened",
+			}),
+			credentials: "include",
+			mode: "cors",
+		})
+		console.log(`🔒 MOBYPHISH_LOG: Logged email_opened for assignment_id=${this.currentAssignmentId}, sender="${senderEmail}"`)
 	}
 
 	isSenderTrusted(): boolean {

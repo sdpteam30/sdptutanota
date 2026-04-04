@@ -244,7 +244,7 @@ app.post("/update-email-status", async (req, res) => {
 		return res.status(400).json({ error: "Missing fields." })
 	}
 
-	const validStatuses = ["confirmed", "denied", "added_to_trusted", "removed_from_trusted", "reported_phishing", "reported_impersonation", "trusted_once"]
+	const validStatuses = ["confirmed", "denied", "added_to_trusted", "removed_from_trusted", "reported_phishing", "reported_impersonation", "reported_spam", "trusted_once", "email_opened"]
 	if (!validStatuses.includes(status)) {
 		return res.status(400).json({ error: "Invalid status value." })
 	}
@@ -328,6 +328,68 @@ app.delete("/reset-single-email-status", async (req, res) => {
 		res.status(500).json({ error: "Failed to reset email status." })
 	}
 })
+// Look up assignment by username + sender email address (for task email correlation)
+app.get("/assignment-by-sender/:username/:sender_email", async (req, res) => {
+	const { username } = req.params
+	const senderEmail = decodeURIComponent(req.params.sender_email).toLowerCase().trim()
+
+	try {
+		// Find the task whose email field matches the sender address
+		const { data: tasks, error: taskError } = await supabase
+			.from("tasks")
+			.select("task_id, task_name, is_phishing, phishing_type")
+			.eq("email", senderEmail)
+			.limit(1)
+
+		if (taskError) {
+			console.error("Supabase Error finding task by sender:", taskError.message)
+			return res.status(500).json({ error: "Failed to find task." })
+		}
+
+		if (!tasks || tasks.length === 0) {
+			return res.status(404).json({ assignment: null })
+		}
+
+		const task = tasks[0]
+
+		// Find the most recent assignment for this user + task
+		const { data: assignments, error: assignError } = await supabase
+			.from("assignments")
+			.select("assignment_id, sent_at, completed_at, stage, completion_type")
+			.eq("username", username)
+			.eq("task_id", task.task_id)
+			.order("sent_at", { ascending: false })
+			.limit(1)
+
+		if (assignError) {
+			console.error("Supabase Error finding assignment:", assignError.message)
+			return res.status(500).json({ error: "Failed to find assignment." })
+		}
+
+		if (!assignments || assignments.length === 0) {
+			return res.status(404).json({ assignment: null })
+		}
+
+		const assignment = assignments[0]
+		console.log(`🔒 BACKEND_LOG: assignment-by-sender - user="${username}", sender="${senderEmail}", assignment_id=${assignment.assignment_id}`)
+
+		res.json({
+			assignment_id: assignment.assignment_id,
+			task_id: task.task_id,
+			task_name: task.task_name,
+			is_phishing: task.is_phishing,
+			phishing_type: task.phishing_type,
+			stage: assignment.stage,
+			sent_at: assignment.sent_at,
+			completed_at: assignment.completed_at,
+			completion_type: assignment.completion_type,
+		})
+	} catch (err) {
+		console.error("Error looking up assignment by sender:", err.message)
+		res.status(500).json({ error: "Failed to look up assignment." })
+	}
+})
+
 app.get("/", (req, res) => {
 	res.send("Trusted Senders Backend is Running with Supabase...")
 })
