@@ -9,7 +9,8 @@ This is a **fork of Tutanota/Tuta Mail** - an open-source encrypted email client
 ### Key Study Features
 - **`sean-dev1` branch**: Full anti-phishing interface with warning banners
 - **`no-antiphishing-header` branch**: Control group without security headers
-- *** `default-antiphishing-header` branch**: Default version of TutaMail with their header included 
+- **`default-antiphishing-header` branch**: Default version of TutaMail with their header included
+- **`db-dev` branch**: Assignment tracking + `email_opened` logging; adds `/assignment-by-sender` backend route and frontend hook to correlate opened emails with study assignments
 - Custom trusted-senders backend for logging user interactions
 - CORS proxy for cross-origin requests
 
@@ -264,6 +265,7 @@ SUPABASE_ANON_KEY=your_supabase_anon_key
 
 ### Switching Study Branches
 ```bash
+./switch-branch.sh db-dev                       # Assignment tracking + email_opened logging
 ./switch-branch.sh sean-dev1                    # Full anti-phishing UI
 ./switch-branch.sh default-antiphishing-header  # Default Tuta header
 ./switch-branch.sh no-antiphishing-header       # Control group

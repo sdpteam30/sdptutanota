@@ -88,13 +88,13 @@ RUN if [ -d ".git" ]; then \
         if [ -d "buildSrc" ]; then \
             cp -r buildSrc buildSrc.release.backup; \
         fi && \
-        echo "Switching to sean-dev1 branch..." && \
-        if git show-ref --verify --quiet refs/heads/sean-dev1; then \
-            git checkout sean-dev1; \
-        elif git show-ref --verify --quiet refs/remotes/origin/sean-dev1; then \
-            git checkout -b sean-dev1 origin/sean-dev1; \
+        echo "Switching to db-dev branch..." && \
+        if git show-ref --verify --quiet refs/heads/db-dev; then \
+            git checkout db-dev; \
+        elif git show-ref --verify --quiet refs/remotes/origin/db-dev; then \
+            git checkout -b db-dev origin/db-dev; \
         else \
-            git checkout -b sean-dev1; \
+            git checkout -b db-dev; \
         fi && \
         echo "Restoring buildSrc files from release if needed..." && \
         if [ -d "buildSrc.release.backup" ]; then \

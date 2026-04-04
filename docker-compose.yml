@@ -2,18 +2,19 @@ version: '3.8'
 
 services:
   # All-in-one Tutanota service (frontend + backend + CORS proxy)
-  # Use BUILD_BRANCH environment variable to switch branches (default: sean-dev1)
+  # Use BUILD_BRANCH environment variable to switch branches (default: db-dev)
   # Available branches:
+  #   - db-dev: Assignment tracking + email_opened logging (active development)
   #   - sean-dev1: Full MobyPhish anti-phishing interface with custom header
   #   - default-antiphishing-header: Default Tutanota anti-phishing header (upstream)
   #   - no-antiphishing-header: No anti-phishing header, dropdown reporting only
-  # Example: BUILD_BRANCH=default-antiphishing-header docker-compose up --build
+  # Example: BUILD_BRANCH=sean-dev1 docker-compose up --build
   tutanota:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        BUILD_BRANCH: ${BUILD_BRANCH:-sean-dev1}
+        BUILD_BRANCH: ${BUILD_BRANCH:-db-dev}
     ports:
       - "9000:9000"  # Frontend
       - "3000:3000"  # Backend (trusted-senders-backend)
