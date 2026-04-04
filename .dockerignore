@@ -1,0 +1,50 @@
+# Derived artifacts (huge, regenerated inside the container)
+node_modules
+**/node_modules
+build
+target
+**/target/debug
+**/target/release
+dist
+**/dist
+
+# Cache dirs
+cache
+.cache
+**/.cache
+
+# Mobile build outputs
+app-android/app/build
+app-android/build
+app-android/.gradle
+app-ios/DerivedData
+app-ios/build
+*.apk
+*.aab
+*.ipa
+
+# IDE / editor
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Docker files themselves (not needed inside the image)
+Dockerfile
+Dockerfile.*
+docker-compose.yml
+.dockerignore
+
+# Git hooks / untracked worktrees
+.git/objects/pack/*.pack.old
+
+# NOTE: we intentionally KEEP:
+#   .git           — Dockerfile runs git checkout / submodule inside the container
+#   libs/          — vendored dependencies (linkifyjs etc.) required by build
+#   buildSrc/      — build scripts
+#   package*.json  — needed for npm ci
+#   trusted-senders-backend/, cors-anywhere/ — runtime services

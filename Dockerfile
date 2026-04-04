@@ -1,11 +1,15 @@
+# syntax=docker/dockerfile:1.6
 # Multi-stage Dockerfile for Tutanota
 FROM node:22-bullseye AS builder
 
 # Build argument to specify which branch to use (default: sean-dev1)
 ARG BUILD_BRANCH=db-dev
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies (with apt cache mount for faster rebuilds)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
     python3-pip \
@@ -13,8 +17,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     wget \
     curl \
-	dos2unix \
-    && rm -rf /var/lib/apt/lists/*
+	dos2unix
 
 # Install Rust and Cargo
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -106,15 +109,22 @@ RUN echo "=== Verifying buildSrc before npm install ===" && \
     echo "=== buildSrc verification complete ==="
 
 # Install dependencies (skip all postinstall scripts to avoid linkifyjs issue)
-RUN npm ci --ignore-scripts
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts
 
 # Note: linkifyjs files already exist in libs/, no need for updateLibs
 
-# Build packages
-RUN npm run build-packages
+# Build packages (cargo cache for Rust deps in tuta-sdk)
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/app/target \
+    npm run build-packages
 
 # Build the web application (use 'local' stage for network access support)
-RUN node make local
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/app/target \
+    node make local
 
 # Production stage
 FROM node:22-alpine AS production
