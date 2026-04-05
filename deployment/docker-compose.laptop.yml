@@ -1,0 +1,26 @@
+# Laptop deployment compose file. Uses pre-built images loaded via `docker load`.
+# Switch study arms by setting the STUDY_ARM env var (or use run-study.sh).
+#
+# Images expected to be loaded locally:
+#   mobyphish:sean-dev1
+#   mobyphish:db-dev
+#   mobyphish:default-antiphishing-header
+#   mobyphish:no-antiphishing-header
+
+services:
+  tutanota:
+    image: mobyphish:${STUDY_ARM:-sean-dev1}
+    ports:
+      - "9000:9000"   # Frontend
+      - "3000:3000"   # Backend (trusted-senders-backend)
+      - "8080:8080"   # CORS proxy
+    volumes:
+      - backend-data:/app/trusted-senders-backend/data
+      # Supabase credentials for the backend. Copy your real .env file into
+      # the deployment/ directory next to this compose file before running.
+      - ./.env:/app/trusted-senders-backend/.env:ro
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+    driver: local
