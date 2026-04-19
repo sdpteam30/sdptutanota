@@ -16,6 +16,31 @@ const VALID_STATUSES = [
 
 const VALID_INTERACTION_TYPES = ["interacted", "auto_detected"]
 
+// Map incoming /update-email-status `status` values to assignment_events.event_type.
+// Only statuses that are meaningful as study timeline events are listed; others
+// (e.g. "denied") are not mirrored into assignment_events.
+const STATUS_TO_EVENT_TYPE = {
+	email_opened: "email_opened",
+	confirmed: "sender_confirmed",
+	trusted_once: "sender_trusted_once",
+	added_to_trusted: "sender_added_to_trusted",
+	removed_from_trusted: "sender_removed_from_trusted",
+	reported_phishing: "reported_phishing",
+	reported_impersonation: "reported_impersonation",
+	reported_spam: "reported_spam",
+}
+
+// Statuses that should terminally complete the assignment.
+const TERMINAL_STATUSES = new Set(["reported_phishing", "reported_impersonation"])
+
+function secondsToHms(totalSeconds) {
+	const s = Math.max(0, Math.floor(totalSeconds))
+	const hh = String(Math.floor(s / 3600)).padStart(2, "0")
+	const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0")
+	const ss = String(s % 60).padStart(2, "0")
+	return `${hh}:${mm}:${ss}`
+}
+
 // Allow localhost and any IP address on port 9000 for network access
 const allowedOriginPatterns = [
 	/^http:\/\/localhost:9000$/,
@@ -46,8 +71,159 @@ function createApp(supabase) {
 	app.use(cors(corsOptions))
 	app.use(express.json())
 
+	// --- Assignment helpers ----------------------------------------------------
+
+	// Look up an assignment either by assignment_id (fast path from the frontend)
+	// or by email_subject matched against tasks.task_name (fallback). Since the
+	// study may use a single shared user_id, we don't filter by username — the
+	// unique task_name is the disambiguator.
+	async function findAssignment({ assignment_id, email_subject }) {
+		if (assignment_id != null) {
+			const { data, error } = await supabase
+				.from("assignments")
+				.select(
+					"assignment_id, user_id, username, task_id, sent_at, completed_at, stage, completion_type, tasks(task_id, task_name, is_phishing, phishing_type)",
+				)
+				.eq("assignment_id", assignment_id)
+				.limit(1)
+			if (error) {
+				console.error("Supabase error finding assignment by id:", error.message)
+				return null
+			}
+			if (!data || data.length === 0) return null
+			const row = data[0]
+			return {
+				assignment_id: row.assignment_id,
+				user_id: row.user_id,
+				username: row.username,
+				task_id: row.task_id,
+				task_name: row.tasks?.task_name,
+				is_phishing: row.tasks?.is_phishing,
+				phishing_type: row.tasks?.phishing_type,
+				sent_at: row.sent_at,
+				completed_at: row.completed_at,
+				stage: row.stage,
+				completion_type: row.completion_type,
+			}
+		}
+
+		if (!email_subject) return null
+		const trimmedSubject = email_subject.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim()
+
+		const { data: tasks, error: taskError } = await supabase
+			.from("tasks")
+			.select("task_id, task_name, is_phishing, phishing_type")
+			.eq("task_name", trimmedSubject)
+			.limit(1)
+		if (taskError) {
+			console.error("Supabase error finding task by subject:", taskError.message)
+			return null
+		}
+		if (!tasks || tasks.length === 0) return null
+		const task = tasks[0]
+
+		const { data: assignments, error: assignError } = await supabase
+			.from("assignments")
+			.select("assignment_id, user_id, username, sent_at, completed_at, stage, completion_type")
+			.eq("task_id", task.task_id)
+			.is("completed_at", null)
+			.order("sent_at", { ascending: false })
+			.limit(1)
+		if (assignError) {
+			console.error("Supabase error finding assignment by task:", assignError.message)
+			return null
+		}
+		if (!assignments || assignments.length === 0) return null
+		const assignment = assignments[0]
+
+		return {
+			assignment_id: assignment.assignment_id,
+			user_id: assignment.user_id,
+			username: assignment.username,
+			task_id: task.task_id,
+			task_name: task.task_name,
+			is_phishing: task.is_phishing,
+			phishing_type: task.phishing_type,
+			sent_at: assignment.sent_at,
+			completed_at: assignment.completed_at,
+			stage: assignment.stage,
+			completion_type: assignment.completion_type,
+		}
+	}
+
+	async function insertAssignmentEvent({ assignment, event_type, sender_email, source, metadata }) {
+		const { error } = await supabase.from("assignment_events").insert({
+			assignment_id: assignment.assignment_id,
+			user_id: assignment.user_id,
+			username: assignment.username,
+			event_type,
+			sender_email: sender_email || null,
+			source,
+			metadata: metadata || null,
+		})
+		if (error) {
+			console.error("Supabase error inserting assignment_event:", error.message)
+		}
+	}
+
+	// Append a line to the users.log_text column for the given user_id.
+	async function appendUserLog(user_id, message) {
+		if (!user_id) return
+		const { data, error: readError } = await supabase.from("users").select("log_text").eq("id", user_id).limit(1).single()
+		if (readError) {
+			console.error("Supabase error reading user log:", readError.message)
+			return
+		}
+		const currentLog = (data?.log_text || "").trimEnd()
+		const timestamp = new Date().toISOString()
+		const newLog = currentLog ? `${currentLog}\n[${timestamp}] ${message}` : `[${timestamp}] ${message}`
+
+		const { error: updateError } = await supabase.from("users").update({ log_text: newLog }).eq("id", user_id)
+		if (updateError) {
+			console.error("Supabase error appending user log:", updateError.message)
+		}
+	}
+
+	// Complete an assignment: set completed_at/time_taken/completion_type and log
+	// a mirror event. No-ops if the assignment is already completed (idempotent).
+	async function completeAssignment(assignment) {
+		if (!assignment || assignment.completed_at) return
+
+		const sentAt = assignment.sent_at ? new Date(assignment.sent_at) : null
+		const completedAt = new Date()
+		const elapsedSec = sentAt ? Math.floor((completedAt.getTime() - sentAt.getTime()) / 1000) : 0
+
+		const { error } = await supabase
+			.from("assignments")
+			.update({
+				completed_at: completedAt.toISOString(),
+				time_taken: secondsToHms(elapsedSec),
+				completion_type: "report_mail",
+			})
+			.eq("assignment_id", assignment.assignment_id)
+			.is("completed_at", null)
+		if (error) {
+			console.error("Supabase error completing assignment:", error.message)
+			return
+		}
+
+		await insertAssignmentEvent({
+			assignment,
+			event_type: "assignment_completed",
+			source: "tutanota",
+			metadata: { completion_type: "report_mail" },
+		})
+
+		await appendUserLog(
+			assignment.user_id,
+			`assignment_completed assignment_id=${assignment.assignment_id} task="${assignment.task_name}" completion_type=report_mail`,
+		)
+	}
+
+	// ---------------------------------------------------------------------------
+
 	app.post("/add-trusted", async (req, res) => {
-		const { user_email, trusted_email, trusted_name = "" } = req.body
+		const { user_email, trusted_email, trusted_name = "", assignment_id, email_subject } = req.body
 		if (!user_email || !trusted_email) {
 			return res.status(400).json({ error: "Missing user_email or trusted_email" })
 		}
@@ -65,6 +241,21 @@ function createApp(supabase) {
 				console.error("Supabase Error adding/updating trusted sender:", error.message)
 				return res.status(500).json({ error: "Failed to add trusted sender." })
 			}
+
+			const assignment = await findAssignment({ assignment_id, email_subject })
+			if (assignment && !assignment.completed_at) {
+				await insertAssignmentEvent({
+					assignment,
+					event_type: "sender_added_to_trusted",
+					sender_email: normalizedTrustedEmail,
+					source: "tutanota",
+				})
+				await appendUserLog(
+					assignment.user_id,
+					`sender_added_to_trusted assignment_id=${assignment.assignment_id} task="${assignment.task_name}" sender="${normalizedTrustedEmail}"`,
+				)
+			}
+
 			res.status(201).json({ message: "Trusted sender added/updated.", data: data[0] })
 		} catch (err) {
 			console.error("Error adding trusted sender:", err.message)
@@ -73,7 +264,7 @@ function createApp(supabase) {
 	})
 
 	app.post("/remove-trusted", async (req, res) => {
-		const { user_email, trusted_email } = req.body
+		const { user_email, trusted_email, assignment_id, email_subject } = req.body
 		if (!user_email || !trusted_email) {
 			return res.status(400).json({ error: "Missing user_email or trusted_email" })
 		}
@@ -88,6 +279,21 @@ function createApp(supabase) {
 				console.error("Supabase Error removing statuses:", statusError.message)
 				return res.status(500).json({ error: "Failed to remove email statuses." })
 			}
+
+			const assignment = await findAssignment({ assignment_id, email_subject })
+			if (assignment && !assignment.completed_at) {
+				await insertAssignmentEvent({
+					assignment,
+					event_type: "sender_removed_from_trusted",
+					sender_email: trusted_email.toLowerCase().trim(),
+					source: "tutanota",
+				})
+				await appendUserLog(
+					assignment.user_id,
+					`sender_removed_from_trusted assignment_id=${assignment.assignment_id} task="${assignment.task_name}" sender="${trusted_email}"`,
+				)
+			}
+
 			res.json({ message: "Trusted sender and statuses removed." })
 		} catch (err) {
 			console.error("Error removing trusted sender:", err.message)
@@ -187,7 +393,7 @@ function createApp(supabase) {
 	})
 
 	app.post("/update-email-status", async (req, res) => {
-		const { user_email, email_id, sender_email, status, interaction_type, auth_failure_reason } = req.body
+		const { user_email, email_id, sender_email, status, interaction_type, auth_failure_reason, assignment_id, email_subject } = req.body
 		if (!user_email || !email_id || !sender_email || !status) {
 			return res.status(400).json({ error: "Missing fields." })
 		}
@@ -218,6 +424,34 @@ function createApp(supabase) {
 					console.error("Supabase Error inserting into phishing_reports table:", phishingError.message)
 				}
 			}
+
+			const eventType = STATUS_TO_EVENT_TYPE[status]
+			if (eventType) {
+				const assignment = await findAssignment({ assignment_id, email_subject })
+				if (assignment && !assignment.completed_at) {
+					const metadata = {}
+					if (auth_failure_reason) metadata.auth_failure_reason = auth_failure_reason
+					if (finalInteractionType) metadata.interaction_type = finalInteractionType
+
+					await insertAssignmentEvent({
+						assignment,
+						event_type: eventType,
+						sender_email,
+						source: "tutanota",
+						metadata: Object.keys(metadata).length ? metadata : null,
+					})
+
+					await appendUserLog(
+						assignment.user_id,
+						`${eventType} assignment_id=${assignment.assignment_id} task="${assignment.task_name}" sender="${sender_email}"`,
+					)
+
+					if (TERMINAL_STATUSES.has(status)) {
+						await completeAssignment(assignment)
+					}
+				}
+			}
+
 			res.json({ message: "Email status updated.", data: data[0] })
 		} catch (err) {
 			console.error("Error updating email status:", err.message)
@@ -243,51 +477,26 @@ function createApp(supabase) {
 		}
 	})
 
-	app.get("/assignment-by-sender/:username/:sender_email", async (req, res) => {
-		const { username } = req.params
-		const senderEmail = decodeURIComponent(req.params.sender_email).toLowerCase().trim()
+	app.get("/assignment-by-subject/:email_subject", async (req, res) => {
+		const emailSubject = decodeURIComponent(req.params.email_subject).trim()
 		try {
-			const { data: tasks, error: taskError } = await supabase
-				.from("tasks")
-				.select("task_id, task_name, is_phishing, phishing_type")
-				.eq("email", senderEmail)
-				.limit(1)
-			if (taskError) {
-				console.error("Supabase Error finding task by sender:", taskError.message)
-				return res.status(500).json({ error: "Failed to find task." })
-			}
-			if (!tasks || tasks.length === 0) {
+			const assignment = await findAssignment({ email_subject: emailSubject })
+			if (!assignment) {
 				return res.status(404).json({ assignment: null })
 			}
-			const task = tasks[0]
-			const { data: assignments, error: assignError } = await supabase
-				.from("assignments")
-				.select("assignment_id, sent_at, completed_at, stage, completion_type")
-				.eq("username", username)
-				.eq("task_id", task.task_id)
-				.order("sent_at", { ascending: false })
-				.limit(1)
-			if (assignError) {
-				console.error("Supabase Error finding assignment:", assignError.message)
-				return res.status(500).json({ error: "Failed to find assignment." })
-			}
-			if (!assignments || assignments.length === 0) {
-				return res.status(404).json({ assignment: null })
-			}
-			const assignment = assignments[0]
 			res.json({
 				assignment_id: assignment.assignment_id,
-				task_id: task.task_id,
-				task_name: task.task_name,
-				is_phishing: task.is_phishing,
-				phishing_type: task.phishing_type,
+				task_id: assignment.task_id,
+				task_name: assignment.task_name,
+				is_phishing: assignment.is_phishing,
+				phishing_type: assignment.phishing_type,
 				stage: assignment.stage,
 				sent_at: assignment.sent_at,
 				completed_at: assignment.completed_at,
 				completion_type: assignment.completion_type,
 			})
 		} catch (err) {
-			console.error("Error looking up assignment by sender:", err.message)
+			console.error("Error looking up assignment by subject:", err.message)
 			res.status(500).json({ error: "Failed to look up assignment." })
 		}
 	})

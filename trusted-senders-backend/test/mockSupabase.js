@@ -21,6 +21,10 @@ function createMockSupabase(tableResponses = {}) {
 				call.filters.push({ type: "eq", col, val })
 				return chain
 			},
+			is(col, val) {
+				call.filters.push({ type: "is", col, val })
+				return chain
+			},
 			order(col, opts) {
 				call.modifiers.push({ type: "order", col, opts })
 				return chain
@@ -60,6 +64,9 @@ function createMockSupabase(tableResponses = {}) {
 				},
 				insert(payload) {
 					return builder(tableName, "insert", payload)
+				},
+				update(payload) {
+					return builder(tableName, "update", payload)
 				},
 				delete() {
 					return builder(tableName, "delete")

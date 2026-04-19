@@ -294,22 +294,22 @@ describe("DELETE /reset-single-email-status", () => {
 	})
 })
 
-describe("GET /assignment-by-sender/:username/:sender_email", () => {
+describe("GET /assignment-by-subject/:email_subject", () => {
 	test("404 when no matching task", async () => {
 		const { app } = makeApp({
 			tasks: { select: { data: [], error: null } },
 		})
-		const res = await request(app).get("/assignment-by-sender/alice/evil%40phish.com")
+		const res = await request(app).get("/assignment-by-subject/" + encodeURIComponent("Unknown Subject"))
 		assert.equal(res.status, 404)
 		assert.equal(res.body.assignment, null)
 	})
 
-	test("404 when task exists but no assignment for user", async () => {
+	test("404 when task exists but no assignment", async () => {
 		const { app } = makeApp({
-			tasks: { select: { data: [{ task_id: 7, task_name: "t", is_phishing: true, phishing_type: "spoof" }], error: null } },
+			tasks: { select: { data: [{ task_id: 7, task_name: "Phish-Alpha", is_phishing: true, phishing_type: "spoof" }], error: null } },
 			assignments: { select: { data: [], error: null } },
 		})
-		const res = await request(app).get("/assignment-by-sender/alice/a%40b.com")
+		const res = await request(app).get("/assignment-by-subject/" + encodeURIComponent("Phish-Alpha"))
 		assert.equal(res.status, 404)
 	})
 
@@ -326,6 +326,8 @@ describe("GET /assignment-by-sender/:username/:sender_email", () => {
 					data: [
 						{
 							assignment_id: 42,
+							user_id: 1,
+							username: "participant",
 							sent_at: "2026-04-01T00:00:00Z",
 							completed_at: null,
 							stage: 1,
@@ -336,7 +338,7 @@ describe("GET /assignment-by-sender/:username/:sender_email", () => {
 				},
 			},
 		})
-		const res = await request(app).get("/assignment-by-sender/alice/a%40b.com")
+		const res = await request(app).get("/assignment-by-subject/" + encodeURIComponent("Phish-Alpha"))
 		assert.equal(res.status, 200)
 		assert.equal(res.body.assignment_id, 42)
 		assert.equal(res.body.task_id, 7)

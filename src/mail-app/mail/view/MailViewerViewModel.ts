@@ -246,7 +246,7 @@ export class MailViewerViewModel {
 					credentials: "include",
 					mode: "cors",
 				}),
-				fetch(`${TRUSTED_SENDERS_API_URL}/assignment-by-sender/${encodeURIComponent(userEmail)}/${encodeURIComponent(senderEmail)}`, {
+				fetch(`${TRUSTED_SENDERS_API_URL}/assignment-by-subject/${encodeURIComponent(this.mail.subject)}`, {
 					headers: { Accept: "application/json" },
 					credentials: "include",
 					mode: "cors",
@@ -348,6 +348,8 @@ export class MailViewerViewModel {
 				email_id: emailId,
 				sender_email: senderEmail,
 				status: "email_opened",
+				assignment_id: this.currentAssignmentId,
+				email_subject: this.mail.subject,
 			}),
 			credentials: "include",
 			mode: "cors",
@@ -411,6 +413,8 @@ export class MailViewerViewModel {
 					email_id: emailId,
 					sender_email: getDisplayedSenderWithDomainReplacement(this.mail).address,
 					status: status,
+					assignment_id: this.currentAssignmentId,
+					email_subject: this.mail.subject,
 				}),
 				credentials: "include",
 				mode: "cors",
@@ -876,6 +880,8 @@ export class MailViewerViewModel {
 					status: "reported_impersonation",
 					interaction_type: "auto_detected",
 					auth_failure_reason: authStatus,
+					assignment_id: this.currentAssignmentId,
+					email_subject: this.mail.subject,
 				}),
 			})
 
@@ -1063,6 +1069,8 @@ export class MailViewerViewModel {
 							sender_email: senderEmail,
 							status: "reported_phishing",
 							interaction_type: "interacted",
+							assignment_id: this.currentAssignmentId,
+							email_subject: this.mail.subject,
 						}),
 					})
 					if (response.ok) {

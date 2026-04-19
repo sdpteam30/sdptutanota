@@ -338,6 +338,8 @@ export class MobyPhishReportModal implements ModalComponent {
 					sender_email: senderEmail,
 					status: "reported_impersonation",
 					interaction_type: "interacted",
+					assignment_id: this.viewModel.currentAssignmentId,
+					email_subject: this.viewModel.mail.subject,
 				}),
 			})
 
@@ -391,6 +393,8 @@ export class MobyPhishReportModal implements ModalComponent {
 					sender_email: senderEmail,
 					status: "reported_phishing",
 					interaction_type: "interacted",
+					assignment_id: this.viewModel.currentAssignmentId,
+					email_subject: this.viewModel.mail.subject,
 				}),
 			})
 

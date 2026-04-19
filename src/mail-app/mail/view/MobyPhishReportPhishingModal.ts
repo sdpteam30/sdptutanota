@@ -61,6 +61,8 @@ export class MobyPhishReportPhishingModal implements ModalComponent {
 														sender_email: senderEmail,
 														status: "reported_phishing",
 														interaction_type: "interacted",
+														assignment_id: this.viewModel.currentAssignmentId,
+														email_subject: this.viewModel.mail.subject,
 													}),
 												})
 
@@ -123,6 +125,8 @@ export class MobyPhishReportPhishingModal implements ModalComponent {
 													body: JSON.stringify({
 														user_email: userEmail,
 														trusted_email: senderEmail,
+														assignment_id: this.viewModel.currentAssignmentId,
+														email_subject: this.viewModel.mail.subject,
 													}),
 													credentials: "include",
 													mode: "cors",
