@@ -123,7 +123,7 @@ echo ""
 gh release create "$TAG" \
 	--title "$TITLE" \
 	--notes-file "$NOTES_FILE" \
-	--target "$GIT_SHA" \
+	--target "$(git rev-parse HEAD)" \
 	$DRAFT_FLAG
 
 # --- Upload assets ---
