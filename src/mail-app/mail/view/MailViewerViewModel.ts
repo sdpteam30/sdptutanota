@@ -276,7 +276,7 @@ export class MailViewerViewModel {
 			console.log("updated trustedSenders (objects):", this.trustedSenders())
 
 			// Check if sender is still in trusted list (by email)
-			const isTrustedByEmail = trustedSendersList.some((sender) => sender.address.toLowerCase() === senderEmail)
+			const isTrustedByEmail = trustedSendersList.some((sender) => sender.address.toLowerCase() === senderEmail.toLowerCase())
 
 			// Check if sender name is still in trusted list
 			const displayedSender = getDisplayedSenderWithDomainReplacement(this.mail)
@@ -365,7 +365,7 @@ export class MailViewerViewModel {
 
 		// Second check: Must be in trust-list
 		const senderEmail = getDisplayedSenderWithDomainReplacement(this.mail).address
-		return this.trustedSenders().some((sender) => sender.address.toLowerCase() === senderEmail)
+		return this.trustedSenders().some((sender) => sender.address.toLowerCase() === senderEmail.toLowerCase())
 	}
 
 	/**

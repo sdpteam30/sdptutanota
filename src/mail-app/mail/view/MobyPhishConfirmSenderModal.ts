@@ -41,83 +41,14 @@ if (!document.getElementById(styleId)) {
 	document.head.appendChild(style)
 }
 
-// Inject outline button style only once
-const outlineStyleId = "moby-phish-outline-style"
-if (!document.getElementById(outlineStyleId)) {
-	const style = document.createElement("style")
-	style.id = outlineStyleId
-	style.textContent = `
-        .mobyphish-outline-btn {
-            background: transparent;
-            color: #850122;
-            border: 1px solid #850122;
-            padding: 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            width: 100%;
-            font-size: 14px;
-            font-weight: normal;
-            text-align: center;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: opacity 0.2s ease;
-            margin-top: 10px;
-            opacity: 1;
-        }
-
-        .mobyphish-outline-btn:hover {
-            opacity: 0.7;
-        }
-    `
-	document.head.appendChild(style)
-}
-
-/**
- * Normalizes a name for fuzzy comparison by:
- * - Converting to lowercase
- * - Removing all whitespace
- * - Removing special characters (keeping only alphanumeric)
- */
-function normalizeNameForComparison(name: string): string {
-	return name
-		.toLowerCase()
-		.replace(/\s+/g, "") // Remove all whitespace
-		.replace(/[^a-z0-9]/g, "") // Remove special characters
-}
-
-/**
- * Checks if two names match using fuzzy logic.
- * Matches if:
- * - Exact match after normalization (e.g., "Bank Easy" === "BankEasy")
- * - One normalized name contains the other (e.g., "Bank" matches "Bank Easy")
- */
-function namesMatchFuzzy(name1: string, name2: string): boolean {
-	const n1 = normalizeNameForComparison(name1)
-	const n2 = normalizeNameForComparison(name2)
-
-	// Both empty or one is empty - not a match
-	if (!n1 || !n2) return false
-
-	// Exact match after normalization
-	if (n1 === n2) return true
-
-	// One contains the other (for partial matches like "Bank" vs "Bank Easy")
-	if (n1.includes(n2) || n2.includes(n1)) return true
-
-	return false
-}
-
 export class MobyPhishConfirmSenderModal implements ModalComponent {
 	private viewModel: MailViewerViewModel
 	private modalHandle?: ModalComponent
 	private selectedSenderName: string = ""
 	private selectedSenderEmail: string = "" // Track email address for selected sender
 	private trustedSenderObjects: TrustedSenderInfo[] = []
-	private modalState: "initial" | "warning" = "initial"
 	private isLoading: boolean = false
 	private errorMessage: string | null = null
-	private skippedInitialView: boolean = false
 	private isFetchingTrustedSenders: boolean = false
 	public onConfirm?: () => void // Callback to execute after sender is confirmed
 
@@ -129,8 +60,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 		// Fetch full trusted senders list from backend
 		this.fetchTrustedSendersFromBackend()
 
-		// Always start with the initial view (dropdown to confirm sender)
-		// The warning view will only show if user selects a name that doesn't match the actual sender
+		// Always show the initial view (dropdown to confirm sender)
 	}
 
 	private async fetchTrustedSendersFromBackend(): Promise<void> {
@@ -155,12 +85,6 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 				this.trustedSenderObjects = trustedSendersList
 				console.log(`🔒 MOBYPHISH_LOG: Fetched ${trustedSendersList.length} trusted senders from backend for user="${userEmail}"`)
 
-				// If we had no trusted senders initially but now we do, switch back to initial view
-				if (this.skippedInitialView && trustedSendersList.length > 0) {
-					this.modalState = "initial"
-					this.skippedInitialView = false
-				}
-
 				m.redraw()
 			} else {
 				console.error("🔒 MOBYPHISH_LOG: Failed to fetch trusted senders from backend")
@@ -183,9 +107,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 	view(): Children {
 		return m(".modal-overlay", { onclick: (e: MouseEvent) => this.backgroundClick(e) }, [
 			m(".modal-content", { onclick: (e: MouseEvent) => e.stopPropagation() }, [
-				m(".dialog.elevated-bg.border-radius", { style: this.getModalStyle() }, [
-					this.modalState === "initial" ? this.renderInitialView() : this.renderWarningView(),
-				]),
+				m(".dialog.elevated-bg.border-radius", { style: this.getModalStyle() }, [this.renderInitialView()]),
 			]),
 		])
 	}
@@ -378,24 +300,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 							}
 						}
 
-						// For custom/new sender entries, validate name matching using fuzzy logic
-						// Only show phishing warning if actual sender has a name AND it doesn't fuzzy-match the entered name
-						// If sender has no name, proceed without warning
-						const actualHasName = actualSenderName.length > 0
-						const namesMatch = !actualHasName || namesMatchFuzzy(enteredName, actualSenderName)
-
-						if (!namesMatch) {
-							// Names don't match even with fuzzy matching - show phishing warning
-							console.log(
-								`🔒 MOBYPHISH_LOG: Name mismatch detected (fuzzy) - enteredName="${enteredName}", actualSenderName="${actualSenderName}", showing warning view`,
-							)
-							this.modalState = "warning"
-							this.isLoading = false
-							m.redraw()
-							return
-						}
-
-						// Names match - proceed with confirmation
+						// Proceed directly with adding the sender - allow any name for any email address with confirmation
 						try {
 							// Upsert into trusted senders with entered name (which matches actual sender name)
 							const addResponse = await fetch(`${TRUSTED_SENDERS_API_URL}/add-trusted`, {
@@ -405,8 +310,6 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 									user_email: this.viewModel.logins.getUserController().loginUsername,
 									trusted_email: actualEmail,
 									trusted_name: enteredName,
-									assignment_id: this.viewModel.currentAssignmentId,
-									email_subject: this.viewModel.mail.subject,
 								}),
 							})
 							if (!addResponse.ok) {
@@ -480,8 +383,6 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 											sender_email: senderEmail,
 											status: "reported_phishing",
 											interaction_type: "interacted",
-											assignment_id: this.viewModel.currentAssignmentId,
-											email_subject: this.viewModel.mail.subject,
 										}),
 									})
 
@@ -532,165 +433,6 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 					onclick: () => modal.remove(this.modalHandle!),
 					disabled: this.isLoading,
 					style: { ...this.getCancelButtonStyle(), color: "black" },
-				},
-				"Cancel",
-			),
-		]
-	}
-
-	private renderWarningView(): Children {
-		const actual = this.viewModel.getDisplayedSender()
-		const actualSenderName = (actual?.name || "").trim()
-		const actualNameOnly = actualSenderName.length > 0 ? actualSenderName : "Unknown sender"
-
-		let warningText = this.skippedInitialView ? "This sender is not on your known senders list:" : "You indicated this email might be from:"
-		const indicatedName = this.selectedSenderName.trim() || "Unknown sender"
-		const displaySender = this.skippedInitialView ? actualNameOnly : indicatedName
-
-		return [
-			m(
-				"p",
-				{
-					style: { fontSize: "16px", fontWeight: "bold", textAlign: "center", marginBottom: "5px", color: "black" },
-				},
-				m(Icon, {
-					icon: Icons.Warning,
-					style: { fill: "#FFA500", marginRight: "8px", verticalAlign: "middle" },
-				}),
-				"Potential Phishing Attempt",
-			),
-
-			m(
-				"p",
-				{
-					style: { fontSize: "14px", textAlign: "center", marginBottom: "15px", color: "black" },
-				},
-				[
-					warningText,
-					m("br"),
-					m("strong", displaySender),
-					!this.skippedInitialView ? m("br") : null,
-					!this.skippedInitialView ? `However, the actual sender is different or not already in your known senders list.` : null,
-				],
-			),
-
-			!this.skippedInitialView
-				? m(
-						"p",
-						{
-							style: {
-								fontSize: "12px",
-								textAlign: "center",
-								marginBottom: "20px",
-								fontStyle: "italic",
-								color: "black",
-							},
-						},
-						`(Actual sender: ${actualNameOnly})`,
-					)
-				: null,
-
-			this.errorMessage
-				? m(
-						".error-message",
-						{
-							style: { color: "red", fontSize: "12px", marginBottom: "10px" },
-						},
-						this.errorMessage,
-					)
-				: null,
-
-			// Report as Phishing (Primary)
-			m(
-				"button.mobyphish-btn",
-				{
-					onclick: async () => {
-						console.log(
-							`🔒 MOBYPHISH_LOG: "Report as Phishing" button clicked for sender="${getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address}"`,
-						)
-
-						const senderEmail = getDisplayedSenderWithDomainReplacement(this.viewModel.mail).address
-						const userEmail = this.viewModel.logins.getUserController().loginUsername
-
-						try {
-							// Update MobyPhish API
-							const response = await fetch(`${TRUSTED_SENDERS_API_URL}/update-email-status`, {
-								method: "POST",
-								headers: { "Content-Type": "application/json" },
-								body: JSON.stringify({
-									user_email: userEmail,
-									email_id: this.viewModel.mail._id[1],
-									sender_email: senderEmail,
-									status: "reported_phishing",
-									interaction_type: "interacted",
-									assignment_id: this.viewModel.currentAssignmentId,
-									email_subject: this.viewModel.mail.subject,
-								}),
-							})
-
-							if (response.ok) {
-								console.log(`🔒 MOBYPHISH_LOG: Successfully updated MobyPhish API for sender="${senderEmail}"`)
-
-								// Move email to spam folder (without reporting to Tutanota servers)
-								try {
-									const mailboxDetail = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
-									if (mailboxDetail && mailboxDetail.mailbox.mailSets) {
-										const folders = await this.viewModel.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
-										const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
-
-										await this.viewModel.mailModel.moveMails([this.viewModel.mail._id], spamFolder, MoveMode.Mails)
-										console.log(`🔒 MOBYPHISH_LOG: Successfully moved email to spam folder for sender="${senderEmail}"`)
-									}
-								} catch (moveError) {
-									console.error(`🔒 MOBYPHISH_LOG: Failed to move email to spam folder for sender="${senderEmail}":`, moveError)
-								}
-
-								await this.viewModel.fetchSenderData()
-								if (this.modalHandle) {
-									modal.remove(this.modalHandle)
-								} else {
-									console.warn("No modal handle set")
-								}
-								m.redraw()
-							} else {
-								console.error("🔒 MOBYPHISH_LOG: Failed to update MobyPhish API")
-							}
-						} catch (error) {
-							console.error("🔒 MOBYPHISH_LOG: Error updating MobyPhish API:", error)
-						}
-					},
-					disabled: this.isLoading,
-				},
-				"Report as Phishing",
-			),
-
-			// Go Back to select correct sender
-			m(
-				"button.mobyphish-outline-btn",
-				{
-					onclick: () => {
-						console.log(`🔒 MOBYPHISH_LOG: "Go Back" button clicked - returning to sender selection`)
-						// Reset to initial view so user can select the correct sender
-						this.modalState = "initial"
-						this.selectedSenderName = ""
-						this.selectedSenderEmail = ""
-						this.errorMessage = null
-						m.redraw()
-					},
-					disabled: this.isLoading,
-				},
-				"Go Back and Select Correct Sender",
-			),
-
-			// Cancel
-			m(
-				"button",
-				{
-					onclick: () => {
-						if (!this.isLoading) modal.remove(this.modalHandle!)
-					},
-					disabled: this.isLoading,
-					style: this.getCancelButtonStyle(),
 				},
 				"Cancel",
 			),
