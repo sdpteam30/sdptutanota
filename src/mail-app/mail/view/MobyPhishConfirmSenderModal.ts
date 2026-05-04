@@ -50,6 +50,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 	private isLoading: boolean = false
 	private errorMessage: string | null = null
 	private isFetchingTrustedSenders: boolean = false
+	private isCustomSelected: boolean = false
 	public onConfirm?: () => void // Callback to execute after sender is confirmed
 
 	constructor(viewModel: MailViewerViewModel, trustedSenders: TrustedSenderInfo[]) {
@@ -138,9 +139,16 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 			m(
 				"select",
 				{
-					value: this.trustedSenderObjects.some((s) => (s.name || "").trim() === this.selectedSenderName.trim()) ? this.selectedSenderName : "",
+					value: this.isCustomSelected
+						? "__custom__"
+						: this.trustedSenderObjects.some((s) => (s.name || "").trim() === this.selectedSenderName.trim())
+							? this.selectedSenderName
+							: "",
 					onchange: (e: Event) => {
 						const selectedValue = (e.target as HTMLSelectElement).value
+
+						this.isCustomSelected = selectedValue === "__custom__"
+
 						// If "custom" is selected or empty, clear email and allow typing name
 						if (selectedValue === "__custom__" || selectedValue === "") {
 							this.selectedSenderEmail = ""
@@ -184,11 +192,9 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 					m("option", { value: "__custom__" }, "--- Or type a new sender name ---"),
 				],
 			),
-			// Text input showing name for custom entry (only show if no known sender is selected)
-			// Never show email address when a known sender is selected
-			this.selectedSenderEmail
-				? null // Hide input when a known sender is selected
-				: m("input[type=text]", {
+			// Text input showing name for custom entry (only show if "custom" is selected)
+			this.isCustomSelected
+				? m("input[type=text]", {
 						placeholder: "Type the sender's name...",
 						value: this.selectedSenderName,
 						oninput: (e: Event) => {
@@ -206,7 +212,8 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 							fontSize: "14px",
 							display: "block",
 						},
-					}),
+					})
+				: null,
 			this.errorMessage
 				? m(
 						".error-message",
