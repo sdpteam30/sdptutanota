@@ -136,6 +136,15 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 						"Loading known senders...",
 					)
 				: null,
+			this.errorMessage
+				? m(
+						".error-message",
+						{
+							style: { color: "red", fontSize: "14px", marginBottom: "10px" },
+						},
+						this.errorMessage,
+					)
+				: null,
 			m(
 				"select",
 				{
@@ -213,15 +222,6 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 							display: "block",
 						},
 					})
-				: null,
-			this.errorMessage
-				? m(
-						".error-message",
-						{
-							style: { color: "red", fontSize: "12px", marginTop: "5px" },
-						},
-						this.errorMessage,
-					)
 				: null,
 
 			m(

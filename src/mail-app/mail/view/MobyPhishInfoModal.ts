@@ -41,7 +41,7 @@ export class MobyPhishInfoModal implements ModalComponent {
 							m(
 								"p",
 								{ style: { marginBottom: "12px" } },
-								"Phishing websites mimic known, legitimate websites; phishing emails mimic emails from known, legitimate senders. Moby can help you distinguish between these counterfeits and the legit websites and emails.",
+								"Phishing websites mimic known, legitimate websites; phishing emails mimic emails from known, legitimate senders. Moby can help you distinguish between these counterfeits and the legitimate websites and emails.",
 							),
 							m("p", { style: { marginBottom: "6px" } }, m("strong", "Using Moby:")),
 							m("ul", { style: { margin: "0 0 12px 20px", padding: "0" } }, [
