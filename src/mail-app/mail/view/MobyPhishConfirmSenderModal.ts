@@ -124,25 +124,18 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 				}),
 				"Unknown Sender Detected",
 			]),
-			m("p", { style: { fontSize: "14px", textAlign: "center", marginBottom: "15px", color: "#333" } }, [
-				"This email may be phishing.",
-				m("br"),
-				"Please verify who you believe it's from:",
-			]),
+			this.errorMessage
+				? m("p.error-message", { style: { color: "red", fontSize: "14px", textAlign: "center", marginBottom: "15px" } }, this.errorMessage)
+				: m("p", { style: { fontSize: "14px", textAlign: "center", marginBottom: "15px", color: "#333" } }, [
+						"This email may be phishing.",
+						m("br"),
+						"Please verify who you believe it's from:",
+					]),
 			this.isFetchingTrustedSenders
 				? m(
 						"p",
 						{ style: { fontSize: "14px", textAlign: "center", marginBottom: "15px", color: "#666", fontStyle: "italic" } },
 						"Loading known senders...",
-					)
-				: null,
-			this.errorMessage
-				? m(
-						".error-message",
-						{
-							style: { color: "red", fontSize: "14px", marginBottom: "10px" },
-						},
-						this.errorMessage,
 					)
 				: null,
 			m(
