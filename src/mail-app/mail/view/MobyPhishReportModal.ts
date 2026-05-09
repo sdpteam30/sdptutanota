@@ -8,6 +8,8 @@ import { Icons } from "../../../common/gui/base/icons/Icons.js"
 import { assertSystemFolderOfType } from "../model/MailUtils.js"
 import { MoveMode } from "../model/MailModel.js"
 import { getDisplayedSenderWithDomainReplacement } from "./MailAddressDisplayUtils.js"
+import { MailTypeRef } from "../../../common/api/entities/tutanota/TypeRefs.js"
+import { mailLocator } from "../../mailLocator.js"
 
 // Inject CSS only once
 const styleId = "moby-phish-report-style"
@@ -346,18 +348,48 @@ export class MobyPhishReportModal implements ModalComponent {
 			if (response.ok) {
 				console.log(`🔒 MOBYPHISH_LOG: Successfully reported impersonation for sender="${senderEmail}"`)
 
-				// Move email to spam folder (without reporting to Tutanota servers)
+				// Move all emails from this sender to spam folder (without reporting to Tutanota servers)
 				try {
 					const mailboxDetail = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
 					if (mailboxDetail && mailboxDetail.mailbox.mailSets) {
 						const folders = await this.viewModel.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 						const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
 
-						await this.viewModel.mailModel.moveMails([this.viewModel.mail._id], spamFolder, MoveMode.Mails)
-						console.log(`🔒 MOBYPHISH_LOG: Successfully moved email to spam folder for sender="${senderEmail}"`)
+						const searchResult = await mailLocator.searchFacade.search(
+							senderEmail,
+							{ type: MailTypeRef, folderIds: [], eventSeries: null, field: null, start: null, end: null, attributeIds: null },
+							0,
+							1000,
+						)
+
+						const uniqueMails = new Map<string, any>()
+						if (searchResult && searchResult.results) {
+							searchResult.results.forEach((idTuple: any) => uniqueMails.set(idTuple[1], idTuple))
+						}
+
+						const mailViewModel = await mailLocator.mailViewModel()
+						const loadedMails = mailViewModel?.listModel?.mails || []
+						for (const loadedMail of loadedMails) {
+							const loadedSender = getDisplayedSenderWithDomainReplacement(loadedMail).address
+							if (loadedSender === senderEmail) {
+								uniqueMails.set(loadedMail._id[1], loadedMail._id)
+							}
+						}
+
+						uniqueMails.set(this.viewModel.mail._id[1], this.viewModel.mail._id)
+
+						const mailsToMove = Array.from(uniqueMails.values())
+						if (mailsToMove.length > 0) {
+							await this.viewModel.mailModel.moveMails(mailsToMove, spamFolder, MoveMode.Mails)
+							if (mailsToMove.length > 1) {
+								console.log(`🔒 MOBYPHISH_LOG: Successfully moved ${mailsToMove.length} emails to spam folder for sender="${senderEmail}"`)
+							} else {
+								console.log(`🔒 MOBYPHISH_LOG: Fallback: Successfully moved current email to spam folder for sender="${senderEmail}"`)
+							}
+						}
 					}
 				} catch (moveError) {
-					console.error(`🔒 MOBYPHISH_LOG: Failed to move email to spam folder for sender="${senderEmail}":`, moveError)
+					console.error(`🔒 MOBYPHISH_LOG: Failed to move emails to spam folder for sender="${senderEmail}":`, moveError)
 				}
 
 				await this.viewModel.updateSenderStatus("reported_impersonation")
@@ -401,18 +433,48 @@ export class MobyPhishReportModal implements ModalComponent {
 			if (response.ok) {
 				console.log(`🔒 MOBYPHISH_LOG: Successfully reported phishing for sender="${senderEmail}"`)
 
-				// Move email to spam folder (without reporting to Tutanota servers)
+				// Move all emails from this sender to spam folder (without reporting to Tutanota servers)
 				try {
 					const mailboxDetail = await this.viewModel.mailModel.getMailboxDetailsForMail(this.viewModel.mail)
 					if (mailboxDetail && mailboxDetail.mailbox.mailSets) {
 						const folders = await this.viewModel.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 						const spamFolder = assertSystemFolderOfType(folders, MailSetKind.SPAM)
 
-						await this.viewModel.mailModel.moveMails([this.viewModel.mail._id], spamFolder, MoveMode.Mails)
-						console.log(`🔒 MOBYPHISH_LOG: Successfully moved email to spam folder for sender="${senderEmail}"`)
+						const searchResult = await mailLocator.searchFacade.search(
+							senderEmail,
+							{ type: MailTypeRef, folderIds: [], eventSeries: null, field: null, start: null, end: null, attributeIds: null },
+							0,
+							1000,
+						)
+
+						const uniqueMails = new Map<string, any>()
+						if (searchResult && searchResult.results) {
+							searchResult.results.forEach((idTuple: any) => uniqueMails.set(idTuple[1], idTuple))
+						}
+
+						const mailViewModel = await mailLocator.mailViewModel()
+						const loadedMails = mailViewModel?.listModel?.mails || []
+						for (const loadedMail of loadedMails) {
+							const loadedSender = getDisplayedSenderWithDomainReplacement(loadedMail).address
+							if (loadedSender === senderEmail) {
+								uniqueMails.set(loadedMail._id[1], loadedMail._id)
+							}
+						}
+
+						uniqueMails.set(this.viewModel.mail._id[1], this.viewModel.mail._id)
+
+						const mailsToMove = Array.from(uniqueMails.values())
+						if (mailsToMove.length > 0) {
+							await this.viewModel.mailModel.moveMails(mailsToMove, spamFolder, MoveMode.Mails)
+							if (mailsToMove.length > 1) {
+								console.log(`🔒 MOBYPHISH_LOG: Successfully moved ${mailsToMove.length} emails to spam folder for sender="${senderEmail}"`)
+							} else {
+								console.log(`🔒 MOBYPHISH_LOG: Fallback: Successfully moved current email to spam folder for sender="${senderEmail}"`)
+							}
+						}
 					}
 				} catch (moveError) {
-					console.error(`🔒 MOBYPHISH_LOG: Failed to move email to spam folder for sender="${senderEmail}":`, moveError)
+					console.error(`🔒 MOBYPHISH_LOG: Failed to move emails to spam folder for sender="${senderEmail}":`, moveError)
 				}
 
 				await this.viewModel.fetchSenderData()
