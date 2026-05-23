@@ -257,9 +257,9 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 					disabled: this.isFetchingTrustedSenders,
 				},
 				[
-					m("option", { value: "" }, "Select a known sender..."),
-					...this.trustedSenderObjects.map((sender) => m("option", { value: (sender.name || "").trim() }, sender.name || sender.address)),
+					m("option", { value: "" }, "Identify a known sender..."),
 					m("option", { value: "__custom__" }, "--- Or type a new sender name ---"),
+					...this.trustedSenderObjects.map((sender) => m("option", { value: (sender.name || "").trim() }, sender.name || sender.address)),
 				],
 			),
 			// Text input showing name for custom entry (only show if no known sender is selected)
