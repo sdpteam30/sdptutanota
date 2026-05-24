@@ -145,7 +145,7 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 				{
 					value: this.isCustomSelected
 						? "__custom__"
-						: this.trustedSenderObjects.some((s) => (s.name || "").trim() === this.selectedSenderName.trim())
+						: this.trustedSenderObjects.some((s) => (s.name || s.address || "").trim() === this.selectedSenderName.trim())
 							? this.selectedSenderName
 							: "",
 					onchange: (e: Event) => {
@@ -162,15 +162,15 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 							return
 						}
 
-						// A known sender was selected - set name and email
-						this.selectedSenderName = selectedValue
-						// Find the selected sender and set their email address in the input
-						// Note: If multiple senders have the same name, we'll show the first one's email
-						const selectedSender = this.trustedSenderObjects.find((s) => (s.name || "").trim() === selectedValue.trim())
+						// Find sender by matching the fallback value (name or address)
+						const selectedSender = this.trustedSenderObjects.find((s) => (s.name || s.address || "").trim() === selectedValue.trim())
 						if (selectedSender && selectedSender.address) {
 							this.selectedSenderEmail = selectedSender.address
+							// Fall back to the address if the name is empty/missing
+							this.selectedSenderName = (selectedSender.name || selectedSender.address || "").trim()
 						} else {
 							this.selectedSenderEmail = ""
+							this.selectedSenderName = selectedValue
 						}
 						this.errorMessage = null
 						m.redraw()
@@ -191,9 +191,11 @@ export class MobyPhishConfirmSenderModal implements ModalComponent {
 					disabled: this.isFetchingTrustedSenders,
 				},
 				[
-					m("option", { value: "" }, "Select a known sender..."),
-					...this.trustedSenderObjects.map((sender) => m("option", { value: (sender.name || "").trim() }, sender.name || sender.address)),
-					m("option", { value: "__custom__" }, "--- Or type a new sender name ---"),
+					m("option", { value: "" }, "Identify a known sender..."),
+					m("option", { value: "__custom__" }, "Sender not listed? Type new name..."),
+					...this.trustedSenderObjects.map((sender) =>
+						m("option", { value: (sender.name || sender.address || "").trim() }, sender.name || sender.address),
+					),
 				],
 			),
 			// Text input showing name for custom entry (only show if "custom" is selected)
