@@ -482,7 +482,7 @@ function createApp(supabase) {
 		try {
 			const assignment = await findAssignment({ email_subject: emailSubject })
 			if (!assignment) {
-				return res.status(404).json({ assignment: null })
+				return res.json({ assignment: null })
 			}
 			res.json({
 				assignment_id: assignment.assignment_id,

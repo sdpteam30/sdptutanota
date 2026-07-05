@@ -12,8 +12,8 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 
 const app = createApp(supabase)
 
-app.listen(PORT, HOST, () => {
-	console.log(`Server running on http://${HOST}:${PORT}`)
+app.listen(PORT, () => {
+	console.log(`Server running on http://localhost:${PORT}`)
 })
 
 process.on("SIGINT", () => {

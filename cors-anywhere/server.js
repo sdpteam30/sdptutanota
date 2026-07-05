@@ -58,7 +58,7 @@ cors_proxy
 			return false // Continue with proxy
 		},
 	})
-	.listen(port, host, function () {
+	.listen(port, function () {
 		console.log("Running CORS Anywhere on " + host + ":" + port)
 		console.log("Allowed origins: " + allowedOrigins.join(", ") + " (and any IP:9000)")
 	})
